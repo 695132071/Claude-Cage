@@ -982,10 +982,28 @@ button.large {
 .check-line {
   display: flex;
   align-items: center;
-  gap: 7px;
+  min-block-size: 44px;
+  box-sizing: border-box;
+  padding-block: 6px;
+  gap: 10px;
   font-size: 0.7857rem;
   color: var(--ink);
   margin: -3px 0 18px;
+  cursor: var(--control-cursor);
+}
+.check-line > input:is([type="checkbox"], [type="radio"]):not([role="switch"]) {
+  inline-size: 22px;
+  block-size: 22px;
+  flex: none;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.check-line > input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.check-line:has(> input:disabled) {
+  cursor: default;
 }
 .settings-content input[type="checkbox"],
 .settings-content input[type="radio"] {
