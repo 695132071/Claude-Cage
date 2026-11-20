@@ -31,6 +31,7 @@ import { PluginView } from "./plugin-view";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
+import { TERMINAL_LIMIT, liveTerminalCount } from "./session-order.mjs";
 import { InitializationGate } from "./initialization";
 import { ProjectRecovery } from "./project-recovery";
 import { DesktopPanes, useAccountDesktops } from "./account-desktops";
@@ -600,6 +601,7 @@ function App() {
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
     <TerminalMenu choice={terminalChoice} busy={busy} profiles={claudeProfiles}
+      atLimit={liveTerminalCount(tabs) + (enrollmentID ? 1 : 0) >= TERMINAL_LIMIT}
       usesOfficialCLI={(settings?.claude_terminal_command?.trim() || "claude") === "claude"}
       onClose={() => setTerminalChoice(null)}
       onSelect={(kind, accountId, autoHandoff) => createTerminal(terminalChoice.path, kind, accountId, autoHandoff).catch((e) => notify(e.message))} />
@@ -631,7 +633,8 @@ function App() {
     }
   };
   const closeTab = async (tab, anchor) => {
-    if (tab.cli_session_id) return archiveSession({id:tab.cli_session_id, title:tab.title}, anchor);
+    // An ended conversation terminal only holds its output; closing it keeps the conversation.
+    if (tab.cli_session_id && !tab.closed) return archiveSession({id:tab.cli_session_id, title:tab.title}, anchor);
     if (tab.kind === "terminal") {
       if (
         !tab.closed &&
