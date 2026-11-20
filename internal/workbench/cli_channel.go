@@ -2,6 +2,7 @@ package workbench
 
 import (
 	"bytes"
+	"compress/flate"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -15,7 +16,6 @@ import (
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/gzip"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 )
 
@@ -36,15 +36,124 @@ func resumeChannelRequest(record *mobileRecord) map[string]any {
 }
 
 var cliChannelEncoded = sync.OnceValue(func() string {
-	var helper strings.Builder
+	var lines []string
+	inDoc := false
+	depth := 0
 	for _, line := range strings.Split(cliChannelHelper, "\n") {
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			helper.WriteString(line + "\n")
+		s := strings.TrimSpace(line)
+		if s == "" || strings.HasPrefix(s, "#") {
+			continue
 		}
+		if !inDoc && strings.HasPrefix(s, `"""`) {
+			if strings.HasSuffix(s, `"""`) && len(s) >= 6 {
+				continue
+			}
+			inDoc = true
+			continue
+		}
+		if inDoc {
+			if strings.HasSuffix(s, `"""`) {
+				inDoc = false
+			}
+			continue
+		}
+		cont := depth > 0
+		spaces := len(line) - len(strings.TrimLeft(line, " "))
+		var body []byte
+		var quote byte
+		for i := 0; i < len(s); i++ {
+			ch := s[i]
+			if quote != 0 {
+				body = append(body, ch)
+				if ch == '\\' && i+1 < len(s) {
+					i++
+					body = append(body, s[i])
+				} else if ch == quote {
+					quote = 0
+				}
+				continue
+			}
+			if ch == '"' || ch == '\'' {
+				quote = ch
+				body = append(body, ch)
+				continue
+			}
+			if ch == '#' {
+				for len(body) > 0 && body[len(body)-1] == ' ' {
+					body = body[:len(body)-1]
+				}
+				break
+			}
+			if ch == '(' || ch == '[' || ch == '{' {
+				depth++
+			} else if (ch == ')' || ch == ']' || ch == '}') && depth > 0 {
+				depth--
+			}
+			if ch == ' ' {
+				var prev, nxt byte
+				if len(body) > 0 {
+					prev = body[len(body)-1]
+				}
+				if i+1 < len(s) {
+					nxt = s[i+1]
+				}
+				if strings.IndexByte(",:=([{!<>+-*/%&|^", prev) >= 0 || strings.IndexByte(",:=)]}!<>", nxt) >= 0 {
+					continue
+				}
+				if strings.IndexByte("+-*/%&|^", nxt) >= 0 && i+2 < len(s) && (s[i+2] == ' ' || (s[i+2] == nxt && i+3 < len(s) && s[i+3] == ' ')) {
+					continue
+				}
+			}
+			body = append(body, ch)
+		}
+		if len(body) == 0 {
+			continue
+		}
+		if cont && len(lines) > 0 {
+			last := lines[len(lines)-1]
+			if strings.IndexByte(",([{:", last[len(last)-1]) >= 0 || strings.IndexByte(")]}", body[0]) >= 0 {
+				lines[len(lines)-1] = last + string(body)
+			} else {
+				lines[len(lines)-1] = last + " " + string(body)
+			}
+			continue
+		}
+		lines = append(lines, strings.Repeat("\t", spaces/4)+strings.Repeat(" ", spaces%4)+string(body))
 	}
-	bundle := []byte(helper.String())
+	indentOf := func(l string) int { return len(l) - len(strings.TrimLeft(l, "\t ")) }
+	simpleStmt := func(body string) bool {
+		if body == "" || strings.HasSuffix(body, `\`) || strings.HasSuffix(body, ":") || strings.HasPrefix(body, "@") {
+			return false
+		}
+		for _, kw := range []string{"if ", "elif ", "else", "for ", "while ", "with ", "try", "except", "finally", "def ", "class ", "async ", "match "} {
+			if strings.HasPrefix(body, kw) {
+				return false
+			}
+		}
+		return true
+	}
+	merged := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		cur := lines[i]
+		if strings.HasSuffix(cur, ":") && i+1 < len(lines) {
+			curInd := indentOf(cur)
+			nxt := lines[i+1]
+			nxtInd := indentOf(nxt)
+			afterInd := -1
+			if i+2 < len(lines) {
+				afterInd = indentOf(lines[i+2])
+			}
+			if nxtInd > curInd && afterInd <= curInd && simpleStmt(nxt[nxtInd:]) {
+				merged = append(merged, cur+nxt[nxtInd:])
+				i++
+				continue
+			}
+		}
+		merged = append(merged, cur)
+	}
+	bundle := []byte(strings.Join(merged, "\n") + "\n")
 	var compressed bytes.Buffer
-	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
+	writer, _ := flate.NewWriter(&compressed, flate.BestCompression)
 	_, _ = writer.Write(bundle)
 	_ = writer.Close()
 	return cliTransport85(compressed.Bytes())
@@ -117,18 +226,12 @@ func cliChannelCommand(mode, argument string) string {
 	// rebuilt host begins new sessions. No account configuration is overwritten.
 	digest := sha256.Sum256([]byte(cliChannelHelper + cliResumePrompt + claudeAccountResumePrompt))
 	bootstrap := fmt.Sprintf(`import base64,os,pathlib,sys,tempfile
-d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
-d.mkdir(parents=True,exist_ok=True,mode=0o700)
-n="%x"
-p=d/(n+".py")
+p=pathlib.Path.home()/".local/share/cage/cli-channel-code/%x.py"
+p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
 if not p.is_file():
- import gzip
- with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
-  f.write(gzip.decompress(base64.b85decode("%s")))
-  t=f.name
- os.replace(t,p)
-os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
-`, digest, cliChannelEncoded())
+ import zlib
+ f=tempfile.NamedTemporaryFile(dir=p.parent,delete=False);f.write(zlib.decompress(base64.b85decode("%s"),-15));f.close();os.replace(f.name,p)
+os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])`, digest, cliChannelEncoded())
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
 
@@ -252,6 +355,9 @@ func (s *Server) discoverConversations(ctx context.Context, paths []string, reus
 		return nil
 	}
 	s.conversationDiscovered = conversationDiscovery{}
+	if !reuse {
+		request["fresh"] = true
+	}
 	var found []terminalConversation
 	if err := s.runCLIChannel(ctx, "discover", request, &found); err != nil {
 		return err

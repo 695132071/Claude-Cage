@@ -25,7 +25,8 @@ func TestCLIChannelUsesSharedControlSession(t *testing.T) {
 		t.Skip("test server account is locked")
 	}
 	home, _ := filepath.EvalSymlinks(t.TempDir())
-	if !strings.HasPrefix(home, os.TempDir()) && !strings.HasPrefix(home, filepath.Clean(os.TempDir())) {
+	tmpRoot, _ := filepath.EvalSymlinks(os.TempDir())
+	if !strings.HasPrefix(home, tmpRoot) && !strings.HasPrefix(home, filepath.Clean(os.TempDir())) {
 		t.Fatalf("guest home %s is outside the temporary directory", home)
 	}
 	var starts atomic.Int32

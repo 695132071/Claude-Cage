@@ -291,25 +291,24 @@ def view(config, session_id, path=None):
             "resume_pending": bool(state.get("resume_task")), "native_history": native_history}
 
 
-def view_token(config, session_id):
-    """Identify every input of view(): the session's connection states, process
-    liveness and transcript files. An unchanged token means an unchanged view."""
-    states = [(name, state) for name, state in connection_states()
-              if state.get("cli_id") == session_id and state.get("config") == str(config)]
-    connection, state = connection_for(session_id, config, states)
-    path = next((config / "projects").glob("*/" + session_id + ".jsonl"), None)
+def stamp(info):
+    # The change time also moves when a write keeps the size and modification time.
+    return [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
 
-    def stat(target):
+
+def view_token(config, session_id):
+    states = [(n, s) for n, s in connection_states() if s.get("cli_id") == session_id and s.get("config") == str(config)]
+    conn, state = connection_for(session_id, config, states)
+    path = next((config / "projects").glob("*/" + session_id + ".jsonl"), None)
+    def st(t):
         try:
-            info = target.stat()
-            return [str(target), info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+            return [str(t), *stamp(t.stat())]
         except (OSError, AttributeError, TypeError):
-            return [str(target or "")]
+            return [str(t or "")]
     frozen = state.get("resume_transcript")
-    parts = [str(config), session_id, connection, stat(path), stat(Path(frozen)) if isinstance(frozen, str) and frozen else None,
-             [[name, value, live(value.get("pid")), live(value.get("channel_pid"))] for name, value in states]]
-    running = bool(live(state.get("pid")) and not state.get("closed"))
-    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest(), running
+    parts = [str(config), session_id, conn, st(path), st(Path(frozen)) if isinstance(frozen, str) and frozen else None,
+             [[n, v, live(v.get("pid")), live(v.get("channel_pid"))] for n, v in states]]
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest(), bool(live(state.get("pid")) and not state.get("closed"))
 
 
 def history_summary(path):
@@ -350,63 +349,36 @@ def history_summary(path):
 
 
 def cache_path(kind, config):
-    digest = hashlib.sha256(str(config).encode()).hexdigest()[:24]
-    return ROOT.parent / "cli-channel-cache" / (kind + "-" + digest + ".json")
+    return ROOT.parent / "cli-channel-cache" / (kind + "-" + hashlib.sha256(str(config).encode()).hexdigest()[:24] + ".json")
 
 
 def read_cache(path):
     try:
         value = read_json(path, {})
+        return value if isinstance(value, dict) else {}
     except (OSError, ValueError):
         return {}
-    return value if isinstance(value, dict) else {}
 
 
-# The registry listing is a function of the account's session registrations
-# and of process liveness. Liveness is checked on every call; the listing is
-# rerun when any registration is added, removed or rewritten, and at least
-# every AGENTS_REFRESH seconds.
 AGENTS_REFRESH = 30
 
 
-def stamp(info):
-    # The change time also moves when a write keeps the size and modification time.
-    return [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
-
-
-def registry_signature(config):
+def running_sessions_cached(config, fresh=False):
     try:
         with os.scandir(Path(config) / "sessions") as entries:
-            return sorted([entry.name, *stamp(entry.stat())] for entry in entries if entry.name.endswith(".json"))
+            sig = sorted([e.name, *stamp(e.stat())] for e in entries if e.name.endswith(".json"))
     except FileNotFoundError:
-        return []
-
-
-def running_sessions_cached(config):
-    signature = registry_signature(config)
+        sig = []
     path = cache_path("agents", config)
-    cached = read_cache(path)
-    rows = cached.get("rows")
-    age = time.time() - cached.get("at", 0) if isinstance(cached.get("at"), (int, float)) else -1
-    if cached.get("signature") != signature or not 0 <= age < AGENTS_REFRESH or not isinstance(rows, list):
-        # Rows already exclude processes that had exited; an exited process
-        # does not come back, and the survivors are rechecked below.
+    cached = {} if fresh else read_cache(path)
+    rows, at = cached.get("rows"), cached.get("at")
+    if fresh or cached.get("signature") != sig or not (isinstance(at, (int, float)) and 0 <= time.time() - at < AGENTS_REFRESH) or not isinstance(rows, list):
         rows = running_sessions(config)
         try:
-            save(path, {"signature": signature, "at": time.time(), "rows": rows})
+            save(path, {"signature": sig, "at": time.time(), "rows": rows})
         except OSError:
             pass
     return [row for row in rows if isinstance(row, dict) and live(row.get("pid"))]
-
-
-def cached_summary(cache, path, stat):
-    key = str(path)
-    entry = cache.get(key)
-    if isinstance(entry, list) and len(entry) == 3 and entry[0] == stamp(stat):
-        return entry[1], entry[2], False
-    workspace, title = history_summary(path)
-    cache[key] = [stamp(stat), workspace, title]
-    return workspace, title, True
 
 
 def discover(request):
@@ -423,18 +395,16 @@ def discover(request):
         def observed_running():
             nonlocal running
             if running is None:
-                running = running_sessions_cached(config_name)
+                running = running_sessions_cached(config_name, fresh=bool(request.get("fresh")))
             return running
         def process_state(session_id):
             rows = [row for row in observed_running() if row.get("sessionId") == session_id]
             return {"running": bool(rows), "claude_desktop": any(
                 session_entrypoint(row, config) in ("claude-desktop", "claude-desktop-3p", "local-agent", "local_agent", "remote_desktop")
                 for row in rows)}
-        # Unchanged transcripts reuse their list summary (keyed by size and
-        # modification time); opening a session still reads the full history.
         summary_path = cache_path("summaries", config_name)
         summaries = read_cache(summary_path)
-        summaries_changed = False
+        changed = False
         listed = []
         for path in (config / "projects").glob("*/*.jsonl"):
             try:
@@ -442,33 +412,37 @@ def discover(request):
             except OSError:
                 continue
         listed.sort(key=lambda item: item[1].st_mtime, reverse=True)
-        found = set()
-        current = set()
-        for path, stat in listed:
+        found, current = set(), set()
+        for path, info in listed:
             if path.is_symlink():
                 continue
             try:
                 session_id = identifier(path.stem)
             except ValueError:
                 continue
-            current.add(str(path))
-            workspace, title, computed = cached_summary(summaries, path, stat)
-            summaries_changed |= computed
+            key, sig = str(path), stamp(info)
+            current.add(key)
+            entry = summaries.get(key)
+            if isinstance(entry, list) and len(entry) == 3 and entry[0] == sig:
+                workspace, title = entry[1], entry[2]
+            else:
+                workspace, title = history_summary(path)
+                summaries[key] = [sig, workspace, title]
+                changed = True
             if not any(workspace_within(workspace, root) for root in allowed):
                 continue
             connection, state = connection_for(session_id, config, states)
             process = process_state(session_id)
-            item = {"cli_id": session_id, "config": config_name, "connection": connection,
-                    "workspace": workspace, "title": title or "Claude Code", "updated_at": stat.st_mtime,
-                    "running": process["running"] or bool(live(state.get("pid")) and not state.get("closed")),
-                    "claude_desktop": process["claude_desktop"],
-                    "active": bool(live(state.get("pid")) and not state.get("closed") and (state.get("busy") or state.get("approvals")))}
+            alive = bool(live(state.get("pid")) and not state.get("closed"))
+            sessions.append({"cli_id": session_id, "config": config_name, "connection": connection,
+                             "workspace": workspace, "title": title or "Claude Code", "updated_at": info.st_mtime,
+                             "running": process["running"] or alive, "claude_desktop": process["claude_desktop"],
+                             "active": bool(alive and (state.get("busy") or state.get("approvals")))})
             found.add(session_id)
-            sessions.append(item)
         stale = set(summaries) - current
         for key in stale:
             del summaries[key]
-        if summaries_changed or stale:
+        if changed or stale:
             try:
                 save(summary_path, summaries)
             except OSError:
