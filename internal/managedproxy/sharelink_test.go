@@ -160,3 +160,61 @@ func wrap(s string, n int) string {
 	b.WriteString(s)
 	return b.String()
 }
+
+// Common link forms that were wrongly rejected: v2rayN's gRPC mode in the
+// VMess "type" field, and the Hysteria 2 URI's multi-port and default port.
+func TestShareLinkAcceptsCommonTransportAndPortForms(t *testing.T) {
+	for _, tc := range []struct {
+		name, link string
+		want       map[string]any
+	}{
+		{"vmess-grpc-gun", vmessLink(t, map[string]any{"ps": "G", "add": "g.example.com", "port": "443", "id": "u", "net": "grpc", "type": "gun", "path": "svc", "tls": "tls"}), map[string]any{
+			"name": "G", "type": "vmess", "server": "g.example.com", "port": 443, "uuid": "u", "alterId": 0, "cipher": "auto", "tls": true,
+			"network": "grpc", "grpc-opts": map[string]any{"grpc-service-name": "svc"}}},
+		{"vmess-grpc-multi", vmessLink(t, map[string]any{"ps": "M", "add": "g.example.com", "port": 443, "id": "u", "net": "grpc", "type": "multi", "path": "svc", "tls": "tls"}), map[string]any{
+			"name": "M", "type": "vmess", "server": "g.example.com", "port": 443, "uuid": "u", "alterId": 0, "cipher": "auto", "tls": true,
+			"network": "grpc", "grpc-opts": map[string]any{"grpc-service-name": "svc"}}},
+		{"hysteria2-multi-port", "hysteria2://pw@hy.example.com:443,5000-6000/?sni=hy.example.com#Multi", map[string]any{
+			"name": "Multi", "type": "hysteria2", "server": "hy.example.com", "port": 443, "password": "pw", "sni": "hy.example.com", "ports": "443,5000-6000"}},
+		{"hysteria2-range-only", "hy2://pw@198.51.100.20:20000-30000#Range", map[string]any{
+			"name": "Range", "type": "hysteria2", "server": "198.51.100.20", "port": 20000, "password": "pw", "ports": "20000-30000"}},
+		{"hysteria2-default-port", "hysteria2://pw@hy.example.com/?sni=hy.example.com#Default", map[string]any{
+			"name": "Default", "type": "hysteria2", "server": "hy.example.com", "port": 443, "password": "pw", "sni": "hy.example.com"}},
+		{"hysteria2-default-port-no-path", "hysteria2://pw@hy.example.com#Bare", map[string]any{
+			"name": "Bare", "type": "hysteria2", "server": "hy.example.com", "port": 443, "password": "pw"}},
+		{"hysteria2-ipv6-multi-port", "hysteria2://pw@[2001:db8::1]:443,8443#V6", map[string]any{
+			"name": "V6", "type": "hysteria2", "server": "2001:db8::1", "port": 443, "password": "pw", "ports": "443,8443"}},
+		{"hysteria2-ipv6-default-port", "hysteria2://pw@[2001:db8::1]/#V6D", map[string]any{
+			"name": "V6D", "type": "hysteria2", "server": "2001:db8::1", "port": 443, "password": "pw"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseShareLink(tc.link)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("got  %#v\nwant %#v", got, tc.want)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, link, reason string }{
+		{"vmess-tcp-http-header", vmessLink(t, map[string]any{"add": "h.example.com", "port": 443, "id": "u", "net": "tcp", "type": "http"}), "伪装头"},
+		{"vmess-ws-gun-is-header", vmessLink(t, map[string]any{"add": "h.example.com", "port": 443, "id": "u", "net": "ws", "type": "gun"}), "伪装头"},
+		{"hysteria2-bad-range", "hysteria2://pw@hy.example.com:443,70000-80000#Bad", "格式无效"},
+		{"hysteria2-no-auth", "hysteria2://hy.example.com:443,5000-6000#NoAuth", "格式无效"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseShareLink(tc.link)
+			if err == nil || !strings.Contains(err.Error(), tc.reason) {
+				t.Fatalf("error = %v, want %q", err, tc.reason)
+			}
+		})
+	}
+}
+
+func TestShareLinkHysteria2MultiPortSurvivesImport(t *testing.T) {
+	nodes, _, err := parseNodes([]byte("hysteria2://pw@hy.example.com:443,5000-6000/?mport=443,5000-6000#Multi\nhy2://pw@hy.example.com#Default\n"), "paste")
+	if err != nil || len(nodes) != 2 || nodes[0].Config["ports"] != "443,5000-6000" || nodes[0].Config["port"] != 443 || nodes[1].Config["port"] != 443 {
+		t.Fatalf("imported = %+v, %v", nodes, err)
+	}
+}

@@ -326,11 +326,17 @@ func parseVMessLink(line string) (map[string]any, error) {
 	default:
 		return nil, errors.New("VMess 分享链接的安全层暂不支持；请改用 Clash/Mihomo YAML")
 	}
-	service := ""
+	service, header := "", v.Type
 	if v.Net == "grpc" {
 		service = v.Path
+		// For gRPC, v2rayN's type is the transport mode, not a disguise
+		// header: "gun" (the default) or "multi". The core speaks gun, which
+		// multi-mode servers also accept.
+		if header == "gun" || header == "multi" {
+			header = ""
+		}
 	}
-	if err := applyTransport(p, v.Net, v.Path, v.Host, service, v.Type); err != nil {
+	if err := applyTransport(p, v.Net, v.Path, v.Host, service, header); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -433,9 +439,16 @@ func parseHysteria2Link(line string) (map[string]any, error) {
 	if strings.HasPrefix(strings.ToLower(line), "hy2://") {
 		line = "hysteria2://" + line[len("hy2://"):]
 	}
+	line, ports, err := hysteria2LinkPorts(line)
+	if err != nil {
+		return nil, err
+	}
 	u, p, err := linkBase(line, "hysteria2")
 	if err != nil {
 		return nil, err
+	}
+	if ports != "" {
+		p["ports"] = ports
 	}
 	password := u.User.Username()
 	if pass, ok := u.User.Password(); ok {
@@ -462,6 +475,51 @@ func parseHysteria2Link(line string) (map[string]any, error) {
 	setString(p, "mport", q.Get("mport"))
 	setString(p, "pinSHA256", q.Get("pinSHA256"))
 	return p, nil
+}
+
+// hysteria2LinkPorts handles the authority forms of the Hysteria 2 URI scheme
+// that net/url rejects: an omitted port (443) and a multi-port list such as
+// host:443,5000-6000. The link is returned with a single port (the first one)
+// for linkBase, and the list, normalized, for the core's ports field.
+func hysteria2LinkPorts(line string) (string, string, error) {
+	scheme, rest, ok := strings.Cut(line, "://")
+	if !ok {
+		return line, "", errShareLinkInvalid
+	}
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authority, tail := rest[:end], rest[end:]
+	at := strings.LastIndexByte(authority, '@')
+	userinfo, hostport := authority[:at+1], authority[at+1:]
+	host, spec := hostport, ""
+	if strings.HasPrefix(hostport, "[") {
+		closing := strings.IndexByte(hostport, ']')
+		if closing < 0 {
+			return line, "", errShareLinkInvalid
+		}
+		host, spec = hostport[:closing+1], hostport[closing+1:]
+		if spec != "" && !strings.HasPrefix(spec, ":") {
+			return line, "", errShareLinkInvalid
+		}
+		spec = strings.TrimPrefix(spec, ":")
+	} else if i := strings.IndexByte(hostport, ':'); i >= 0 {
+		host, spec = hostport[:i], hostport[i+1:]
+	}
+	if spec == "" {
+		return scheme + "://" + userinfo + host + ":443" + tail, "", nil
+	}
+	if !strings.ContainsAny(spec, ",-") {
+		return line, "", nil
+	}
+	ports, err := hysteria2Ports(spec)
+	if err != nil {
+		return line, "", errShareLinkInvalid
+	}
+	first, _, _ := strings.Cut(ports, ",")
+	first, _, _ = strings.Cut(first, "-")
+	return scheme + "://" + userinfo + host + ":" + first + tail, ports, nil
 }
 
 func parseTUICLink(line string) (map[string]any, error) {
