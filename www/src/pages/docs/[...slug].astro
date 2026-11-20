@@ -33,7 +33,7 @@ const canonical = new URL(guideURL(page.slug), Astro.site);
   <a class="skip-link" href="#article">跳到正文</a>
   <header class="nav wrap guide-header">
     <a class="brand" href={base}><img src={`${base}cage-icon.png`} width="36" height="36" alt="" /><span>Claude Cage</span></a>
-    <nav aria-label="网站导航"><a href={base+"ask/"}>使用答疑</a><a href={base}>官网首页</a><a href={guideURL('index')} aria-current="page">使用文档</a><a class="nav-download" href={`${base}#download`}>下载应用 ↓</a></nav>
+    <nav aria-label="网站导航"><a href={base+"ask/"}>使用答疑</a><a href={`${base}plugins/`}>插件市场</a><a href={base}>官网首页</a><a href={guideURL('index')} aria-current="page">使用文档</a><a class="nav-download" href={`${base}#download`}>下载应用 ↓</a></nav>
   </header>
   <div class="guide-shell wrap">
     <aside class="guide-sidebar" aria-label="文档导航">

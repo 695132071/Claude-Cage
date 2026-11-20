@@ -58,11 +58,13 @@ Cage 的核心路线是把有风险的运行外壳（Claude Code、Claude Deskto
 
 ## 常见插件示例
 
-在 [cage-plugins](https://github.com/Lee-xeo/cage-plugins) 市场中，你可以直接体验或参考以下代表性插件：
+可以在[官网插件市场](https://claude-cage.com/plugins/)在线浏览全部插件、权限声明与 SHA-256 校验值，或在 [cage-plugins](https://github.com/Lee-xeo/cage-plugins) 仓库查看源码。代表性插件包括：
 
-- **`desktop-control`**（主机插件）：查看屏幕并控制键鼠，声明 `screen` 和 `input` 权限。
-- **`excel-workbooks` / `word-documents` / `powerpoint-slides`**（主机插件）：无需安装 Office 即可读写表格、文档与演示文稿，通过 `uvx` 固定版本启动开源 MCP 服务。
+- **`desktop-control`**（主机插件）：查看屏幕并控制本机键鼠，声明 `screen` 和 `input` 权限。
 - **`blender`**（主机插件）：连接并操作本机正在运行的 Blender（基于 `ahujasid/blender-mcp`）。
+- **`local-preview`**（主机插件）：打开本机回环地址的开发预览页并读回标签页标题与地址。
+- **`excel-workbooks` / `word-documents` / `powerpoint-slides`**（环境内插件）：无需安装 Office 即可读写表格、文档与演示文稿。
+- **`documents-to-markdown`**（环境内插件）：将 PDF、Office、EPUB 与 HTML 文档解析为整洁 Markdown。
 - **`browser`**（环境内插件）：控制环境内的 Chromium 浏览网页（基于 `microsoft/playwright-mcp`）。
 - **`system-status`**（环境内插件）：同时提供 MCP 工具与自定义侧栏页面，展示环境处理器、内存与磁盘状态。
 - **`clock`**（主机插件）：最小示例插件，适合作为开发模板。
