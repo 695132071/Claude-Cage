@@ -2477,5 +2477,9 @@
   "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "L’ancienne configuration utilise un port proxy local. Importez les nœuds de la chaîne et appliquez-les dans leur ordre initial.",
   "节点配置": "Configuration des nœuds",
   "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Importez les nœuds individuellement. Pour une chaîne, sélectionnez dans Cage les relais dans l’ordre, puis le nœud de sortie.",
-  "代理链需要迁移": "La chaîne de proxys doit être migrée"
+  "代理链需要迁移": "La chaîne de proxys doit être migrée",
+  "Cage 官方 · {0}": "Cage officiel · {0}",
+  "社区作者 · {0}": "Auteur communautaire · {0}",
+  "作者未注明": "Auteur non indiqué",
+  "市场署名：{0}": "Auteur sur le marché : {0}"
 }

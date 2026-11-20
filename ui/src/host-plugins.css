@@ -300,6 +300,7 @@
 .plugin-card-main:hover:not(:disabled) { background: transparent; }
 .plugin-card-text { flex: 1; min-width: 0; display: grid; gap: 6px; }
 .plugin-card-text .plugin-row-title strong { font-size: 1rem; }
+.plugin-byline { min-width: 0; color: var(--muted); font-size: 0.8571rem; overflow-wrap: anywhere; }
 .plugin-card-description { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--muted); font-size: 0.9286rem; line-height: 1.55; min-height: 3.1em; }
 .plugin-card-item footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px 14px 18px; }
 .plugin-card-permissions { display: inline-flex; align-items: center; gap: 5px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 0.8214rem; white-space: nowrap; text-overflow: ellipsis; }

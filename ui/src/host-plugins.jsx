@@ -379,6 +379,12 @@ export function HostPluginsSidebar({ visible, model, page, onPage, onBack, onCon
   );
 }
 
+function marketByline(item) {
+  const name = item.author?.name?.trim();
+  if (!name) return translate("作者未注明");
+  return item.author.official ? translate("Cage 官方 · {0}", name) : translate("社区作者 · {0}", name);
+}
+
 function MarketCard({ entry, view, busy, onOpen, onInstall }) {
   const tr = useTranslation();
   const info = entryInfo(entry, view);
@@ -387,10 +393,12 @@ function MarketCard({ entry, view, busy, onOpen, onInstall }) {
   const installing = busy === `install:${entry.name}`;
   return (
     <article className="plugin-card-item">
-      <button type="button" className="plugin-card-main" onClick={onOpen} aria-label={tr("查看 {0}", (info.title))}>
+      <button type="button" className="plugin-card-main" onClick={onOpen} aria-label={tr("查看 {0}", (info.title))}
+        aria-describedby={`market-author-${entry.name}`}>
         <PluginIcon name={entry.name} src={entry.icon} size={44} />
         <span className="plugin-card-text">
           <span className="plugin-row-title"><strong>{info.title}</strong><small>{update ? `${entry.plugin.version || "?"} → ${offer.version}` : offer.version}</small></span>
+          <span className="plugin-byline" id={`market-author-${entry.name}`}>{marketByline(offer)}</span>
           <span className="plugin-card-description">{pluginText(offer)}</span>
           <PurposeTags item={offer} />
         </span>
@@ -598,6 +606,8 @@ function Detail({ model, name, onConfirm, onPage }) {
           <div className="plugin-hero-name"><h2>{info.title}</h2><code>{name}</code></div>
           <div className="plugin-hero-meta">
             <span>{translate(sources[entry.source])}</span>
+            {entry.listing ? <span className="plugin-byline">{tr("市场署名：{0}", marketByline(entry.listing))}</span>
+              : offer?.source === "market" && <span className="plugin-byline">{marketByline(offer)}</span>}
             {info.version && <span>{tr("版本") + " "}{info.version}</span>}
             {!plugin && offer?.bytes > 0 && <span>{size(offer.bytes)}</span>}
             {plugin && <StateChip state={info.state} />}

@@ -2477,5 +2477,9 @@
   "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "Habayntii hore waxay isticmaashaa deked wakiil maxalli ah. Soo deji noodhadhka silsiladdii hore oo ku dabaq isla siday u kala horreeyeen.",
   "节点配置": "Habaynta noodhadhka",
   "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Soo deji noodhadhka mid mid. Si aad silsilad u samayso, Cage ka dooro noodhadhka dhexe siday u kala horreeyaan, dabadeed noodhka bixitaanka.",
-  "代理链需要迁移": "Silsiladda wakiilladu waxay u baahan tahay guurin"
+  "代理链需要迁移": "Silsiladda wakiilladu waxay u baahan tahay guurin",
+  "Cage 官方 · {0}": "Rasmi ah oo Cage ah · {0}",
+  "社区作者 · {0}": "Qoraa ka tirsan bulshada · {0}",
+  "作者未注明": "Qoraaga lama sheegin",
+  "市场署名：{0}": "Qoraaga ku qoran suuqa: {0}"
 }
