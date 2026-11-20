@@ -2441,5 +2441,7 @@
   "以上端点都不可用时改用 Google 公共 DNS（8.8.8.8）": "Utiliser le DNS public de Google (8.8.8.8) si aucun des points ci-dessus ne répond",
   "业务 DNS、联网检查与内置核心使用同一组端点，均经所选节点发出，按顺序尝试。默认只使用上面的加密 DNS；开启公共 DNS 备用后，查询可能发给第二家服务商。": "Le DNS de l’environnement, la vérification réseau et le cœur intégré utilisent les mêmes points de terminaison, tous via le nœud choisi et dans l’ordre. Par défaut, seul le DNS chiffré ci-dessus est utilisé ; avec le secours public activé, les requêtes peuvent être envoyées à un second fournisseur.",
   "节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）": "Résolution des noms de nœuds (un DoH à IP numérique par ligne ; vide pour la valeur par défaut)",
-  "经主机网络解析节点服务器域名，下次应用代理时生效。": "Résout les noms des serveurs de nœuds via le réseau de l’hôte ; prend effet à la prochaine application du proxy."
+  "经主机网络解析节点服务器域名，下次应用代理时生效。": "Résout les noms des serveurs de nœuds via le réseau de l’hôte ; prend effet à la prochaine application du proxy.",
+  "安装与工具下载兼容模式（限制 curl 最高使用 TLS 1.2）": "Mode de compatibilité pour l’installation et les téléchargements (limiter curl à TLS 1.2)",
+  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Désactivé par défaut. À activer uniquement si la sortie proxy sélectionnée interrompt la négociation TLS 1.3 de curl et bloque l’installation ou les téléchargements ; sans effet sur la navigation ni les conversations."
 }

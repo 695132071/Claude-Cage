@@ -114,7 +114,10 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 				<-done
 			}()
 			s.setMessage("正在下载并安装 Claude Desktop，可在操作详情查看进度…")
-			script := cage.ClaudeDesktopInstallScript()
+			s.mu.Lock()
+			tls12Compat := s.preferences.InstallTLS12Compat
+			s.mu.Unlock()
+			script := cage.InstallTLS12Prelude(tls12Compat) + cage.ClaudeDesktopInstallScript()
 			if action == "update" {
 				script = "set -e\nsudo systemctl stop cage-claude-desktop.service\n" + script
 			}

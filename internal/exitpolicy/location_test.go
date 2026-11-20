@@ -31,8 +31,8 @@ func TestLocationTimeouts(t *testing.T) {
 		wantCalls   int
 		wantError   error
 	}{
-		{name: "last provider succeeds after four timeouts", lastWorks: true, wantElapsed: 39 * time.Second, wantCalls: 5},
-		{name: "all providers time out", wantElapsed: 40 * time.Second, wantCalls: 5},
+		{name: "last provider succeeds after five timeouts", lastWorks: true, wantElapsed: 47 * time.Second, wantCalls: 6},
+		{name: "all providers time out", wantElapsed: 48 * time.Second, wantCalls: 6},
 		{name: "caller deadline stops further providers", deadline: 20 * time.Second, wantElapsed: 20 * time.Second, wantCalls: 3, wantError: context.DeadlineExceeded},
 		// A monitoring round also spends its 45-second budget on exit sampling
 		// and environment checks; the last provider cannot extend that deadline.
@@ -51,7 +51,7 @@ func TestLocationTimeouts(t *testing.T) {
 				var hosts []string
 				client := &http.Client{Timeout: 8 * time.Second, Transport: locationTransport(func(r *http.Request) (*http.Response, error) {
 					hosts = append(hosts, r.URL.Host)
-					if tc.lastWorks && r.URL.Host == "ipapi.co" {
+					if tc.lastWorks && r.URL.Host == "ipinfo.io" {
 						select {
 						case <-time.After(7 * time.Second):
 							return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(validLocationJSON))}, nil
@@ -63,7 +63,7 @@ func TestLocationTimeouts(t *testing.T) {
 					return nil, r.Context().Err()
 				})}
 				loc, err := Lookup(ctx, client, net.ParseIP("8.8.8.8"))
-				wantHosts := []string{"ipwho.is", "api.ip.sb", "ipwhois.app", "get.geojs.io", "ipapi.co"}
+				wantHosts := []string{"ipwho.is", "api.ip.sb", "ipwhois.app", "get.geojs.io", "ipapi.co", "ipinfo.io"}
 				if !slices.Equal(hosts, wantHosts[:tc.wantCalls]) {
 					t.Fatalf("unexpected fallback requests: %v", hosts)
 				}
@@ -83,7 +83,7 @@ func TestLocationTimeouts(t *testing.T) {
 					if err == nil || loc != (Location{}) {
 						t.Fatalf("timed-out providers returned location=%+v, error=%v", loc, err)
 					}
-					for _, host := range []string{"ipwho.is", "IP.SB", "ipwhois.app", "GeoJS", "ipapi.co"} {
+					for _, host := range []string{"ipwho.is", "IP.SB", "ipwhois.app", "GeoJS", "ipapi.co", "ipinfo.io"} {
 						if !strings.Contains(err.Error(), host+"：连接失败或超时") {
 							t.Fatalf("missing sanitized timeout for %s: %v", host, err)
 						}
@@ -95,10 +95,10 @@ func TestLocationTimeouts(t *testing.T) {
 }
 
 func TestLocationRequestsDoNotSendProjectIdentity(t *testing.T) {
-	requests := make(chan *http.Request, 5)
+	requests := make(chan *http.Request, 6)
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests <- r.Clone(context.Background())
-		if r.Host != "ipapi.co" {
+		if r.Host != "ipinfo.io" {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
@@ -125,6 +125,7 @@ func TestLocationRequestsDoNotSendProjectIdentity(t *testing.T) {
 		"ipwhois.app/json/8.8.8.8",
 		"get.geojs.io/v1/ip/geo/8.8.8.8.json",
 		"ipapi.co/8.8.8.8/json/",
+		"ipinfo.io/8.8.8.8/json",
 	} {
 		select {
 		case r := <-requests:
@@ -137,5 +138,17 @@ func TestLocationRequestsDoNotSendProjectIdentity(t *testing.T) {
 		default:
 			t.Fatal("provider did not receive request", want)
 		}
+	}
+}
+
+func TestLocationRejectsBogonResponse(t *testing.T) {
+	client := &http.Client{Transport: locationTransport(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "ipinfo.io" {
+			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"ip":"8.8.8.8","bogon":true,"country":"US","timezone":"America/Los_Angeles"}`))}, nil
+		}
+		return &http.Response{StatusCode: http.StatusServiceUnavailable, Body: io.NopCloser(strings.NewReader(""))}, nil
+	})}
+	if _, err := Lookup(context.Background(), client, net.ParseIP("8.8.8.8")); err == nil {
+		t.Fatal("bogon response must be rejected")
 	}
 }

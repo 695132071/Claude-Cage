@@ -85,7 +85,7 @@ func TestLocationFallbackUsesMeasuredIP(t *testing.T) {
 }
 
 func TestLocationFallbackStaysOnConfiguredProxy(t *testing.T) {
-	wantTargets := []string{"ipwho.is:443", "api.ip.sb:443", "ipwhois.app:443", "get.geojs.io:443", "ipapi.co:443"}
+	wantTargets := []string{"ipwho.is:443", "api.ip.sb:443", "ipwhois.app:443", "get.geojs.io:443", "ipapi.co:443", "ipinfo.io:443"}
 	targets := make(chan string, len(wantTargets))
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodConnect {
@@ -114,10 +114,11 @@ func TestLocationFallbackStaysOnConfiguredProxy(t *testing.T) {
 
 func TestLocationExtendedFallbacks(t *testing.T) {
 	cases := []struct {
-		name string
-		host string
-		path string
-		body string
+		name    string
+		host    string
+		path    string
+		body    string
+		country string
 	}{
 		{
 			name: "ipwhois.app",
@@ -137,6 +138,13 @@ func TestLocationExtendedFallbacks(t *testing.T) {
 			path: "/8.8.8.8/json/",
 			body: `{"ip":"8.8.8.8","country":"US","country_name":"United States","country_code":"US","region":"Connecticut","region_code":"CT","city":"New Haven","timezone":"America/New_York"}`,
 		},
+		{
+			name:    "ipinfo.io",
+			host:    "ipinfo.io",
+			path:    "/8.8.8.8/json",
+			body:    `{"ip":"8.8.8.8","country":"US","region":"California","city":"Mountain View","timezone":"America/Los_Angeles"}`,
+			country: "US",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -149,8 +157,12 @@ func TestLocationExtendedFallbacks(t *testing.T) {
 				}
 				return nil, errors.New("blocked")
 			})}
+			wantCountry := tc.country
+			if wantCountry == "" {
+				wantCountry = "United States"
+			}
 			loc, err := lookupLocation(context.Background(), client, net.ParseIP("8.8.8.8"))
-			if err != nil || loc.IP != "8.8.8.8" || loc.Country != "United States" || loc.CountryCode != "US" || loc.Timezone == "" {
+			if err != nil || loc.IP != "8.8.8.8" || loc.Country != wantCountry || loc.CountryCode != "US" || loc.Timezone == "" {
 				t.Fatalf("%s lookup failed: %+v, err=%v", tc.name, loc, err)
 			}
 		})
@@ -289,7 +301,7 @@ func TestLocationProvidersLiveIntegration(t *testing.T) {
 			t.Fatal("manual mode was not applied")
 		}
 	})
-	for _, host := range []string{"ipwho.is", "api.ip.sb", "ipwhois.app", "get.geojs.io", "ipapi.co"} {
+	for _, host := range []string{"ipwho.is", "api.ip.sb", "ipwhois.app", "get.geojs.io", "ipapi.co", "ipinfo.io"} {
 		t.Run(host, func(t *testing.T) {
 			only := *client
 			only.Transport = browserTransport(func(r *http.Request) (*http.Response, error) {

@@ -131,7 +131,7 @@ func containerOperation(configPath string, args []string, cfg cage.Config, keepP
 		fmt.Println("Cage 容器服务已启动；工作台完成网络检查后才会放行外网。")
 		return true, nil
 	case "update-tools":
-		return true, workbench.RunMaintenanceScript(ctx, configPath, cage.ToolsUpdateScript(), os.Stdout, os.Stderr)
+		return true, workbench.RunMaintenanceScript(ctx, configPath, cage.ToolsUpdateScriptFor(os.Getenv(cage.InstallTLS12Env) == "1"), os.Stdout, os.Stderr)
 	case "login":
 		return true, workbench.RunEnvironmentCommand(ctx, configPath, []string{"claude", "auth", "login"}, os.Stdin, os.Stdout, os.Stderr, true)
 	case "shell":

@@ -45,6 +45,10 @@ type Preferences struct {
 	// keeps the guest default ("auto": official first); "nju" or "ustc" puts
 	// that mirror first.
 	DebianMirror string `json:"debian_mirror,omitempty"`
+	// InstallTLS12Compat caps curl at TLS 1.2 during guest installation and
+	// tool downloads for proxies that drop curl's TLS 1.3 ClientHello. Off by
+	// default; does not affect normal browsing or API connections.
+	InstallTLS12Compat bool `json:"install_tls12_compat,omitempty"`
 }
 
 const defaultBrowserHomeURL = "https://www.bing.com/"

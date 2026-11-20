@@ -320,6 +320,20 @@ export function SettingsPanel({
                 <p className="field-help">
                   {tr("经主机网络解析节点服务器域名，下次应用代理时生效。")}
                 </p>
+                <label className="toggle-row">
+                  <span>
+                    <strong>{tr("安装与工具下载兼容模式（限制 curl 最高使用 TLS 1.2）")}</strong>
+                    <small>
+                      {tr("默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。")}
+                    </small>
+                  </span>
+                  <input
+                    role="switch"
+                    type="checkbox"
+                    checked={Boolean(draft.install_tls12_compat)}
+                    onChange={(e) => update("install_tls12_compat", e.target.checked)}
+                  />
+                </label>
                 <div className="probe-line">
                   <button disabled={busy} onClick={check}>
                     {probing ? (

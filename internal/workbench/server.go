@@ -702,6 +702,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	hostTools, hostPluginsOff := s.preferences.HostTools, s.preferences.HostPluginsOff
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
+	input.InstallTLS12Compat = s.preferences.InstallTLS12Compat
 	s.mu.Unlock()
 	// Clients predating the DNS options keep the saved ones.
 	if current, err := loadConfig(s.configPath); err == nil {

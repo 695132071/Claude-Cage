@@ -287,9 +287,13 @@ func (s *Server) runCage(args ...string) error {
 	}
 	s.mu.Lock()
 	mirror := s.preferences.DebianMirror
+	tls12Compat := s.preferences.InstallTLS12Compat
 	s.mu.Unlock()
 	if mirror != "" {
 		cmd.Env = append(cmd.Env, cage.DebianMirrorEnv+"="+mirror)
+	}
+	if tls12Compat {
+		cmd.Env = append(cmd.Env, cage.InstallTLS12Env+"=1")
 	}
 	cmd.Env = append(cmd.Env, cage.JobEnv+"="+execution.id)
 	cmd.Stdout, cmd.Stderr = execution, execution
