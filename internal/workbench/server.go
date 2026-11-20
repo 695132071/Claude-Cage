@@ -128,6 +128,7 @@ type Server struct {
 	activities              sync.WaitGroup
 	closeOnce               sync.Once
 	closeErr                error
+	deviceReset             deviceResetHooks
 	controlPublished        bool
 }
 
@@ -388,6 +389,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/environment/guest-profile", s.guestProfileOptions)
 	mux.HandleFunc("POST /api/environment/guest-profile/preview", s.guestProfileOptions)
 	s.registerCacheMaintenance(mux)
+	s.registerDeviceReset(mux)
 	mux.HandleFunc("GET /api/environment/guest-systems", s.guestInstallation)
 	mux.HandleFunc("DELETE /api/environment/guest-systems", s.guestInstallation)
 	mux.HandleFunc("GET /api/environment/storage", s.environmentStorage)
