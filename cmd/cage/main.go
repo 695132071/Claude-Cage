@@ -473,14 +473,10 @@ func run() int {
 		if err = host.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 			return fail(err)
 		}
-		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			return fail(err)
+		data, err := json.MarshalIndent(cage.DefaultConfig(), "", "  ")
+		if err == nil {
+			err = host.CreatePrivateFile(path, append(data, '\n'))
 		}
-		enc := json.NewEncoder(f)
-		enc.SetIndent("", "  ")
-		err = enc.Encode(cage.DefaultConfig())
-		f.Close()
 		if err != nil {
 			return fail(err)
 		}

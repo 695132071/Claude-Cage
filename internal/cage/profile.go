@@ -64,7 +64,12 @@ func (c Config) RecordRunningAt(dir string) error {
 		return err
 	}
 	defer os.Remove(f.Name())
-	if _, err = f.Write(b); err != nil {
+	if _, err = f.Write(b); err == nil {
+		// Flush before the rename: after a power loss the record is either
+		// the previous one or complete, never an empty file.
+		err = f.Sync()
+	}
+	if err != nil {
 		f.Close()
 		return err
 	}
@@ -88,12 +93,18 @@ func (c Config) CheckRunning(state string) error {
 	files = append(files, containerRecords...)
 	for _, file := range files {
 		b, err := os.ReadFile(file)
+		if errors.Is(err, os.ErrNotExist) {
+			continue // The owner stopped since the listing.
+		}
 		if err != nil {
 			return err
 		}
 		var r runningProfile
 		if json.Unmarshal(b, &r) != nil {
-			return errors.New("invalid running cage profile record")
+			// Records are replaced whole, so only a crash or power loss before
+			// this version flushed them leaves an unreadable one. No running
+			// owner corresponds to it; the next start replaces it.
+			continue
 		}
 		if r.alive() && r.Fingerprint != c.Fingerprint() {
 			return fmt.Errorf("cage configuration changed while a VM is running; run cage stop before restarting")

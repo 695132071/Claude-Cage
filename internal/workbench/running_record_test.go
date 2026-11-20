@@ -59,3 +59,22 @@ func TestVMRecordWithReusedPIDIsNotRunning(t *testing.T) {
 		})
 	}
 }
+
+func TestUnreadableVMRecordNamesNoOwner(t *testing.T) {
+	s := testServer(t)
+	dir := filepath.Join(s.profile, "state", "lima", "interrupted")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"", `{"pid":`} {
+		if err := os.WriteFile(filepath.Join(dir, "cage-running.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if owners, err := controllerVMOwners(s.profile); err != nil || len(owners) != 0 {
+			t.Fatalf("record %q: owners = %v, %v", content, owners, err)
+		}
+		if controllerHasVM(s.profile) {
+			t.Fatalf("record %q reported a running environment", content)
+		}
+	}
+}

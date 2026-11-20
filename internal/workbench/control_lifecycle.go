@@ -174,6 +174,9 @@ func controllerVMOwners(profile string) ([]string, error) {
 	var owners []string
 	for _, path := range records {
 		b, err := os.ReadFile(path)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -182,7 +185,9 @@ func controllerVMOwners(profile string) ([]string, error) {
 			Started string `json:"started"`
 		}
 		if json.Unmarshal(b, &record) != nil || record.PID <= 0 {
-			return nil, errors.New("环境进程记录无效")
+			// Only a crash or power loss can leave an unreadable record (see
+			// cage.Config.RecordRunningAt); it names no live owner.
+			continue
 		}
 		if processExists(record.PID) && cage.ProcessStartMatches(record.PID, record.Started) {
 			owners = append(owners, fmt.Sprintf("%s/%d", filepath.Base(filepath.Dir(path)), record.PID))

@@ -156,16 +156,9 @@ func runAgent(args []string, stdin io.Reader, stdout io.Writer, clientOnly bool)
 		if err := host.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 			return finish(nil, err)
 		}
-		file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			return finish(nil, err)
-		}
-		err = host.ProtectFile(path)
+		data, err := json.Marshal(cage.DefaultConfig())
 		if err == nil {
-			err = json.NewEncoder(file).Encode(cage.DefaultConfig())
-		}
-		if e := file.Close(); err == nil {
-			err = e
+			err = host.CreatePrivateFile(path, append(data, '\n'))
 		}
 		return finish(map[string]bool{"created": err == nil}, err)
 	case "service.start":
