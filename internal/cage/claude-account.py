@@ -595,14 +595,14 @@ def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=B
         if child.name == prefix.name:
             created = None
         elif child.name.startswith(head) and child.name[len(head):].isdigit() and len(child.name[len(head):]) >= 15:
-            created = int(child.name[len(head):]) / 1e9
+            created = int(child.name[len(head):])  # integer nanoseconds: a float cannot tell neighbours apart
         else:
             continue
         entries.append((created is not None, created or 0, child))
     if len(entries) <= 1:
         return
     entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    cutoff = (time.time() if now is None else now) - max_age
+    cutoff = int(((time.time() if now is None else now) - max_age) * 1e9)
     limit = max(1, keep_count)
     for index, (named, created, child) in enumerate(entries):
         # The newest backup of a series is kept regardless of its age.
@@ -1726,13 +1726,25 @@ def launch_files_in_use():
     than the file itself, so each argument is resolved through its links.
     """
     used = set()
-    for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
-            continue
+    proc = Path("/proc")
+    if proc.is_dir():
+        command_lines = []
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                command_lines.append((entry / "cmdline").read_bytes().split(b"\0"))
+            except OSError:
+                continue
+    else:
+        # No /proc (macOS): read every process's arguments from ps instead.
         try:
-            arguments = (entry / "cmdline").read_bytes().split(b"\0")
-        except OSError:
-            continue
+            listing = subprocess.run(["ps", "-axww", "-o", "command="], capture_output=True, timeout=10, check=True).stdout
+        except (OSError, subprocess.SubprocessError):
+            # Cannot tell which files are in use: report that, never "none".
+            return None
+        command_lines = [line.split() for line in listing.splitlines()]
+    for arguments in command_lines:
         for argument in arguments:
             for part in argument.split():
                 text = os.fsdecode(part)
@@ -1745,16 +1757,16 @@ def prune_stale_mcp_launch_files(folder, keep=None, now=None):
     if not folder.is_dir():
         return
     cutoff = (time.time() if now is None else now) - MCP_LAUNCH_FILE_MAX_AGE
-    in_use = None
+    in_use = False  # not looked up yet; None below means it cannot be told
     for candidate in folder.glob("mcp-*.json"):
         if candidate == keep or linked(candidate):
             continue
         try:
             if candidate.stat().st_mtime >= cutoff:
                 continue
-            if in_use is None:
+            if in_use is False:
                 in_use = launch_files_in_use()
-            if os.path.realpath(candidate) not in in_use:
+            if in_use is not None and os.path.realpath(candidate) not in in_use:
                 candidate.unlink(missing_ok=True)
         except OSError:
             pass

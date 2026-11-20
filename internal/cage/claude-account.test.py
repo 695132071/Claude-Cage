@@ -1612,6 +1612,9 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
             for root in (self.common, config, other):
                 self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"], root)
 
+    # The helper runs in the Linux guest and finds running CLIs through /proc,
+    # which a macOS host (where CI also runs this file) does not have.
+    @unittest.skipUnless(Path("/proc/stat").exists(), "needs /proc to see the running CLI")
     def test_entries_newer_than_a_running_cli_are_not_removed_by_its_save(self):
         self.install(self.common / "plugins", "team", "example/team", "lint")
         first, config = self.profile(FIRST)
