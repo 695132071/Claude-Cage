@@ -94,8 +94,11 @@ macos_check_toolchain() {
 
 # File Provider (iCloud Drive, other sync clients) adds Finder information and
 # provider attributes that codesign rejects as detritus. Signing covers only
-# the bundle's contents, so clear extended attributes first.
+# the bundle's contents, so clear extended attributes first. Licenses copied
+# from the Go module cache are 0444, and xattr cannot remove attributes such
+# as com.apple.provenance from a file its owner cannot write.
 macos_clear_bundle_attributes() {
+  chmod -R u+w "$1" 2>/dev/null || true
   if ! xattr -cr "$1" 2>/dev/null; then
     echo "Could not clear extended attributes in $1. If codesign reports detritus, build from a directory that is not managed by a file sync client." >&2
   fi
