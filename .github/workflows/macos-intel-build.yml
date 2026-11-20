@@ -53,21 +53,25 @@ jobs:
           brew install glib gettext pcre2 libffi pixman pkgconf meson ninja
           brew upgrade glib gettext pcre2
       # The runtime build is incremental inside _output/intel-runtime. The key
-      # names every input its compiled files depend on, so any change rebuilds.
+      # names only what changes its compiled files: the build script (with its
+      # pinned source hashes), the SDK, the compiler, Python's minor version and
+      # the Homebrew packages QEMU links or builds with. Runner image updates
+      # that touch nothing else keep the cache.
       - name: Describe the Intel runtime build inputs
         id: runtime-inputs
         run: |
           {
-            sw_vers -productVersion
-            xcrun --show-sdk-path
             xcrun --show-sdk-version
-            xcodebuild -version
-            python3 --version
-            command -v python3
-            brew list --versions
+            xcrun clang --version | head -n 1
+            python3 -c 'import sys; print("python", *sys.version_info[:2])'
+            brew list --versions pixman libffi gettext pkgconf meson ninja
           } > "$RUNNER_TEMP/intel-runtime-inputs"
+          cat "$RUNNER_TEMP/intel-runtime-inputs"
           printf 'digest=%s\n' "$(shasum -a 256 "$RUNNER_TEMP/intel-runtime-inputs" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      # Pull requests only read the cache; main saves it. One entry per input
+      # set keeps the repository within the 10 GB cache budget.
+      - uses: actions/cache/restore@v4
+        id: runtime-cache
         with:
           path: _output/intel-runtime
           key: intel-runtime-${{ hashFiles('scripts/build-intel-macos-runtime.sh') }}-${{ steps.runtime-inputs.outputs.digest }}
@@ -77,6 +81,12 @@ jobs:
           CAGE_BUILD_PYTHON: python3
           CAGE_BUILD_JOBS: '4'
         run: bash scripts/build-app.sh
+      - name: Save the Intel runtime build cache from main
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.runtime-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: _output/intel-runtime
+          key: ${{ steps.runtime-cache.outputs.cache-primary-key }}
       - name: Workbench checks
         run: |
           npm run --prefix ui lint
