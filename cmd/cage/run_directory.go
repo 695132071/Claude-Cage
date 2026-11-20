@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,24 +14,66 @@ import (
 	"golang.org/x/term"
 )
 
-// followRunDirectory makes `cage run` run from the directory it was started
-// in: the same place in a shared project, inside the environment. An explicit
-// --workdir is kept as given. A directory that is not shared is shared only
-// when the person at the terminal confirms; otherwise the command does not
-// run, so it never starts somewhere else.
-func followRunDirectory(configPath string, args []string, hostDir string, confirm workbench.RunDirectoryConfirm) ([]string, error) {
-	workdir, _, _, command, err := cli.SplitRun(args[1:])
-	if err != nil || workdir != "" || len(command) == 0 {
+// followRunDirectory picks where `cage run` runs. Inside a shared project it
+// runs from the same place in the environment. Anywhere else, or when that
+// cannot be determined (Cage closed, environment not ready, project busy), it
+// runs from the environment directory as it always did, after a one-line
+// notice on stderr: scripts that call cage run from any directory keep
+// working. An explicit --workdir is kept as given. --here asks for the strict
+// behavior: run in the current directory or not at all, offering to share it
+// when someone at the terminal can answer.
+func followRunDirectory(configPath string, args []string, hostDir string, hostErr error, stderr io.Writer, confirm workbench.RunDirectoryConfirm) ([]string, error) {
+	here, rest, err := cli.TakeRunFlag(args[1:], "--here")
+	if err != nil {
 		// The run reports its own usage errors.
 		return args, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	guest, err := runDirectory(ctx, configPath, hostDir, confirm)
-	if err != nil {
-		return nil, err
+	plain := append([]string{"run"}, rest...)
+	workdir, _, _, command, err := cli.SplitRun(rest)
+	if err != nil || len(command) == 0 {
+		return plain, nil
 	}
-	return append([]string{"run", "--workdir", guest}, args[1:]...), nil
+	if workdir != "" {
+		if here {
+			return nil, errors.New("--here 与 --workdir 不能同时使用")
+		}
+		return plain, nil
+	}
+	fallback := func(reason string, unshared bool) ([]string, error) {
+		fmt.Fprintf(stderr, "cage run：%s，改在环境目录中运行。\n", reason)
+		if unshared && confirm != nil {
+			fmt.Fprintln(stderr, "  如需在当前目录运行：在 Cage 的“项目”中添加该文件夹，或使用 cage run --here 确认共享。")
+		}
+		return plain, nil
+	}
+	if hostErr != nil {
+		if here {
+			return nil, fmt.Errorf("无法读取当前目录：%w", hostErr)
+		}
+		return fallback("无法读取当前目录", false)
+	}
+	timeout := 30 * time.Second
+	ask := workbench.RunDirectoryConfirm(nil)
+	if here {
+		// Sharing a folder and connecting it may take a while; the person
+		// asked to wait for it.
+		timeout, ask = 3*time.Minute, confirm
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	guest, err := runDirectory(ctx, configPath, hostDir, ask)
+	if err != nil {
+		if here {
+			return nil, err
+		}
+		var reason *workbench.RunDirectoryError
+		if errors.As(err, &reason) {
+			return fallback(reason.Reason, reason.Unshared)
+		}
+		line, _, _ := strings.Cut(strings.TrimSpace(err.Error()), "\n")
+		return fallback("无法确定当前目录在环境中的位置（"+line+"）", false)
+	}
+	return append([]string{"run", "--workdir", guest}, rest...), nil
 }
 
 // runDirectory is workbench.RunDirectory; a variable for tests.

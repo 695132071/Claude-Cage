@@ -257,6 +257,37 @@ func TakeWorkdir(args []string) (workdir string, rest []string, err error) {
 	return workdir, rest, nil
 }
 
+// TakeRunFlag removes a boolean flag, such as a caller's own --here, from the
+// options of a run (the words before its command) and reports whether it was
+// given. Words from the command on are left alone.
+func TakeRunFlag(args []string, flag string) (given bool, rest []string, err error) {
+	rest = make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		var probe VMOpts
+		if n, err := probe.take(args[i:]); err != nil {
+			return false, nil, err
+		} else if n > 0 {
+			rest = append(rest, args[i:i+n]...)
+			i += n - 1
+			continue
+		}
+		switch {
+		case a == flag:
+			given = true
+		case a == "--tty" || strings.HasPrefix(a, "--workdir="):
+			rest = append(rest, a)
+		case a == "--workdir" && i+1 < len(args):
+			rest = append(rest, a, args[i+1])
+			i++
+		default:
+			// "--" or the command: everything from here is the command's.
+			return given, append(rest, args[i:]...), nil
+		}
+	}
+	return given, rest, nil
+}
+
 // `shell [-c "command"]`: a login zsh in the VM, ~/.zshenv loaded. A word
 // it does not know is an error, not something skipped.
 func (e *app) shellCmd(ctx context.Context, opts VMOpts, args []string) int {
