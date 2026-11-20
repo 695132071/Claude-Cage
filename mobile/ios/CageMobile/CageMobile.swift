@@ -108,6 +108,8 @@ final class ConnectionModel: ObservableObject {
                     self.trusted = saved.host; self.pin = saved.host.pin; self.relay = saved.host.relay
                     self.imported = nil; self.invitation = nil; self.hasInvitation = false
                     self.hasSaved = true; self.needsTrust = false; self.verified = false
+                    let hostID = saved.host.relay + "|" + saved.host.pin
+                    if self.devices.contains(where: {$0.id == hostID}) {self.disconnectDevice(hostID)}
                     self.connect()
                 } catch { self.status = error.localizedDescription }
             }
@@ -282,6 +284,56 @@ final class ConnectionModel: ObservableObject {
     }
     func disconnect() {if let id = selectedDeviceID {disconnectDevice(id)}}
     func reconnect() {disconnect(); connect()}
+    func reconnectSaved() {
+        if let host = trusted {
+            let id = host.relay + "|" + host.pin
+            if devices.contains(where: {$0.id == id}) {disconnectDevice(id)}
+        }
+        connect()
+    }
+    private var didBackground = false
+    func handleBackground() {
+        didBackground = true
+        let connections = devices.compactMap(\.connection)
+        guard !connections.isEmpty else {return}
+        var taskID = UIBackgroundTaskIdentifier.invalid
+        taskID = UIApplication.shared.beginBackgroundTask(withName: "CageMobile.suspend") {
+            if taskID != .invalid {
+                UIApplication.shared.endBackgroundTask(taskID)
+                taskID = .invalid
+            }
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            for connection in connections {connection.suspend()}
+            DispatchQueue.main.async {
+                if taskID != .invalid {
+                    UIApplication.shared.endBackgroundTask(taskID)
+                    taskID = .invalid
+                }
+            }
+        }
+    }
+    func handleForeground() {
+        guard didBackground else {return}
+        didBackground = false
+        let snapshot = devices
+        for device in snapshot {
+            guard let connection = device.connection else {continue}
+            DispatchQueue.global(qos: .userInitiated).async {
+                let ok = connection.resume()
+                DispatchQueue.main.async {
+                    guard let current = self.devices.first(where: {$0.id == device.id}),
+                          current.connection === connection else {return}
+                    if ok {
+                        current.webView.evaluateJavaScript("window.dispatchEvent(new Event('online'))")
+                    } else if let host = self.trusted, host.relay + "|" + host.pin == device.id {
+                        self.disconnectDevice(device.id)
+                        self.connect()
+                    }
+                }
+            }
+        }
+    }
     func startPreview() {
         #if targetEnvironment(simulator)
         for (id, name) in [("preview-mac", "我的电脑 · 模拟器预览"), ("preview-linux", "Linux 工作站 · 模拟器预览")] {
@@ -506,7 +558,7 @@ private struct ConnectionSheet: View {
                     } label: {ActionLabel(title: "扫码连接", symbol: "qrcode.viewfinder")}
                     Button {manual = true} label: {ActionLabel(title: "使用配对码", symbol: "key", primary: false)}
                     if model.hasSaved || model.hasInvitation {
-                        Button("重新连接", action: model.connect).frame(minHeight: 44).disabled(!model.canConnect)
+                        Button("重新连接", action: model.reconnectSaved).frame(minHeight: 44).disabled(!model.canConnect)
                     }
                     if !model.devices.isEmpty {
                         Divider().padding(.vertical, 8)
@@ -650,6 +702,7 @@ private struct SettingsScreen: View {
 
 @main
 struct CageMobileApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var model = ConnectionModel()
     @AppStorage("appearance-theme") private var theme = CageTheme.system
     @State private var showingSettings = false
@@ -679,6 +732,10 @@ struct CageMobileApp: App {
                 }
                 .onChange(of: model.relay) {model.verified = false}
                 .onChange(of: model.pin) {model.verified = false}
+                .onChange(of: scenePhase) { _, phase in
+                    if phase == .background {model.handleBackground()}
+                    else if phase == .active {model.handleForeground()}
+                }
         }
     }
     private var home: some View {
