@@ -22,6 +22,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/mattn/go-isatty"
 	"github.com/sirupsen/logrus"
+	"github.com/sylvinus/agent-vm/internal/durable"
 	"github.com/sylvinus/agent-vm/internal/guestprofile"
 
 	"github.com/lima-vm/lima/v2/pkg/driver/external/server"
@@ -499,8 +500,9 @@ func (l *Lima) Edit(ctx context.Context, name string, s Settings) error {
 	}
 	if err != nil {
 		os.Remove(tmp)
+		return err
 	}
-	return err
+	return durable.SyncDir(inst.Dir)
 }
 
 // sharesKept fails unless Lima reads every share as written: it expands Go

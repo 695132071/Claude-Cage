@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
+	"github.com/sylvinus/agent-vm/internal/durable"
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 )
@@ -97,6 +98,9 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 	}
 	if err == nil {
 		err = os.Rename(temporary.Name(), filepath.Join(instanceDir, gateRecordName))
+	}
+	if err == nil {
+		err = durable.SyncDir(instanceDir)
 	}
 	if err != nil {
 		listener.Close()

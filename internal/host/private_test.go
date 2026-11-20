@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/sylvinus/agent-vm/internal/durable"
 )
 
 func TestPrivateStorageProtectsNewAndReplacedRecords(t *testing.T) {
@@ -59,5 +61,19 @@ func TestCreatePrivateFileNeverReplacesOrLeavesPartialFiles(t *testing.T) {
 	entries, err := os.ReadDir(dir)
 	if err != nil || len(entries) != 1 {
 		t.Fatalf("temporary files left behind: %v %v", entries, err)
+	}
+}
+
+func TestCreatePrivateFileFlushesTheDirectory(t *testing.T) {
+	dir := t.TempDir()
+	var synced []string
+	original := durable.SyncDir
+	durable.SyncDir = func(d string) error { synced = append(synced, d); return original(d) }
+	t.Cleanup(func() { durable.SyncDir = original })
+	if err := CreatePrivateFile(filepath.Join(dir, "record"), []byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) != 1 || filepath.Clean(synced[0]) != dir {
+		t.Fatalf("synced %q", synced)
 	}
 }

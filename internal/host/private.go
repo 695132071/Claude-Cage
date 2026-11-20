@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+
+	"github.com/sylvinus/agent-vm/internal/durable"
 )
 
 // EnsurePrivateDir creates host-only storage and removes inherited access.
@@ -66,7 +68,9 @@ func CreatePrivateFile(path string, data []byte) error {
 		return err
 	}
 	// A hard link publishes the complete file without replacing an existing one.
-	if err = os.Link(temporary, path); err == nil || errors.Is(err, os.ErrExist) {
+	if err = os.Link(temporary, path); err == nil {
+		return durable.SyncDir(dir)
+	} else if errors.Is(err, os.ErrExist) {
 		return err
 	}
 	// File systems without hard links: claim the name, then replace it.
@@ -77,5 +81,8 @@ func CreatePrivateFile(path string, data []byte) error {
 	if err = claim.Close(); err != nil {
 		return err
 	}
-	return os.Rename(temporary, path)
+	if err = os.Rename(temporary, path); err != nil {
+		return err
+	}
+	return durable.SyncDir(dir)
 }

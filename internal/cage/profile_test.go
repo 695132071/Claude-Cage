@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/sylvinus/agent-vm/internal/durable"
 )
 
 func TestConfigChangeRequiresStop(t *testing.T) {
@@ -168,5 +170,38 @@ func TestTruncatedRunningAndGateRecordsAllowRecovery(t *testing.T) {
 	}
 	if leftovers, _ := filepath.Glob(filepath.Join(instance, ".gate-*")); len(leftovers) != 0 {
 		t.Fatal("temporary gate records left behind:", leftovers)
+	}
+}
+
+func TestRunningRecordAndGateRecordFlushTheirDirectory(t *testing.T) {
+	dir := t.TempDir()
+	var synced []string
+	original := durable.SyncDir
+	durable.SyncDir = func(d string) error { synced = append(synced, d); return original(d) }
+	t.Cleanup(func() { durable.SyncDir = original })
+	if err := DefaultConfig().RecordRunningAt(dir); err != nil {
+		t.Fatal(err)
+	}
+	if len(synced) != 1 || synced[0] != dir {
+		t.Fatalf("running record synced %q", synced)
+	}
+	cfg := DefaultConfig()
+	cfg.ProxyURL = "http://127.0.0.1:9"
+	path := filepath.Join(dir, "config.json")
+	data, _ := json.Marshal(cfg)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewEgressGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, err := StartGateControl(path, dir, g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stop()
+	if len(synced) != 2 || synced[1] != dir {
+		t.Fatalf("gate record synced %q", synced)
 	}
 }

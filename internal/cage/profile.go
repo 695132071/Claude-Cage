@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/sylvinus/agent-vm/internal/durable"
 )
 
 type runningProfile struct {
@@ -82,7 +84,10 @@ func (c Config) RecordRunningAt(dir string) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), filepath.Join(dir, "cage-running.json"))
+	if err = os.Rename(f.Name(), filepath.Join(dir, "cage-running.json")); err != nil {
+		return err
+	}
+	return durable.SyncDir(dir)
 }
 
 // CheckRunning prevents a profile edit from silently leaving a running VM on
