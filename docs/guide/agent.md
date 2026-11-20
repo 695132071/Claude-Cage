@@ -278,7 +278,7 @@ cage agent call settings.get --scope selected --connection 当前连接代次
 | 手机配对 | mobile.get/pair/remove；自建中继输入 admin/relay，配对结果是私密邀请码。 |
 | Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/control-server/add-key/remove-key；自建控制服务器字段为 control_url（空字符串恢复官方），公钥字段为 key。 |
 | 浏览器首页 | browser.preferences.get/set；set 立即更新浏览器，失败保留旧值，长度限制与界面一致。settings.patch 单独修改首页时复用同一保存流程。 |
-| Cookie、权限、扩展、收藏 | browser.cookies/settings/extensions；favorites.get/change。Cookie 的 mode、scope、id、cookieKey 与界面相同。 |
+| Cookie、权限、扩展、收藏 | browser.cookies/settings/extensions；favorites.get/change。Cookie 的 mode、scope、id、cookieKey 与界面相同；mode 为 set 时在 cookie 中给出 name、value、domain、path、secure、httpOnly、sameSite（Strict/Lax/None，可省略）和 expires（Unix 秒，省略为会话 Cookie），带 cookieKey 表示编辑该条。set 只写入 id 所指网站标签自身的会话和站点，规则与界面相同；partitioned 暂不支持，会被明确拒绝。value 属于敏感数据，应通过私有管道传入。 |
 | SSH 主机与部署、指纹核对、连接与切换 | desktop 范围 client.hosts、client.hosts.create、client.candidate/commit/cancel/disconnect/local-stop；更新/删除主机使用 PUT/DELETE /api/client/hosts/主机ID。保留同一连接代次、候选、指纹和本机任务去留规则。 |
 | 已归档会话、名称、固定、账户切换 | request 访问 /api/cli/sessions 和 /api/cli/sessions/会话ID/{metadata,account,archive,restore,purge,open}。 |
 | 文件选择、主题导入导出、App 更新 | native.submit 调现有 chooseFolder、importTheme、exportTheme、appUpdate 等原生 action。系统选择器和签名检查照常执行。 |

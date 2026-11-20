@@ -2457,5 +2457,18 @@
   "SSH agent 套接字（可选）": "SSH agent ሶኬት (ኣማራጺ)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/ስምካ/.ssh/agent.sock",
   "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "SSH_AUTH_SOCK ንምጥቃም ባዶ ግደፎ። ኣመሓዳሪ ቃል-ምስጢር ናይ ባዕሉ agent እንተሂቡ፡ ፍጹም መንገዲ ሶኬቱ ምልኡ። Cage ፋይላት ምድላው SSH ኣየንብብን።",
-  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "SSH_AUTH_SOCK ወይ Windows OpenSSH agent ንምጥቃም ባዶ ግደፎ። ካልእ agent ንምጥቃም ብ\\\\.\\pipe\\ ዝጅምር ስሙይ ሻምብቆ (named pipe) ምልኡ።"
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "SSH_AUTH_SOCK ወይ Windows OpenSSH agent ንምጥቃም ባዶ ግደፎ። ካልእ agent ንምጥቃም ብ\\\\.\\pipe\\ ዝጅምር ስሙይ ሻምብቆ (named pipe) ምልኡ።",
+  "新增 Cookie": "Cookie ወስኽ",
+  "编辑 Cookie": "Cookie ኣርትዕ",
+  "编辑 Cookie {0}": "Cookie {0} ኣርትዕ",
+  "值": "ዋጋ",
+  "域名": "ዶሜን",
+  "路径": "መንገዲ",
+  "过期时间": "ግዜ ምብቃዕ",
+  "显示值": "ዋጋ ኣርኢ",
+  "以“.”开头时包含子域名，否则仅限该主机名。": "ዶሜን ብ«.» እንተጀሚሩ ንኡሳን ዶሜናት የጠቓልል፤ እንተዘይኮይኑ ነዚ ስም ኣሳናዳኢ ጥራይ።",
+  "未指定": "ኣይተገልጸን",
+  "只能编辑当前网站的 Cookie": "Cookie ናይ ህሉው መርበብ ጥራይ ክትኣርትዕ ትኽእል",
+  "暂不支持编辑分区 Cookie": "ምእራም ዝተኸፋፈሉ Cookie ገና ኣይድገፍን",
+  "请在网站页面中新增 Cookie": "Cookie ካብ ገጽ መርበብ ወስኽ"
 }

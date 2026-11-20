@@ -2457,5 +2457,18 @@
   "SSH agent 套接字（可选）": "SSH agent 通訊端（選填）",
   "/Users/你的名字/.ssh/agent.sock": "/Users/你的名字/.ssh/agent.sock",
   "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "留空時使用 SSH_AUTH_SOCK。密碼管理器提供獨立 agent 時，填寫其通訊端的絕對路徑。Cage 不讀取 SSH 設定檔。",
-  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "留空時使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 時，填寫以 \\\\.\\pipe\\ 開頭的具名管道。"
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "留空時使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 時，填寫以 \\\\.\\pipe\\ 開頭的具名管道。",
+  "新增 Cookie": "新增 Cookie",
+  "编辑 Cookie": "編輯 Cookie",
+  "编辑 Cookie {0}": "編輯 Cookie {0}",
+  "值": "值",
+  "域名": "網域",
+  "路径": "路徑",
+  "过期时间": "過期時間",
+  "显示值": "顯示值",
+  "以“.”开头时包含子域名，否则仅限该主机名。": "以「.」開頭時包含子網域，否則僅限該主機名稱。",
+  "未指定": "未指定",
+  "只能编辑当前网站的 Cookie": "只能編輯目前網站的 Cookie",
+  "暂不支持编辑分区 Cookie": "暫不支援編輯分區 Cookie",
+  "请在网站页面中新增 Cookie": "請在網站頁面中新增 Cookie"
 }

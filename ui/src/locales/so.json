@@ -2457,5 +2457,18 @@
   "SSH agent 套接字（可选）": "Socket-ka SSH agent (ikhtiyaari)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/Magacaaga/.ssh/agent.sock",
   "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK. Haddii maamulaha erayada sirta ah uu bixiyo agent u gaar ah, geli waddada buuxda ee socket-kiisa. Cage ma akhriyo faylasha dejinta SSH.",
-  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK ama Windows OpenSSH agent. Agent kale, geli tuubbada magacaaban (named pipe) ee ku bilaabanta \\\\.\\pipe\\."
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK ama Windows OpenSSH agent. Agent kale, geli tuubbada magacaaban (named pipe) ee ku bilaabanta \\\\.\\pipe\\.",
+  "新增 Cookie": "Ku dar Cookie",
+  "编辑 Cookie": "Wax ka beddel Cookie",
+  "编辑 Cookie {0}": "Wax ka beddel Cookie {0}",
+  "值": "Qiime",
+  "域名": "Domain",
+  "路径": "Waddo",
+  "过期时间": "Waqtiga dhicitaanka",
+  "显示值": "Muuji qiimaha",
+  "以“.”开头时包含子域名，否则仅限该主机名。": "Haddii uu ku bilaabmo «.» wuxuu ku jiraa subdomain-yada; haddii kale kaliya magacan martigeliyaha.",
+  "未指定": "Lama cayimin",
+  "只能编辑当前网站的 Cookie": "Kaliya Cookie-ga mareegta hadda ayaa wax laga beddeli karaa",
+  "暂不支持编辑分区 Cookie": "Wax ka beddelka Cookie-ga qaybsan weli lama taageero",
+  "请在网站页面中新增 Cookie": "Cookie ka dar bog mareeg ah"
 }

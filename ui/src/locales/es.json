@@ -2457,5 +2457,18 @@
   "SSH agent 套接字（可选）": "Socket del SSH agent (opcional)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/su-nombre/.ssh/agent.sock",
   "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Déjelo vacío para usar SSH_AUTH_SOCK. Si un gestor de contraseñas ofrece su propio agent, introduzca la ruta absoluta de su socket. Cage no lee los archivos de configuración de SSH.",
-  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Déjelo vacío para usar SSH_AUTH_SOCK o el agent de Windows OpenSSH. Para otro agent, introduzca su canalización con nombre que empieza por \\\\.\\pipe\\."
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Déjelo vacío para usar SSH_AUTH_SOCK o el agent de Windows OpenSSH. Para otro agent, introduzca su canalización con nombre que empieza por \\\\.\\pipe\\.",
+  "新增 Cookie": "Añadir cookie",
+  "编辑 Cookie": "Editar cookie",
+  "编辑 Cookie {0}": "Editar la cookie {0}",
+  "值": "Valor",
+  "域名": "Dominio",
+  "路径": "Ruta",
+  "过期时间": "Fecha de caducidad",
+  "显示值": "Mostrar valor",
+  "以“.”开头时包含子域名，否则仅限该主机名。": "Si empieza por «.», incluye los subdominios; si no, solo se aplica a este nombre de host.",
+  "未指定": "Sin especificar",
+  "只能编辑当前网站的 Cookie": "Solo se pueden editar las cookies del sitio actual",
+  "暂不支持编辑分区 Cookie": "Aún no se pueden editar cookies con partición",
+  "请在网站页面中新增 Cookie": "Añada cookies desde una página de un sitio web"
 }

@@ -2456,5 +2456,18 @@
   "SSH agent 套接字（可选）": "SSH agent ሶኬት (አማራጭ)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/የእርስዎ ስም/.ssh/agent.sock",
   "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "SSH_AUTH_SOCKን ለመጠቀም ባዶ ይተዉት። የይለፍ ቃል አስተዳዳሪ የራሱን agent ካቀረበ፣ የሶኬቱን ፍፁም ዱካ ያስገቡ። Cage የSSH ውቅረት ፋይሎችን አያነብም።",
-  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "SSH_AUTH_SOCKን ወይም Windows OpenSSH agentን ለመጠቀም ባዶ ይተዉት። ሌላ agent ለመጠቀም በ\\\\.\\pipe\\ የሚጀምር የተሰየመ ቧንቧ (named pipe) ያስገቡ።"
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "SSH_AUTH_SOCKን ወይም Windows OpenSSH agentን ለመጠቀም ባዶ ይተዉት። ሌላ agent ለመጠቀም በ\\\\.\\pipe\\ የሚጀምር የተሰየመ ቧንቧ (named pipe) ያስገቡ።",
+  "新增 Cookie": "Cookie አክል",
+  "编辑 Cookie": "Cookie አርትዕ",
+  "编辑 Cookie {0}": "Cookie {0} አርትዕ",
+  "值": "እሴት",
+  "域名": "ጎራ",
+  "路径": "ዱካ",
+  "过期时间": "የሚያበቃበት ጊዜ",
+  "显示值": "እሴቱን አሳይ",
+  "以“.”开头时包含子域名，否则仅限该主机名。": "ጎራው በ«.» ከጀመረ ንዑስ ጎራዎችን ያካትታል፤ ካልሆነ ለዚህ የአስተናጋጅ ስም ብቻ ነው።",
+  "未指定": "አልተገለጸም",
+  "只能编辑当前网站的 Cookie": "የአሁኑን ድር ጣቢያ Cookie ብቻ ማርትዕ ይቻላል",
+  "暂不支持编辑分区 Cookie": "የተከፋፈሉ Cookie ማርትዕ ገና አይደገፍም",
+  "请在网站页面中新增 Cookie": "Cookie ከድር ጣቢያ ገጽ ያክሉ"
 }
