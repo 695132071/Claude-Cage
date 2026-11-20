@@ -1,7 +1,8 @@
-"""Guest-side Claude terminal discovery and authenticated local channel bridge."""
+# Guest-side Claude terminal discovery and authenticated local channel bridge.
 import contextlib
 import hashlib
 import json
+import mmap
 import os
 from pathlib import Path
 import re
@@ -382,6 +383,14 @@ def discover(request):
     return sessions
 
 
+def delivered(payload, request_id):
+    try:
+        with open(payload["transcript_path"], "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as m:
+            return m.rfind(request_id.encode()) >= 0
+    except (OSError, KeyError, TypeError, ValueError):
+        return False
+
+
 def hook(connection):
     payload = json.load(sys.stdin)
     event = payload.get("hook_event_name")
@@ -407,11 +416,15 @@ def hook(connection):
             state.pop("pending_send", None)
         if event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionEnd"):
             state["approvals"] = []
-        if event == "Stop" and (state.get("busy") or state.get("pending_send")) and not state.get("stopped") and not state.get("account_failure"):
+        # A sent message belongs to this Stop only once it is in the transcript;
+        # a late Stop from a cancelled turn must not release a newer send.
+        own = event in ("Stop", "StopFailure") and state.get("pending_send") and delivered(payload, state["pending_send"])
+        if event == "Stop" and (state.get("busy") or own) and not state.get("stopped") and not state.get("account_failure"):
             state["turn_done"] = state.get("turn_done", 0) + 1
         if event in ("Stop", "StopFailure", "SessionEnd"):
             state["busy"] = False
-            state.pop("pending_send", None)
+            if own or event == "SessionEnd":
+                state.pop("pending_send", None)
             state.pop("display", None)
         if event == "StopFailure":
             state["account_failure"] = payload.get("error", "unknown")

@@ -2483,5 +2483,9 @@
   "共享的 MCP 服务器在没有删除记录的情况下消失，已保留此账号中的副本。": "Server-yada MCP ee la wadaago waxay lumeen iyadoo aan diiwaan tirtir lahayn; nuqullada akoonkan waa la hayaa.",
   "账号配置提示": "Ogeysiis dejinta akoonka",
   "此账号：": "Akoonkan: ",
-  "共享位置：": "Goobta la wadaago: "
+  "共享位置：": "Goobta la wadaago: ",
+  "最多同时运行 {0} 个终端，请先关闭或归档不用的会话": "Ugu badnaan {0} terminal ayaa hal mar shaqeyn kara. Marka hore xidh ama geli kaydka fadhiyada aadan isticmaalin.",
+  "其他终端": "Terminal-yo kale",
+  "系统通知服务不可用": "Adeegga ogeysiisyada nidaamka lama heli karo",
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Adeegga ogeysiisyada nidaamka lama helin. Hubi in ogeysiisyadu ka shaqeynayaan deegaanka desktop-ka, kadibna isku day mar kale."
 }

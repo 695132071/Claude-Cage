@@ -2483,5 +2483,9 @@
   "共享的 MCP 服务器在没有删除记录的情况下消失，已保留此账号中的副本。": "Los servidores MCP compartidos desaparecieron sin registro de eliminación; se conservaron las copias de esta cuenta.",
   "账号配置提示": "Aviso de configuración de la cuenta",
   "此账号：": "Esta cuenta: ",
-  "共享位置：": "Ubicación compartida: "
+  "共享位置：": "Ubicación compartida: ",
+  "最多同时运行 {0} 个终端，请先关闭或归档不用的会话": "Se pueden ejecutar como máximo {0} terminales a la vez. Cierra o archiva primero las sesiones que no uses.",
+  "其他终端": "Otras terminales",
+  "系统通知服务不可用": "El servicio de notificaciones del sistema no está disponible",
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "No se encontró el servicio de notificaciones del sistema. Comprueba que el entorno de escritorio tenga las notificaciones activadas y vuelve a intentarlo."
 }

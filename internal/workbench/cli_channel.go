@@ -35,14 +35,32 @@ func resumeChannelRequest(record *mobileRecord) map[string]any {
 		"resume_text": cliResumePrompt, "account_resume_text": claudeAccountResumePrompt}
 }
 
-var cliChannelEncoded = sync.OnceValue(func() string {
+// cliChannelBundle drops comment and blank lines and shrinks each 4-space
+// indentation step to one space. Python only needs consistent indentation, so
+// the program is unchanged; text inside triple-quoted strings is kept verbatim.
+func cliChannelBundle(source string) string {
 	var helper strings.Builder
-	for _, line := range strings.Split(cliChannelHelper, "\n") {
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			helper.WriteString(line + "\n")
+	inString := false
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inString {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if indent := len(line) - len(strings.TrimLeft(line, " ")); indent%4 == 0 {
+				line = line[indent-indent/4:]
+			}
 		}
+		if (strings.Count(line, "'''")+strings.Count(line, `"""`))%2 == 1 {
+			inString = !inString
+		}
+		helper.WriteString(line + "\n")
 	}
-	bundle := []byte(helper.String())
+	return helper.String()
+}
+
+var cliChannelEncoded = sync.OnceValue(func() string {
+	bundle := []byte(cliChannelBundle(cliChannelHelper))
 	var compressed bytes.Buffer
 	writer, _ := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
 	_, _ = writer.Write(bundle)
