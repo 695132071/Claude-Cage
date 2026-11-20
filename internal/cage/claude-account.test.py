@@ -48,8 +48,13 @@ printf '%s\\n' "$@"
         fake.chmod(0o700)
         self.email = "owner@example.test"
         self.subject = hashlib.sha256((self.email + "\ntest-org").encode()).hexdigest()
+        # A guest's temporary directory is outside HOME; the usage query relies
+        # on that to run the CLI from a directory without project settings.
+        scratch = tempfile.TemporaryDirectory(prefix="account-scratch-")
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
         self.env = {"HOME": str(self.home), "PATH": os.defpath, "TEST_EMAIL": self.email,
-                    "CAGE_CLAUDE_SUBJECT": self.subject, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(self.home)}
+                    "CAGE_CLAUDE_SUBJECT": self.subject, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(self.scratch)}
 
     def run_helper(self, mode, account, *args, data=None, env=None, check=True, cwd=None):
         return subprocess.run([sys.executable, str(source), mode, account, *args], env=env or self.env,
