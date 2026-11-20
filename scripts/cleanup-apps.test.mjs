@@ -8,6 +8,7 @@ import {
   rm,
   copyFile,
   chmod,
+  open,
 } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -61,6 +62,29 @@ async function app(directory, id = cageID, executable = "/bin/sleep") {
   execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', directory], { stdio: 'ignore' });
   return directory;
 }
+
+test("cleanup removes an App whose executable is only open for reading", { skip: process.platform !== "darwin" }, async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cage-cleanup-readonly-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const latest = await app(path.join(directory, "new.app"));
+  const old = await app(path.join(directory, "old.app"));
+  const handle = await open(path.join(old, "Contents/MacOS/Cage"), "r");
+  t.after(() => handle.close());
+  const skipped = [];
+  assert.deepEqual(await cleanupApps({ keep: [latest], roots: [directory], onInUse: (bundle) => skipped.push(bundle) }), [old]);
+  assert.deepEqual(skipped, []);
+});
+
+test("cleanup reports a retained App once when roots overlap", { skip: process.platform !== "darwin" }, async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "cage-cleanup-overlap-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const latest = await app(path.join(directory, "new.app"));
+  const modified = await app(path.join(directory, "old.app"));
+  await writeFile(path.join(modified, "Contents/notes.txt"), "user work");
+  const retained = [];
+  assert.deepEqual(await cleanupApps({ keep: [latest], roots: [modified, directory], onModified: (value) => retained.push(value) }), []);
+  assert.deepEqual(retained, [modified]);
+});
 
 test('cleanup retains project files added to a previously signed app', { skip: process.platform !== 'darwin' }, async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'cage-cleanup-modified-'));
