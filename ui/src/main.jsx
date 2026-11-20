@@ -29,7 +29,8 @@ import { TailscalePanel } from "./tailscale";
 import { HostPluginsPanel, pluginPages, pluginPageTitle, useHostPlugins } from "./host-plugins";
 import { PluginView } from "./plugin-view";
 import { WorkspaceSidebar } from "./workspace-sidebar";
-import { useCLISessions, sessionsChanged } from "./cli-sessions";
+import { useCLISessions, desktopSessionRequest, sessionsChanged } from "./cli-sessions";
+import { SessionAccount } from "./session-account";
 import { TerminalMenu } from "./terminal-menu";
 import { InitializationGate } from "./initialization";
 import { ProjectRecovery } from "./project-recovery";
@@ -87,6 +88,7 @@ function App() {
   const [desktopOpen, setDesktopOpen] = useState(false);
   const [terminalChoice, setTerminalChoice] = useState(null);
   const [openingSession, setOpeningSession] = useState("");
+  const [sessionAccount, setSessionAccount] = useState(null);
   const [sessionOpenError, setSessionOpenError] = useState(null);
   const sessionOpenRequest = useRef(null);
   useEffect(() => () => {
@@ -1534,6 +1536,7 @@ function App() {
             onSessionOpen={openSessionTerminal}
             openingSession={openingSession}
             sessionOpenError={sessionOpenError}
+            onSessionAccount={setSessionAccount}
             onSessionArchive={archiveSession}
             onSessionPin={pinSession}
             onSessionRename={session => setRename({id:session.id, title:session.title, session:true})}
@@ -2081,6 +2084,32 @@ function App() {
               }
             />
           </form>
+        </Modal>
+      )}
+      {sessionAccount && (
+        <Modal
+          title={tr("用其他账号继续")}
+          onClose={() => setSessionAccount(null)}
+          footer={<button onClick={() => setSessionAccount(null)}>{tr("关闭")}</button>}
+        >
+          <div className="modal-body">
+            <SessionAccount
+              id={sessionAccount.id}
+              request={desktopSessionRequest}
+              defaultOpen
+              onChanged={async (view) => {
+                sessionsChanged();
+                if (view?.desktop_terminal_id) {
+                  try {
+                    const terminals = await api("/terminals");
+                    const terminal = terminals.find(item => item.id === view.desktop_terminal_id && item.cli_session_id === sessionAccount.id);
+                    if (terminal) showTerminal(terminal);
+                  } catch (error) { notify(error.message); }
+                  setSessionAccount(null);
+                }
+              }}
+            />
+          </div>
         </Modal>
       )}
       {transfer && (

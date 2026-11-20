@@ -627,7 +627,10 @@ def prepare_account_switch(request):
     sid = identifier(request["cli_id"])
     switch_id = identifier(request["switch_id"])
     config = Path(request["config"]).resolve()
-    connection = identifier(request["connection"])
+    # A session found in an account's history but never opened through Cage has
+    # no channel. It may still be continued by another account once no process
+    # owns it; the source account need not be signed in to read its history.
+    connection = identifier(request["connection"]) if request["connection"] else ""
     workspace = request["workspace"]
     folder = ROOT.parent / "cli-account-switches" / switch_id
     receipt = folder / "receipt.json"
@@ -637,23 +640,31 @@ def prepare_account_switch(request):
         if saved["binding"] != binding:
             raise ValueError("账号交接编号已用于另一项操作")
         return {"transcript": str(folder / "history.jsonl")}
-    with state_file(connection) as state:
-        if state.get("cli_id") != sid or state.get("config") != str(config) or state.get("workspace") != workspace:
-            raise ValueError("原会话身份或项目已变化，请刷新后重试")
-        if state.get("busy") or state.get("approvals") or state.get("pending_send") or state.get("sent"):
-            raise ValueError("原会话仍有任务、待发消息或审批，请结束后再切换账号")
-        existing = state.get("account_switch")
-        if existing and existing != switch_id:
-            raise ValueError("此会话已有账号交接尚未完成")
-        state["account_switch"] = switch_id
-        save(ROOT / connection / "state.json", state)
+    state = {}
+    if not connection:
+        if connection_for(sid, config)[0] or active_sessions(sid, str(config)):
+            raise ValueError("原会话正在运行或已在其他终端打开，请先结束后再用其他账号继续")
+    else:
+        with state_file(connection) as state:
+            if state.get("cli_id") != sid or state.get("config") != str(config) or state.get("workspace") != workspace:
+                raise ValueError("原会话身份或项目已变化，请刷新后重试")
+            if state.get("busy") or state.get("approvals") or state.get("pending_send") or state.get("sent"):
+                raise ValueError("原会话仍有任务、待发消息或审批，请结束后再切换账号")
+            existing = state.get("account_switch")
+            if existing and existing != switch_id:
+                raise ValueError("此会话已有账号交接尚未完成")
+            state["account_switch"] = switch_id
+            save(ROOT / connection / "state.json", state)
     rows = active_sessions(sid, str(config))
     # Any other live worker in this account can represent a background
     # child of the source. The registry does not expose a complete ancestry.
     listing = subprocess.run(["claude", "agents", "--json"], env={**os.environ, "CLAUDE_CONFIG_DIR": str(config)}, capture_output=True, text=True, timeout=10)
     if listing.returncode != 0:
         raise ValueError("无法确认后台任务，未切换账号")
-    if any(row.get("sessionId") != sid and live(row.get("pid")) for row in json.loads(listing.stdout)):
+    agents = json.loads(listing.stdout)
+    if not connection and any(row.get("sessionId") == sid and live(row.get("pid")) for row in agents):
+        raise ValueError("原会话正在运行或已在其他终端打开，请先结束后再用其他账号继续")
+    if any(row.get("sessionId") != sid and live(row.get("pid")) for row in agents):
         raise ValueError("原账号仍有其他执行任务，请结束后台任务后再交接")
     for row in rows:
         if not workspace_within(row.get("cwd") or "", workspace) or row.get("status") != "idle" or row.get("kind") != "interactive":
@@ -717,8 +728,9 @@ def prepare_account_switch(request):
         temporary = stream.name
     os.replace(temporary, target)
     save(receipt, {"binding": binding, "requests": state.get("requests", {})})
-    with state_file(connection) as state:
-        state["closed"] = True
+    if connection:
+        with state_file(connection) as state:
+            state["closed"] = True
     return {"transcript": str(target)}
 
 
@@ -729,12 +741,12 @@ def copy_history(source, target):
 
 
 def cancel_account_switch(request):
-    connection = identifier(request["connection"])
     switch_id = identifier(request["switch_id"])
-    with state_file(connection) as state:
-        if state.get("cli_id") != identifier(request["cli_id"]) or state.get("account_switch") not in (None, switch_id):
-            raise ValueError("原会话交接已变化")
-        state.pop("account_switch", None)
+    if request["connection"]:
+        with state_file(identifier(request["connection"])) as state:
+            if state.get("cli_id") != identifier(request["cli_id"]) or state.get("account_switch") not in (None, switch_id):
+                raise ValueError("原会话交接已变化")
+            state.pop("account_switch", None)
     # The source may already be stopped, but it remains resumable. Remove only
     # this operation's frozen copy so a later retry cannot use stale history.
     folder = ROOT.parent / "cli-account-switches" / switch_id
@@ -834,7 +846,9 @@ def launch(request):
     elif len(prefix) == 5 and Path(prefix[2]).name == "cage-claude-account" and prefix[3] == "run":
         account = runpy.run_path(prefix[2])
         if not account["has_status_line"](account["profile"](prefix[4])):
-            settings["statusLine"] = {"type": "command", "command": _runtime["command_text"](prefix[2], ["statusline", prefix[4]])}
+            command = _runtime["command_text"](prefix[2], ["statusline", prefix[4]])
+            # A newer account helper carries the user's status line padding.
+            settings["statusLine"] = account["status_line"](command) if "status_line" in account else {"type": "command", "command": command}
     save(folder / "settings.json", settings)
     argv = _runtime["command"](__file__, ["serve", connection])
     config = {"mcpServers": {connection: {"command": argv[0], "args": argv[1:]}}}

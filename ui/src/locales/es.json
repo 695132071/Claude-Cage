@@ -2476,5 +2476,12 @@
   "离线保存待验证的静态 IP 草稿": "Guardar borrador de IP estática pendiente sin conexión",
   "离线保存待验证的静态 IP 草稿？": "¿Guardar borrador de IP estática pendiente sin conexión?",
   "仅保存静态 IP 基准，不会放行外网。待代理恢复并通过实时出口、国家与隔离检查后才允许联网。": "Solo se guardará la referencia de IP estática sin habilitar el acceso externo. La red solo se abrirá cuando se recupere el proxy y superen las comprobaciones en vivo de salida, país y aislamiento.",
-  "保存待验证草稿": "Guardar borrador pendiente"
+  "保存待验证草稿": "Guardar borrador pendiente",
+  "用其他账号继续": "Continuar con otra cuenta",
+  "正在读取会话…": "Leyendo sesión…",
+  "此会话不能进行账号接续": "Esta sesión no se puede continuar con otra cuenta",
+  "原账号：": "Cuenta original:",
+  "。可直接使用同组其他账号继续此会话，原账号历史保留不动。": ". Puedes continuar esta sesión directamente con otra cuenta del mismo grupo; el historial de la cuenta original se conserva intacto.",
+  "目标账号将基于历史副本继续处理，原账号会话保留不动，缓存可能重建。执行中的工具、后台任务和未确认结果会阻止切换。": "La cuenta de destino continuará a partir de una copia del historial mientras la sesión original permanece intacta; es posible que la caché se reconstruya. Las herramientas en ejecución, las tareas en segundo plano y los resultados sin confirmar impiden el cambio.",
+  "用所选账号继续": "Continuar con la cuenta seleccionada"
 }

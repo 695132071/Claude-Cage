@@ -188,13 +188,16 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	var stderr fileControlStderr
 	exit := -1
 	transportLost := false
+	sent := false
 	for attempt := 0; ; attempt++ {
 		result, stderr = bytes.Buffer{}, fileControlStderr{}
-		exit, transportLost = -1, false
+		exit, transportLost, sent = -1, false, false
 		// Session views and discovery run every few seconds for each terminal.
 		// The shared control connection avoids an SSH session and the user's
 		// shell startup per call; a request that was never sent uses its own.
-		reply, sent, runErr := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
+		var reply guestSessionResult
+		var runErr error
+		reply, sent, runErr = s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
 		if sent {
 			result.Write(reply.stdout)
 			stderr.data = reply.stderr
@@ -262,6 +265,22 @@ func (s *Server) invalidateConversationDiscovery() { s.conversationGeneration.Ad
 
 func (s *Server) discoverTerminalConversationsCached(ctx context.Context, paths []string) error {
 	return s.discoverConversations(ctx, paths, true)
+}
+
+func matchDiscoveredAccount(list claudeAccountList, guestConfig string) (claudeSelection, string) {
+	config := strings.TrimSuffix(strings.ReplaceAll(guestConfig, "\\", "/"), "/")
+	for _, account := range list.Accounts {
+		if account.guestID() == "default" {
+			if strings.HasSuffix(config, "/.claude") {
+				return claudeSelection{ID: account.ID, GuestID: "default", Subject: claudeIdentityHash(account.Email, account.Organization)}, account.Label
+			}
+			continue
+		}
+		if strings.Contains(config, "/claude-accounts/"+account.guestID()+"/") {
+			return claudeSelection{ID: account.ID, GuestID: account.guestID(), Subject: claudeIdentityHash(account.Email, account.Organization)}, account.Label
+		}
+	}
+	return claudeSelection{GuestID: "default"}, ""
 }
 
 func (s *Server) discoverTerminalConversations(ctx context.Context, paths []string) error {
@@ -353,13 +372,12 @@ func (s *Server) discoverConversations(ctx context.Context, paths []string, reus
 		if record == nil {
 			record = &mobileRecord{mobileSession: mobileSession{mobileSummary: mobileSummary{ID: uuid.NewString(), Workspace: workspace}, Turns: []mobileTurn{}}, CLIID: item.CLIID, Terminal: true, Resume: true}
 			record.Generation = m.epochLocked()
-			record.Account.GuestID = "default"
-			for _, account := range list.Accounts {
-				config := strings.ReplaceAll(item.Config, "\\", "/")
-				if strings.Contains(config, "/claude-accounts/"+account.guestID()+"/") {
-					record.Account = claudeSelection{ID: account.ID, GuestID: account.guestID(), Subject: claudeIdentityHash(account.Email, account.Organization)}
-				}
-			}
+			record.Account, record.AccountLabel = matchDiscoveredAccount(list, item.Config)
+		} else if record.Launcher == "" && record.Account.ID == "" && item.Config != "" {
+			record.Account, record.AccountLabel = matchDiscoveredAccount(list, item.Config)
+		}
+		if a := list.find(record.Account.ID); a != nil {
+			record.AccountLabel = a.Label
 		}
 		record.Workspace = workspace
 		record.Active = item.Active

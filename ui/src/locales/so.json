@@ -2476,5 +2476,12 @@
   "离线保存待验证的静态 IP 草稿": "Keydi qabyo-qoraalka IP-ga taagan ee sugaya xaqiijin (offline)",
   "离线保存待验证的静态 IP 草稿？": "Ma la keydiyaa qabyo-qoraalka IP-ga taagan ee sugaya xaqiijin?",
   "仅保存静态 IP 基准，不会放行外网。待代理恢复并通过实时出口、国家与隔离检查后才允许联网。": "Waxaa la keydinayaa oo keliya tixraaca IP-ga taagan, shabakadda dibaddana lama furayo. Shabakadda waxaa la oggolaanayaa oo keliya marka wakiilku soo noqdo oo baadhitaanada tooska ah ee bixitaanka, dalka iyo go'doominta ay wada guuleystaan.",
-  "保存待验证草稿": "Keydi qabyo-qoraalka"
+  "保存待验证草稿": "Keydi qabyo-qoraalka",
+  "用其他账号继续": "Ku sii wad akoon kale",
+  "正在读取会话…": "Fadhiga waa la akhrinayaa…",
+  "此会话不能进行账号接续": "Fadhigan laguma sii wadi karo akoon kale",
+  "原账号：": "Akoonka asalka ah:",
+  "。可直接使用同组其他账号继续此会话，原账号历史保留不动。": ". Waxaad si toos ah ugu sii wadi kartaa fadhigan akoon kale oo isla kooxda ah; taariikhda akoonka asalka ah sidooda ayaa loo hayn doonaa.",
+  "目标账号将基于历史副本继续处理，原账号会话保留不动，缓存可能重建。执行中的工具、后台任务和未确认结果会阻止切换。": "Akoonka la beegsaday wuxuu shaqada ku sii wadi doonaa nuqul ka mid ah taariikhda, fadhiga akoonka asalka ahna sidooda ayaa loo hayn doonaa; kaydka (cache) waxaa laga yaabaa in dib loo dhiso. Qalabka socda, hawlaha gadaasha iyo natiijooyinka aan la xaqiijin ayaa ka hortagaya beddelidda.",
+  "用所选账号继续": "Ku sii wad akoonka la doortay"
 }

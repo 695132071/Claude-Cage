@@ -131,6 +131,34 @@ class ChannelTests(unittest.TestCase):
                     with self.assertRaisesRegex(ValueError,"历史项目"): channel.prepare_account_switch(request)
                     self.assertFalse((self.root.parent/"cli-account-switches"/switch_id/"history.jsonl").exists())
 
+    def test_account_switch_continues_a_session_never_opened_through_cage(self):
+        path=self.history(self.session,self.project,[{"type":"user","message":{"content":"older work"}}])
+        backups=self.home/".claude/file-history"/self.session; backups.mkdir(parents=True); (backups/"x@v1").write_text("checkpoint")
+        switch_id,target=str(uuid.uuid4()),str(uuid.uuid4())
+        request={"cli_id":self.session,"config":str(self.home/".claude"),"connection":"","workspace":self.project,"target_cli_id":target,"switch_id":switch_id}
+        completed=type("Result",(),{"returncode":0,"stdout":"[]"})()
+        running=[{"sessionId":self.session,"pid":4242,"cwd":self.project,"status":"idle","kind":"interactive"}]
+        # A process (for example the account's own Desktop) still owns it: refuse, and never signal it.
+        with patch.object(channel,"active_sessions",return_value=running),patch.object(channel.subprocess,"run",return_value=completed),patch.object(channel,"terminate_cli") as terminate:
+            with self.assertRaisesRegex(ValueError,"正在运行"): channel.prepare_account_switch(request)
+            terminate.assert_not_called()
+        agent_running=type("Result",(),{"returncode":0,"stdout":json.dumps([{"sessionId":self.session,"pid":os.getpid()}])})()
+        with patch.object(channel,"active_sessions",return_value=[]),patch.object(channel.subprocess,"run",return_value=agent_running),patch.object(channel,"terminate_cli") as terminate:
+            with self.assertRaisesRegex(ValueError,"正在运行"): channel.prepare_account_switch(request)
+            terminate.assert_not_called()
+        self.assertFalse((self.root.parent/"cli-account-switches"/switch_id).exists())
+        with patch.object(channel,"active_sessions",return_value=[]),patch.object(channel.subprocess,"run",return_value=completed):
+            transcript=Path(channel.prepare_account_switch(request)["transcript"])
+            self.assertEqual(channel.prepare_account_switch(request)["transcript"],str(transcript))
+        self.assertEqual(transcript.read_bytes(),path.read_bytes())
+        self.assertEqual((transcript.parent/"file-history"/self.session/"x@v1").read_text(),"checkpoint")
+        self.assertEqual(json.loads((transcript.parent/"receipt.json").read_text())["binding"]["connection"],"")
+        self.assertEqual(list(self.root.glob("*/state.json")),[])
+        self.assertTrue(path.exists())
+        self.assertTrue(channel.cancel_account_switch(request)["ok"])
+        self.assertFalse(transcript.exists())
+        self.assertTrue(path.exists())
+
     def test_account_switch_refuses_busy_and_unresolved_tools(self):
         path=self.history(self.session,self.project,[{"type":"assistant","message":{"content":[{"type":"tool_use","id":"uncertain","name":"Bash","input":{}}]}}])
         connection,switch_id,target=[str(uuid.uuid4()) for _ in range(3)]

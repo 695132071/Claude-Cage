@@ -46,6 +46,7 @@ export function WorkspaceSidebar({
   onSessionOpen,
   openingSession,
   sessionOpenError,
+  onSessionAccount,
   onSessionArchive,
   onSessionPin,
   onSessionRename,
@@ -353,6 +354,7 @@ export function WorkspaceSidebar({
                       saved={rowMetadata}
                       openingSession={openingSession}
                       sessionOpenError={sessionOpenError}
+                      onSessionAccount={onSessionAccount}
                       active={home || desktopOpen ? "" : active}
                       label={tr("{0} 的终端", (project))}
                       busy={busy}

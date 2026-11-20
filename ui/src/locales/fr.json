@@ -2476,5 +2476,12 @@
   "离线保存待验证的静态 IP 草稿": "Enregistrer hors ligne le brouillon d'IP statique à vérifier",
   "离线保存待验证的静态 IP 草稿？": "Enregistrer hors ligne le brouillon d'IP statique à vérifier ?",
   "仅保存静态 IP 基准，不会放行外网。待代理恢复并通过实时出口、国家与隔离检查后才允许联网。": "Seule la référence d'IP statique sera enregistrée ; le réseau externe restera fermé. L'accès ne sera autorisé qu'après le rétablissement du proxy et la réussite des contrôles en direct de sortie, de pays et d'isolation.",
-  "保存待验证草稿": "Enregistrer le brouillon"
+  "保存待验证草稿": "Enregistrer le brouillon",
+  "用其他账号继续": "Continuer avec un autre compte",
+  "正在读取会话…": "Lecture de la session…",
+  "此会话不能进行账号接续": "Cette session ne peut pas être poursuivie avec un autre compte",
+  "原账号：": "Compte d'origine :",
+  "。可直接使用同组其他账号继续此会话，原账号历史保留不动。": ". Vous pouvez poursuivre directement cette session avec un autre compte du même groupe ; l'historique du compte d'origine reste intact.",
+  "目标账号将基于历史副本继续处理，原账号会话保留不动，缓存可能重建。执行中的工具、后台任务和未确认结果会阻止切换。": "Le compte cible poursuivra à partir d'une copie de l'historique tandis que la session du compte d'origine reste intacte ; le cache pourra être reconstruit. Des outils en cours d'exécution, des tâches en arrière-plan ou des résultats non confirmés empêchent le changement.",
+  "用所选账号继续": "Continuer avec le compte sélectionné"
 }
