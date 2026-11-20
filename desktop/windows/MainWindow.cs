@@ -24,6 +24,9 @@ internal sealed class MainWindow : Form
     private readonly CancellationTokenSource lifetime = new();
     private readonly Dictionary<string, (string[] Paths, DateTime Expires)> fileSelections = new();
     private (string TerminalID, string ConnectionID)? pendingNotification;
+    // The tray balloon reports clicks without saying which balloon was clicked.
+    // Once two targets are outstanding, a click only brings Cage forward.
+    private bool pendingNotificationAmbiguous;
 
     public MainWindow()
     {
@@ -62,8 +65,10 @@ internal sealed class MainWindow : Form
         tray.BalloonTipClicked += (_, _) => {
             RestoreWindow();
             var target = pendingNotification;
+            var ambiguous = pendingNotificationAmbiguous;
             pendingNotification = null;
-            if (target != null && target.Value.TerminalID.Length > 0)
+            pendingNotificationAmbiguous = false;
+            if (!ambiguous && target != null && target.Value.TerminalID.Length > 0)
                 Script("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:" + JsonSerializer.Serialize(new { terminal_id = target.Value.TerminalID, connection_id = target.Value.ConnectionID }) + "}));");
         };
         updater = new AppUpdater(PublishUpdate, () => { allowQuit = true; Close(); }, () => _ = Bootstrap());
@@ -583,7 +588,8 @@ internal sealed class MainWindow : Form
                     result = new { supported = false }; break;
                 case "notificationStatus":
                 case "requestNotificationPermission":
-                    result = new { supported = true, permission = "authorized", canOpenSettings = true }; break;
+                    // Balloon sounds follow Windows' own notification settings.
+                    result = new { supported = true, permission = "authorized", canOpenSettings = true, sound = false }; break;
                 case "showNotification":
                 {
                     var notifTitle = request.Text("title");
@@ -595,6 +601,8 @@ internal sealed class MainWindow : Form
                     if (terminalID.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(terminalID, "^[a-f0-9]{16}$"))
                         throw new InvalidDataException("通知目标终端无效");
                     if (connectionID.Length > 128) throw new InvalidDataException("通知连接标识无效");
+                    if (pendingNotification != null && pendingNotification.Value != (terminalID, connectionID))
+                        pendingNotificationAmbiguous = true;
                     pendingNotification = (terminalID, connectionID);
                     tray.ShowBalloonTip(5000, notifTitle, notifBody.Length > 0 ? notifBody : notifTitle, ToolTipIcon.None);
                     result = new { delivered = true, permission = "authorized" };

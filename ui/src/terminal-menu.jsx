@@ -3,8 +3,9 @@ import { TerminalSquare } from "lucide-react";
 import { AgentIcon } from "./agent-icon";
 import { InlineSelect } from "./inline-select";
 import { useTranslation } from "./interface-language.mjs";
+import { TERMINAL_LIMIT } from "./session-order.mjs";
 
-export function TerminalMenu({ choice, busy, profiles, usesOfficialCLI, onClose, onSelect }) {
+export function TerminalMenu({ choice, busy, atLimit = false, profiles, usesOfficialCLI, onClose, onSelect }) {
   const tr = useTranslation();
   const menu = useRef(null);
   const [configuring, setConfiguring] = useState(false);
@@ -97,11 +98,15 @@ export function TerminalMenu({ choice, busy, profiles, usesOfficialCLI, onClose,
     </div>;
   }
   return (
-    <div ref={menu} id="terminal-create-menu" className="menu terminal-create-menu" role="menu" aria-label={tr("新建终端")}>
-      <button role="menuitem" disabled={busy} onClick={() => onSelect("shell")}>
+    <div ref={menu} id="terminal-create-menu" className="menu terminal-create-menu" role="menu" aria-label={tr("新建终端")}
+      aria-describedby={atLimit ? "terminal-limit-note" : undefined}>
+      {atLimit && <p id="terminal-limit-note" className="terminal-limit-note">
+        {tr("最多同时运行 {0} 个终端，请先关闭或归档不用的会话", TERMINAL_LIMIT)}
+      </p>}
+      <button role="menuitem" disabled={busy || atLimit} onClick={() => onSelect("shell")}>
         <TerminalSquare size={16} />{tr("普通终端")}
       </button>
-      <button role="menuitem" disabled={busy} onClick={configureCode}>
+      <button role="menuitem" disabled={busy || atLimit} onClick={configureCode}>
         <AgentIcon />{tr("Claude 终端")}
       </button>
     </div>

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -19,6 +20,21 @@ import (
 //go:embed cli_events_watch.py
 var cliEventsWatchHelper string
 
+// The watcher reads the same guest state directory as cli_channel.py. Reuse
+// that file's ROOT definition instead of keeping a second copy of the path.
+var cliEventsWatchSource = sync.OnceValue(func() string {
+	for _, line := range strings.Split(cliChannelHelper, "\n") {
+		if strings.HasPrefix(line, "ROOT = ") {
+			return "import os\nfrom pathlib import Path\n_controller_context = dict(os.environ)\n" + line + "\n" + cliEventsWatchHelper
+		}
+	}
+	panic("cli_channel.py has no ROOT definition")
+})
+
+// Guest events older than this are a backlog from before the stream started
+// (app launch, environment reconnect) and are not shown as new banners.
+const notificationMaxAge = 60 * time.Second
+
 const notificationPreferenceFile = "notifications.json"
 
 type NotificationPreferences struct {
@@ -27,10 +43,13 @@ type NotificationPreferences struct {
 	Sound          bool   `json:"sound"`
 }
 
+// Notifications stay off until the user enables them in Settings, so a fresh
+// install never triggers a system permission prompt. A saved file is an
+// explicit choice and is always honored as written.
 func defaultNotificationPreferences() NotificationPreferences {
 	return NotificationPreferences{
-		TurnCompletion: "unfocused",
-		Approval:       "unfocused",
+		TurnCompletion: "off",
+		Approval:       "off",
 		Sound:          true,
 	}
 }
@@ -49,10 +68,10 @@ func loadNotificationPreferences(profile string) NotificationPreferences {
 		return defaultNotificationPreferences()
 	}
 	if !validNotificationMode(pref.TurnCompletion) {
-		pref.TurnCompletion = "unfocused"
+		pref.TurnCompletion = "off"
 	}
 	if !validNotificationMode(pref.Approval) {
-		pref.Approval = "unfocused"
+		pref.Approval = "off"
 	}
 	return pref
 }
@@ -237,6 +256,12 @@ func (s *Server) dispatchGuestNotification(raw guestChannelEvent) bool {
 }
 
 func (s *Server) notificationEvents(w http.ResponseWriter, r *http.Request) {
+	// Terminal titles and project names go only to this computer's own desktop
+	// window, never to a browser, phone or remote client view.
+	if !s.hasTrustedView(r) {
+		http.Error(w, "通知仅发送到本机 Cage 窗口", http.StatusForbidden)
+		return
+	}
 	controller := http.NewResponseController(w)
 	defer func() {
 		if r.Context().Err() == nil {
@@ -310,12 +335,34 @@ func (s *Server) monitorTerminalNotifications(ctx context.Context) {
 		watchCtx, cancel := context.WithCancel(ctx)
 		s.notifications.setWatchCancel(cancel)
 		stopEpoch := context.AfterFunc(epoch, cancel)
+		// The guest watcher reads only the connections it was started with.
+		// Restart it when terminals open or close; the hub drops repeats.
+		var changed atomic.Bool
+		go func() {
+			for {
+				select {
+				case <-watchCtx.Done():
+					return
+				case <-wake:
+				case <-ticker.C:
+				}
+				if !sameConnections(connections, s.terminals.managedConnections()) {
+					changed.Store(true)
+					cancel()
+					return
+				}
+			}
+		}()
 		err := s.streamGuestNotifications(watchCtx, connections)
+		restarted := changed.Load() && ctx.Err() == nil
 		stopEpoch()
 		cancel()
 		s.notifications.setWatchCancel(nil)
 		if err != nil && ctx.Err() == nil && watchCtx.Err() == nil {
 			_ = diagnostics.New(s.profile).Record("warn", "cli-notifications", "guest event stream disconnected: "+err.Error())
+		}
+		if restarted {
+			continue
 		}
 		select {
 		case <-ctx.Done():
@@ -326,16 +373,33 @@ func (s *Server) monitorTerminalNotifications(ctx context.Context) {
 	}
 }
 
+func sameConnections(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, id := range a {
+		set[id] = struct{}{}
+	}
+	for _, id := range b {
+		if _, ok := set[id]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
 func (s *Server) streamGuestNotifications(ctx context.Context, connections []string) error {
 	payload, err := json.Marshal(map[string]any{
 		"connections": connections,
+		"max_age":     notificationMaxAge.Seconds(),
 	})
 	if err != nil {
 		return err
 	}
 	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+shellescape.QuoteCommand([]string{"python3", "-I", "-", string(payload)})))
 	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
-	cmd.Stdin = strings.NewReader(cliEventsWatchHelper)
+	cmd.Stdin = strings.NewReader(cliEventsWatchSource())
 	cmd.WaitDelay = 2 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

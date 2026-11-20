@@ -11,11 +11,13 @@ import {
 
 test("normalizeNotificationPreferences fills defaults and rejects invalid modes", () => {
   assert.deepEqual(normalizeNotificationPreferences(null), defaultNotificationPreferences);
-  assert.deepEqual(normalizeNotificationPreferences({ turn_completion: "bogus", approval: "off", sound: false }), {
-    turn_completion: "unfocused",
-    approval: "off",
+  assert.deepEqual(normalizeNotificationPreferences({ turn_completion: "bogus", approval: "always", sound: false }), {
+    turn_completion: "off",
+    approval: "always",
     sound: false,
   });
+  assert.equal(defaultNotificationPreferences.turn_completion, "off");
+  assert.equal(defaultNotificationPreferences.approval, "off");
 });
 
 test("shouldDeliverNotification honors unfocused, always, and off modes", () => {
