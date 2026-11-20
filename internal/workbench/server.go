@@ -101,6 +101,8 @@ type Server struct {
 	conversationViews                                map[string]conversationView // guarded by conversationMu
 	conversationGeneration                           atomic.Uint64
 	proxyStore                                       managedproxy.StoreReader // read-only monitor parses
+	monitorTimingMu                                  sync.Mutex
+	monitorTimingLogs                                map[string]monitorTimingLog
 	mobileConnectMu                                  sync.Mutex
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
