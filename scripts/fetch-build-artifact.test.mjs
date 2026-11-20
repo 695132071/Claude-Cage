@@ -101,3 +101,40 @@ test("a SHA-512 pin is verified with SHA-512", async t => {
   assert.deepEqual(await readFile(destination), content);
   await assert.rejects(fetchBuildArtifact(url, "ab".repeat(48), destination, () => assert.fail()), /pinned SHA-256 or SHA-512/);
 });
+
+test("a missing object fails at once and keeps nothing", async t => {
+  const { root, destination } = await fixture(t);
+  let calls = 0;
+  await assert.rejects(fetchBuildArtifact(url, checksum, destination, async () => {
+    calls++;
+    return { code: 22, http: "404" };
+  }), /Could not download dependency\.gz \(curl exit 22, HTTP 404\)/);
+  assert.equal(calls, 1);
+  assert.deepEqual(await readdir(root), []);
+});
+
+test("a permanent refusal while resuming discards the partial file", async t => {
+  const { root, destination } = await fixture(t);
+  let calls = 0;
+  await assert.rejects(fetchBuildArtifact(url, checksum, destination, async (_url, part) => {
+    calls++;
+    if (calls === 1) {
+      await writeFile(part, content.subarray(0, 4));
+      return { code: 18, http: "200" };
+    }
+    return { code: 22, http: "403" };
+  }), /HTTP 403/);
+  assert.equal(calls, 2);
+  assert.deepEqual(await readdir(root), []);
+});
+
+test("rate limits and server errors are retried", async t => {
+  const { destination } = await fixture(t);
+  const replies = [{ code: 22, http: "429" }, { code: 22, http: "503" }];
+  await fetchBuildArtifact(url, checksum, destination, async (_url, part) => {
+    if (replies.length) return replies.shift();
+    await writeFile(part, content);
+    return { code: 0, http: "200" };
+  });
+  assert.deepEqual(await readFile(destination), content);
+});

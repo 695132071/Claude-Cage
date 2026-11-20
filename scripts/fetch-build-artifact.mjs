@@ -34,6 +34,12 @@ async function size(file) {
   catch (error) { if (error.code !== "ENOENT") throw error; return null; }
 }
 
+// curl --fail exits 22 on HTTP >= 400. Client errors other than timeouts and
+// rate limits name a request the server will keep refusing.
+function permanentHTTPFailure(code, http) {
+  return code === 22 && /^4\d\d$/.test(http) && !["408", "425", "429"].includes(http);
+}
+
 function curl(url, file, resume) {
   return new Promise((done, reject) => {
     const child = spawn(curlCommand(), [
@@ -75,6 +81,10 @@ export async function fetchBuildArtifact(url, expected, destination, transfer = 
       const before = await size(part) ?? 0;
       const resume = before > 0;
       const { code, http } = await transfer(url, part, resume);
+      if (permanentHTTPFailure(code, http) && !(resume && http === "416")) {
+        // A missing or forbidden object does not appear on retry.
+        throw new Error(`Could not download ${name} (curl exit ${code}, HTTP ${http}).`);
+      }
       if (code === 0 || (resume && http === "416")) {
         if (await size(part) !== null && await digest(part, algorithm) === checksum) {
           await rename(part, destination);
