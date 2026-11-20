@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { setTimeout as delay } from 'node:timers/promises';
-import { setTimeout as delay } from 'node:timers/promises';
 import { createPrivacyController } from './browser-privacy-fixture.mjs';
 
 // Headless Chromium never exits with its last window. With a display (as in
