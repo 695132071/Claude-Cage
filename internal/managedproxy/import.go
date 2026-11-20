@@ -41,22 +41,27 @@ func parseNodes(data []byte, sourceID string) ([]Node, []NodeIssue, error) {
 		Groups    []map[string]any `yaml:"proxy-groups"`
 		Providers yaml.Node        `yaml:"proxy-providers"`
 	}
-	if nodes, found, err := readNodeLinks(data); found {
-		if err != nil {
-			return nil, nil, err
+	yamlErr := yaml.Unmarshal(data, &input)
+	var proxies []map[string]any
+	var presetReasons []string
+	if yamlErr == nil {
+		proxies = input.Proxies
+		if len(proxies) == 0 {
+			proxies = input.Payload
 		}
-		input.Proxies = nodes
-	} else if yaml.Unmarshal(data, &input) != nil {
-		return nil, nil, errors.New("请粘贴具体节点的分享链接或 Clash/Mihomo YAML 配置")
+		inline, inlineReasons := inlineProviderNodes(&input.Providers)
+		presetReasons = make([]string, len(proxies), len(proxies)+len(inline))
+		proxies = append(proxies, inline...)
+		presetReasons = append(presetReasons, inlineReasons...)
 	}
-	proxies := input.Proxies
 	if len(proxies) == 0 {
-		proxies = input.Payload
+		// Share-link lists, plain or Base64, are a YAML scalar or an error.
+		if links, reasons, ok := shareLinkNodes(data); ok {
+			proxies, presetReasons, input.Groups = links, reasons, nil
+		} else if yamlErr != nil {
+			return nil, nil, errors.New("无法读取订阅内容：需要 Clash/Mihomo YAML、分享链接列表或其 Base64 编码")
+		}
 	}
-	inline, inlineReasons := inlineProviderNodes(&input.Providers)
-	presetReasons := make([]string, len(proxies), len(proxies)+len(inline))
-	proxies = append(proxies, inline...)
-	presetReasons = append(presetReasons, inlineReasons...)
 	if len(proxies) == 0 || len(proxies) > 3000 {
 		return nil, nil, errors.New("配置需要包含 1–3000 个 proxies 节点；仅含远程 provider 的配置请改为导入节点订阅链接")
 	}

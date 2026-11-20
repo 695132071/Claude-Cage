@@ -31,6 +31,7 @@ keywords: 错误 失败 白屏 断网 137 OOM 代理 账号 配对 SSH 损坏 �
 | --- | --- |
 | `Download interrupted` / `partial data retained` | 未完成文件已保留，修复网络后重试续传。 |
 | `checksum mismatch` | 文件摘要不符，重新下载，不跳过校验。 |
+| `did not receive an event with the running status: no boot progress` | 首次启动基础系统时，Cage 跟随客机 cloud-init 输出等待：只要仍有新的输出就不会超时，连续 10 分钟没有任何进展才判定卡住（整体最长 2 小时）。先检查节点和 DNS，再点“继续安装”，已下载的内容会保留。 |
 | `Guest DNS could not resolve` | 检查节点及 DNS 配置，应用后重试。 |
 | NodeSource / APT 失败 | 提示会列出失败的 APT 命令、涉及的软件包和已脱敏的错误输出末尾；域名解析失败先查 DNS，连接超时先查代理，找不到软件包说明软件源不可用。没有可识别原因时，保留这些信息并导出诊断包。 |
 | APT 重复 `Tried to start delayed item` | 更新到包含 APT 修正的构建，旧版依赖管理器升级失败时先修复网络，不能继续依赖安装。 |

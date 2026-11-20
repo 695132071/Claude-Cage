@@ -122,7 +122,10 @@ exec env -i HOME="$HOME" USER="$(id -un)" LOGNAME="$(id -un)" SHELL="${SHELL:-/b
 // they are there already, and returns the command that runs its server
 // there, with its standard input and output carried over SSH.
 func (s *Server) guestPluginCommand(ctx context.Context, manifest hostbridge.Manifest, dir string) (*exec.Cmd, error) {
-	command := manifest.ServerCommand()
+	command, err := hostbridge.ExpandCommand(manifest.ServerCommand(), s.guestActiveProjectDir())
+	if err != nil {
+		return nil, err
+	}
 	if len(command) == 0 {
 		return nil, errors.New("the plugin has no MCP server")
 	}

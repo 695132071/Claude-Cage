@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { runtimeURL } from "./client-context.mjs";
+import { useWindowVisibility } from "./window-visibility";
+import { sameState } from "./workspace-state.mjs";
 import "./host-plugins.css";
 import { translate, useTranslation } from "./interface-language.mjs";
 
@@ -19,6 +21,16 @@ const builtIn = { commands: { title: "命令", description: "在已打开的项�
 const toolNotes = { run_command: "在项目文件夹中运行一条命令", command_job: "读取或停止后台运行的命令" };
 const knownIcons = { commands: SquareTerminal, clock: Clock };
 const sources = { builtin: "内置", local: "手动安装", catalog: "随应用附带", market: "插件市场" };
+const runtimeNames = { uv: "uv", uvx: "uv", npx: "Node.js (npx)", node: "Node.js", python3: "Python 3", python: "Python", powershell: "PowerShell" };
+const platformNames = { darwin: "macOS", windows: "Windows", linux: "Linux" };
+
+function missingProgramGuide(program) {
+  const base = (program || "").replace(/\.exe$/i, "").toLowerCase();
+  if (base === "uv" || base === "uvx") return translate("请先在本机安装 uv（https://docs.astral.sh/uv/）并确保终端中可运行 {0}，然后点击「重新加载插件」。", program);
+  if (base === "npx" || base === "node" || base === "npm") return translate("请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。", program);
+  if (base === "python3" || base === "python") return translate("请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。", program);
+  return translate("请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。", program);
+}
 
 const words = name => name.split(/[-_\s]+/).filter(Boolean);
 export const pluginTitle = plugin => plugin.built_in && builtIn[plugin.name] && translate(builtIn[plugin.name].title) || plugin.display_name
@@ -75,6 +87,7 @@ const size = bytes => !bytes ? "" : bytes < 1024 * 1024 ? `${Math.max(1, Math.ro
 // useHostPlugins keeps the plugin list current while something shows it,
 // and reads the plugin market once when first shown.
 export function useHostPlugins(active) {
+  const windowVisible = useWindowVisibility();
   const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState("");
   const [market, setMarket] = useState({ loading: false, loaded: false });
   const mounted = useRef(true), revision = useRef(0), marketRevision = useRef(0);
@@ -82,7 +95,10 @@ export function useHostPlugins(active) {
     const current = ++revision.current;
     try {
       const value = await api("/host-tools");
-      if (mounted.current && current === revision.current) { setView(value); setError(""); }
+      if (mounted.current && current === revision.current) {
+        setView(previous => (sameState(previous, value) ? previous : value));
+        setError("");
+      }
     } catch (e) { if (mounted.current && current === revision.current) setError(e.message); }
   }, []);
   const loadMarket = useCallback(async (fresh = false) => {
@@ -101,11 +117,11 @@ export function useHostPlugins(active) {
   // in the main sidebar; the market is read once the plugin views are shown.
   const browsing = active === true;
   useEffect(() => {
-    if (!active) return;
+    if (!active || !windowVisible) return;
     void refresh();
     const timer = setInterval(() => { if (!busy) void refresh(); }, browsing ? 5000 : 30000);
     return () => { revision.current++; clearInterval(timer); };
-  }, [active, browsing, busy, refresh]);
+  }, [active, browsing, busy, refresh, windowVisible]);
   useEffect(() => { if (browsing && !market.loaded && !market.loading) void loadMarket(); }, [browsing, market.loaded, market.loading, loadMarket]);
   // change sends one request; key names what is in progress, for the buttons.
   const change = useCallback(async (body, key = "change") => {
@@ -587,8 +603,11 @@ function Detail({ model, name, onConfirm, onPage }) {
   const tools = plugin?.tools || [];
   const declared = (plugin || offer).permissions || [];
   const added = contributions(plugin || offer);
-  // The open-source project the market says the plugin is built on.
-  const upstream = (offer || entry.listing)?.source;
+  // The open-source project and requirements the market says the plugin has.
+  const listing = offer || entry.listing;
+  const upstream = listing?.source;
+  const runtimeLabel = listing?.runtime ? runtimeNames[listing.runtime] || listing.runtime : "";
+  const platformList = listing?.platforms?.length ? listing.platforms.map(p => platformNames[p] || p).join(tr("、")) : "";
   const separator = view.directory.includes("\\") ? "\\" : "/";
   const installing = busy === `install:${name}`, removing = busy === `remove:${name}`, switching = busy === `switch:${name}`;
   const on = plugin?.enabled !== false;
@@ -640,7 +659,10 @@ function Detail({ model, name, onConfirm, onPage }) {
         <strong>{plugin.built_in && name === "commands" ? tr("命令已停用") : tr("插件已停用")}</strong>
         <p>{plugin.built_in && name === "commands" ? tr("Claude 将不能在这台电脑上运行命令。打开上方开关即可恢复。") : tr("插件不会运行，Claude 也看不到它提供的工具。打开上方开关即可恢复。")}</p>
       </div></div>}
-      {plugin?.problem && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div><strong>{tr("插件无法加载")}</strong><p>{plugin.problem}</p></div></div>}
+      {plugin?.problem && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div>
+        <strong>{plugin.missing_program ? tr("需要本机安装 {0}", plugin.missing_program) : tr("插件无法加载")}</strong>
+        <p>{plugin.missing_program ? missingProgramGuide(plugin.missing_program) : plugin.problem}</p>
+      </div></div>}
       {!plugin && offer?.problem && <div className="plugin-banner problem" role="status"><TriangleAlert size={17} /><div><strong>{tr("暂时无法安装")}</strong><p>{offer.problem}</p></div></div>}
       <nav className="plugin-tabs" role="tablist" aria-label={tr("{0} 的内容", (info.title))}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>{tr("工具")}<em>{tools.length}</em></button>
@@ -681,6 +703,8 @@ function Detail({ model, name, onConfirm, onPage }) {
             {info.version && <div><dt>{tr("版本")}</dt><dd>{info.version}</dd></div>}
             <div><dt>{tr("来源")}</dt><dd>{translate(sources[entry.source])}</dd></div>
             {(plugin || offer).kind && <div><dt>{tr("运行位置")}</dt><dd>{(plugin || offer).kind === "guest" ? tr("Cage 环境") : tr("这台电脑")}</dd></div>}
+            {runtimeLabel && <div><dt>{tr("运行环境")}</dt><dd>{runtimeLabel}</dd></div>}
+            {platformList && <div><dt>{tr("支持系统")}</dt><dd>{platformList}</dd></div>}
             <div><dt>{tr("状态")}</dt><dd>{plugin ? tr(info.state.label) : offer.supported ? tr("未安装") : unsupportedLabel(offer)}</dd></div>
             {!plugin && offer?.bytes > 0 && <div><dt>{tr("大小")}</dt><dd>{size(offer.bytes)}</dd></div>}
           </dl>

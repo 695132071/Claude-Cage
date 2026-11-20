@@ -67,6 +67,19 @@ bash scripts/build-app.sh
 
 使用 `GOTOOLCHAIN=local` 时，先让 `PATH` 中的 Go 本身满足两个模块的要求，例如 Go 1.27.3 或更新版本；仅准备 Go 1.26.10 会在构建 `tools/tailnet` 时失败。离线构建还需预先准备 Go 模块、前端依赖和构建脚本所需的下载材料。Windows 与 Linux 构建也会使用该子模块，须核对同一版本要求。
 
+### macOS 构建排查
+
+构建开始时会先链接一个最小 C 程序并让 Swift 导入 Cocoa，工具链有问题时在编译前报出原因。
+
+| 现象 | 处理 |
+| --- | --- |
+| cgo 链接报 `unknown architecture`（例如 `arm64e.x1`） | 默认 SDK 比 clang 新。未设置 `SDKROOT` 时，脚本会改用本机已安装、能成功链接的最新 SDK 并提示所用路径；都不能链接时请更新 Xcode 或 Command Line Tools，或手动设置 `SDKROOT`。 |
+| Swift 报 `redefinition of module 'SwiftBridging'` | Command Line Tools 升级后残留了旧的模块映射文件，`usr/include/swift/module.modulemap` 与 `bridging.modulemap` 重复定义。重新安装 Command Line Tools，或用 `xcode-select` 选择完整 Xcode。脚本不修改系统工具链。 |
+| 图标生成阶段出现与 Swift 无关的报错 | `PATH` 上可能有同名的非 Apple `swift`。构建脚本通过 `xcrun` 调用 Swift，若仍失败，检查 `xcode-select -p`。 |
+| 签名报 `resource fork, Finder information, or similar detritus not allowed` | 仓库位于 iCloud Drive 等文件同步目录时，文件会带上扩展属性。脚本在签名前清除应用包内的扩展属性；无法清除时，把仓库移到不受同步管理的目录再构建。 |
+| 只允许写入工作区的沙箱中 npm、uv 或 Swift 模块缓存报 `Operation not permitted` | 脚本发现默认缓存目录不可写时，改用 `_output/cache` 下的 npm、uv 和 Swift 模块缓存。`iconutil` 在部分沙箱中仍会报 `Failed to generate ICNS`，这一步需要在沙箱外运行构建。 |
+| 检出路径经过 `/tmp` 等符号链接 | 构建脚本按真实路径判断入口，可以在符号链接目录中构建。 |
+
 ## 维护者：配置自动邀请
 
 自动邀请使用 `contribution-invites` Environment 中的 Secret `CONTRIBUTION_INVITE_TOKEN`。使用只授权 `Lee-xeo/Claude-Cage` 的 fine-grained personal access token，并授予仓库权限 **Administration: Read and write**；其余权限保持最小范围。令牌应设置有效期，并在到期前更新。

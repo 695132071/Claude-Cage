@@ -23,6 +23,7 @@ import { isLocalListener } from "./proxy-server.mjs";
 import { ProxyYAMLInput } from "./proxy-yaml-input";
 import { LocalConfigImport } from "./local-config-import";
 import { getClientContext } from "./client-context.mjs";
+import { useWindowVisibility } from "./window-visibility";
 import "./proxy.css";
 import { translate, useTranslation } from "./interface-language.mjs";
 
@@ -68,6 +69,7 @@ const emptyManual = {
 };
 export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializing = false }) {
   const tr = useTranslation();
+  const windowVisible = useWindowVisibility();
   const [proxy, setProxy] = useState(null),
     [tab, setTab] = useState("nodes"),
     [search, setSearch] = useState(""),
@@ -78,6 +80,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     [pending, setPending] = useState(""),
     [notice, setNotice] = useState(""),
     [delays, setDelays] = useState({}),
+    [fastest, setFastest] = useState(""),
+    [nodeEdit, setNodeEdit] = useState({ id: "", server: "", port: "" }),
     [connections, setConnections] = useState({ connections: [] }),
     [logs, setLogs] = useState([]),
     [port, setPort] = useState("17896"),
@@ -110,6 +114,12 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   };
   useEffect(() => {
     alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!windowVisible) return;
     const tick = async () => {
       if (loading.current) return;
       loading.current = true;
@@ -124,12 +134,11 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     tick();
     const timer = setInterval(tick, 4000);
     return () => {
-      alive.current = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [windowVisible]);
   useEffect(() => {
-    if (tab !== "connections" && tab !== "diagnostics") return;
+    if (!windowVisible || (tab !== "connections" && tab !== "diagnostics")) return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -169,7 +178,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
       clearInterval(timer);
       latest.current = null;
     };
-  }, [tab]);
+  }, [tab, windowVisible]);
   const busy = Boolean(pending) || Boolean(status.job?.running);
   const mutate = async (action, input = {}) => {
     if (mutating.current) return false;
@@ -247,6 +256,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     try {
       // A small worker pool bounds probes without changing the selected group.
       let index = 0;
+      const timings = {};
+      if (ids.length > 1) setFastest("");
       await Promise.all(
         Array.from({ length: Math.min(4, ids.length) }, async () => {
           while (index < ids.length && alive.current) {
@@ -254,6 +265,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             try {
               const result = await api("/proxy/delay", { node_id: id });
               delete delayReasons.current[id];
+              if (result.delay > 0) timings[id] = result.delay;
               if (alive.current)
                 setDelays((old) => ({ ...old, [id]: `${result.delay} ms` }));
             } catch (e) {
@@ -266,15 +278,23 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
           }
         }),
       );
+      // Offer the fastest node as a draft only; applying it stays explicit and
+      // runs the usual exit and network checks.
+      if (ids.length > 1 && alive.current) {
+        const best = Object.entries(timings).sort((a, b) => a[1] - b[1])[0];
+        setFastest(best ? best[0] : "");
+      }
     } finally {
       measuring.current = false;
       if (alive.current) setPending("");
     }
   };
-  const submit = () => {
+  const submit = async () => {
     let value = {
       id: form.id || "",
-      name: form.name,
+      // Pasted node data has no file name to borrow; an empty name used to
+      // leave "导入并验证" disabled with no visible reason (#410).
+      name: form.name.trim() || (mode === "file" && !form.id ? tr("本地导入") : form.name),
       url: form.url,
       content: form.content,
       interval_hours: form.interval_hours,
@@ -305,7 +325,19 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
         interval_hours: 0,
       };
     }
+    if (form.id && !form.remote && form.content.trim()) {
+      // A local source is updated in place from new YAML; node IDs, the
+      // selection and exit rules follow unchanged node names (#507).
+      const id = form.id, content = form.content;
+      if (await mutate("edit", value)) await mutate("refresh", { id, content });
+      return;
+    }
     mutate(form.id ? "edit" : "import", value);
+  };
+  const editNodeAddress = () => {
+    const port = Number(nodeEdit.port);
+    if (!nodeEdit.id || !nodeEdit.server.trim() || !Number.isInteger(port) || port < 1 || port > 65535) return;
+    mutate("edit-node", { id: form.id, node_id: nodeEdit.id, server: nodeEdit.server.trim(), server_port: port });
   };
   const savedRoute = proxy?.route?.length
     ? proxy.route
@@ -416,6 +448,9 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
           </ol>
           <div className="proxy-help-notes">
             <strong>{tr("导入失败或无法联网？")}</strong>
+            <p>
+              {tr("确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。")}
+            </p>
             <p>
               {tr("订阅下载失败时，可检查主机是否能访问订阅地址，或改用本地 YAML。节点不可用时，换一个节点并查看「诊断」；更换节点后仍需通过出口 IP 和地区检查。")}
             </p>
@@ -704,6 +739,16 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
               <Activity size={14} />
               {tr("测速")}
             </button>
+            {fastest && fastest !== route.at(-1) && allNodes.some((n) => n.id === fastest) && (
+              <button
+                disabled={busy}
+                title={tr("把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络")}
+                onClick={() => setRouteDraft([fastest])}
+              >
+                <Check size={14} />
+                {tr("选用最快：{0}", routeName(fastest))}
+              </button>
+            )}
           </div>
           {!allNodes.length ? (
             <div className="proxy-empty">
@@ -863,6 +908,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       interval_hours: s.interval_hours,
                       remote: s.remote,
                     });
+                    const first = !s.remote && s.nodes[0];
+                    setNodeEdit(first ? { id: first.id, server: String(first.server ?? ""), port: String(first.port ?? "") } : { id: "", server: "", port: "" });
                     setMode("url");
                   }}
                 >
@@ -979,6 +1026,54 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                   </p>
                 </>
               )}
+              {form.id && !form.remote && (() => {
+                const source = proxy.sources.find((src) => src.id === form.id);
+                const nodesOfSource = source?.nodes ?? [];
+                return (
+                  <>
+                    <div className="proxy-node-edit">
+                      <strong>{tr("修改节点地址")}</strong>
+                      <div className="field-row">
+                        <label>
+                          {tr("节点")}
+                          <select
+                            value={nodeEdit.id}
+                            disabled={busy}
+                            onChange={(e) => {
+                              const n = nodesOfSource.find((x) => x.id === e.target.value);
+                              setNodeEdit({ id: e.target.value, server: String(n?.server ?? ""), port: String(n?.port ?? "") });
+                            }}
+                          >
+                            {nodesOfSource.map((n) => (
+                              <option key={n.id} value={n.id}>{n.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          {tr("服务器")}
+                          <input value={nodeEdit.server} disabled={busy} onChange={(e) => setNodeEdit({ ...nodeEdit, server: e.target.value })} />
+                        </label>
+                        <label>
+                          {tr("端口")}
+                          <input inputMode="numeric" value={nodeEdit.port} disabled={busy} onChange={(e) => setNodeEdit({ ...nodeEdit, port: e.target.value })} />
+                        </label>
+                      </div>
+                      <p className="field-help">{tr("只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。")}</p>
+                      <button type="button" disabled={busy || !nodeEdit.id || !nodeEdit.server.trim() || !nodeEdit.port} onClick={editNodeAddress}>
+                        {tr("保存地址")}
+                      </button>
+                    </div>
+                    <p className="field-help">{tr("可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。")}</p>
+                    <ProxyYAMLInput
+                      content={form.content}
+                      disabled={busy}
+                      onReadingChange={setReadingFile}
+                      onContentChange={(content) => setForm((old) => ({ ...old, content }))}
+                      onFileRead={(_, content) => setForm((old) => ({ ...old, content }))}
+                    />
+                  </>
+                );
+              })()}
               {mode === "file" && !form.id && (
                 <ProxyYAMLInput
                   content={form.content}
@@ -1153,7 +1248,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       (mode === "url"
                         ? !form.url || !form.name
                         : mode === "file"
-                          ? !form.content.trim() || !form.name
+                          ? !form.content.trim()
                           : !manualValid))
                   }
                   onClick={submit}
