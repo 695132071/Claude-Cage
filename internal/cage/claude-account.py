@@ -910,34 +910,158 @@ def committed_common_baseline(previous, local_before, common_after):
     return updated
 
 
-# Removing every shared entry of a side at once is what a reset or lost file
-# looks like (a reinstalled CLI, a deleted plugins folder, a settings file
-# overwritten with {}), not a series of uninstalls. Such a run restores instead
-# of spreading the removal to the shared configuration and every other account.
-MASS_REMOVAL_MINIMUM = 2
+# The official CLI leaves traces when the user removes something on purpose
+# (measured with CLI 2.1.314): an uninstall keeps installed_plugins.json intact
+# ({"version": 2, "plugins": {...}}), writes .orphaned_at into the version's
+# cache folder and drops the plugin from enabledPlugins; removing a marketplace
+# also drops it from extraKnownMarketplaces; `claude mcp remove` keeps the rest
+# of .claude.json. A reset, a lost file or an old process saving a stale copy
+# leaves none of these. Entries that vanish without a trace are restored once;
+# the same entries vanishing again after that is taken as the user's choice.
+REMOVAL_BLOCK_AGE = 7 * 24 * 60 * 60
+REMOVAL_CONFIRMED_AGE = 30 * 24 * 60 * 60
 
 
-def removes_everything(before, after):
-    removed = [key for key in before if key not in after]
-    return len(removed) >= MASS_REMOVAL_MINIMUM and len(removed) == len(before)
+class RemovalGuard:
+    """Hold back removals without uninstall traces once; a repeat confirms them.
 
-
-def guarded_merge(merger, local, base, common, reset, label):
-    """Three-way merge that never lets a reset side delete entries elsewhere.
-
-    reset is true when one side's file is missing or was reset: no entry is then
-    known to have been removed on purpose, so the merge runs as a first sync and
-    each side only gains what the other has. Returns the merge and the baseline
-    it actually used.
+    The state lives in claude-shared, outside every configuration directory,
+    and is only touched under resources.lock.
     """
-    if base and not reset:
-        merged_local, merged_common, merged_base = merger(local, base, common)
-        if not (removes_everything(common, merged_common) or removes_everything(local, merged_local)):
-            return merged_local, merged_common, merged_base, base
-        print(f"{label}：一侧一次移除了全部共用条目，已按异常处理，未同步删除，并从另一侧补回。"
-              "若确实要全部移除，请分次移除（每次至少保留一项）。", file=sys.stderr)
-    merged_local, merged_common, merged_base = merger(local, {}, common)
-    return merged_local, merged_common, merged_base, {}
+
+    def __init__(self, root, notices=None, now=None):
+        self.path = root / "removal-guard.json"
+        self.now = time.time() if now is None else now
+        self.notices = notices
+        try:
+            state = json_file(self.path)
+        except (ValueError, OSError):
+            state = {}
+        state = state if isinstance(state, dict) else {}
+        blocked = state.get("blocked") if isinstance(state.get("blocked"), dict) else {}
+        self.blocked = {slot: entry for slot, entry in blocked.items() if isinstance(entry, dict)
+                        and type(entry.get("at")) in (int, float) and 0 <= self.now - entry["at"] < REMOVAL_BLOCK_AGE}
+        confirmed = state.get("confirmed") if isinstance(state.get("confirmed"), dict) else {}
+        self.confirmed = {}
+        for kind, keys in confirmed.items():
+            if isinstance(keys, dict):
+                fresh = {key: at for key, at in keys.items() if type(at) in (int, float) and 0 <= self.now - at < REMOVAL_CONFIRMED_AGE}
+                if fresh:
+                    self.confirmed[kind] = fresh
+        self.pending = {}
+        self.changed = False
+
+    def is_confirmed(self, kind, key):
+        return key in self.confirmed.get(kind, {})
+
+    def hold(self, side, kind, keys, label="", where="", item_names=None):
+        """Return the keys to restore; the same removal seen by the very next sync is confirmed.
+
+        Called on every sync, also with no keys: a sync that finds anything else
+        missing (or nothing) ends the earlier hold.
+        """
+        keys = sorted(keys)
+        slot = f"{side}|{kind}"
+        digest = bytes_digest(json.dumps(keys).encode())
+        earlier = self.blocked.get(slot)
+        if earlier is not None and (not keys or not isinstance(earlier, dict) or earlier.get("digest") != digest):
+            del self.blocked[slot]
+            self.changed = True
+            earlier = None
+        if not keys:
+            return set()
+        if isinstance(earlier, dict) and earlier.get("digest") == digest:
+            del self.blocked[slot]
+            for key in keys:
+                self.confirmed.setdefault(kind, {})[key] = self.now
+            self.changed = True
+            return set()
+        self.pending[slot] = {"digest": digest, "at": self.now}
+        names = "、".join((item_names or keys)[:5]) + ("等" if len(keys) > 5 else "")
+        message = (f"{label}：{where}中少了 {len(keys)} 项（{names}），但没有官方卸载或移除留下的痕迹，"
+                   "可能是文件被重置、损坏或旧进程写回了旧内容。已补回，没有同步删除到其他账号。"
+                   "若确实要移除，请用官方命令再移除一次；手动删除的，下次启动时仍缺少同一批即视为确认。")
+        if self.notices is not None:
+            self.notices.event("removal:" + slot + ":" + digest[:16], "removal_blocked", message, item=names)
+        else:
+            print(message, file=sys.stderr)
+        return set(keys)
+
+    def discard(self, kind):
+        """A held removal whose restore was not written must not count as shown."""
+        for slot in [slot for slot in self.pending if slot.endswith("|" + kind)]:
+            del self.pending[slot]
+
+    def save(self):
+        if not self.pending and not self.changed:
+            return
+        self.blocked.update(self.pending)
+        self.pending = {}
+        data = json.dumps({"blocked": self.blocked, "confirmed": self.confirmed}, separators=(",", ":")).encode()
+        self.path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=self.path.parent, delete=False) as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = stream.name
+        try:
+            os.replace(temporary, self.path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+
+
+def removed_by(side, other, base, merged_other):
+    """Keys one side dropped that the merge would also drop from the other side."""
+    return {key for key in base if key not in side and key in other and key not in merged_other}
+
+
+def entry_time(value):
+    """Latest installedAt/lastUpdated of a registry entry, in seconds; 0 if none."""
+    stamps = []
+    for item in (value if isinstance(value, list) else [value]):
+        if isinstance(item, dict):
+            for field in ("installedAt", "lastUpdated"):
+                text = item.get(field)
+                if isinstance(text, str):
+                    try:
+                        stamps.append(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+                    except (ValueError, OverflowError):
+                        pass
+    return max(stamps, default=0)
+
+
+def live_cli_starts(config):
+    """Start times of running processes that use this configuration directory."""
+    proc = Path("/proc")
+    try:
+        boot = next(int(line.split()[1]) for line in (proc / "stat").read_text().splitlines() if line.startswith("btime "))
+        ticks = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, StopIteration):
+        return []
+    wanted = safe_resolve(config)
+    starts = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            environ = (entry / "environ").read_bytes().split(b"\0")
+            value = next((item[len(b"CLAUDE_CONFIG_DIR="):] for item in environ if item.startswith(b"CLAUDE_CONFIG_DIR=")), None)
+            if value is None or safe_resolve(Path(os.fsdecode(value))) != wanted:
+                continue
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            starts.append(boot + int(fields[19]) / ticks)
+        except (OSError, ValueError, IndexError):
+            continue
+    return starts
+
+
+def canonical_digest(mapping):
+    return bytes_digest(json.dumps({key: [without_last_updated(item) for item in value] if isinstance(value, list) else without_last_updated(value)
+                                    for key, value in mapping.items()}, sort_keys=True, default=str).encode())
+
+
+REGISTRY_HISTORY = 8
 
 
 def share_plugin_folders(base, lock_dir):
@@ -1107,11 +1231,39 @@ def clear_active_plugin_orphans(common_root, installed_plugins):
                 pass
 
 
-def marketplace_of(plugin_id):
-    return plugin_id.rpartition("@")[2] if isinstance(plugin_id, str) else None
+def set_aside_corrupt(path, raw, backup_prefix):
+    """Move an unreadable registry into the backups; False if it changed meanwhile."""
+    backup = unique_backup_path(backup_prefix)
+    try:
+        os.rename(path, backup)
+    except FileNotFoundError:
+        return False
+    if backup.read_bytes() != raw:
+        # The CLI replaced it in between: put the newer file back if still free.
+        try:
+            os.link(backup, path)
+            backup.unlink()
+        except FileExistsError:
+            pass
+        return False
+    return True
 
 
-def sync_plugin_registries(base, lock_dir, record):
+def settings_snapshot(path):
+    """A settings file that exists, parses and was not reset to {}; else None."""
+    raw, data = json_snapshot(path)
+    return data if raw is not None and isinstance(data, dict) and data else None
+
+
+def registry_intact(name, raw, data):
+    if raw is None or not isinstance(data, dict):
+        return False
+    if name == "installed_plugins.json":
+        return data.get("version") == 2 and isinstance(data.get("plugins"), dict)
+    return True
+
+
+def sync_plugin_registries(base, lock_dir, record, guard=None, notices=None):
     """Merge public installed plugins and known marketplaces in both directions.
 
     Private/org/claude.ai/credentialed entries and entries whose paths do not
@@ -1125,20 +1277,38 @@ def sync_plugin_registries(base, lock_dir, record):
     installed in another account while one account uninstalled it would allow
     the official CLI to delete files still referenced by the other account.
 
-    A registry that is missing records no uninstall, and one side removing
-    every shared plugin at once, or a marketplace whose plugins stay installed,
-    looks like a reset rather than a choice. Both registries are then merged
-    as on a first sync: each side regains entries and nothing is removed.
+    Only removals with the CLI's traces spread (see RemovalGuard). An account
+    file equal to an earlier synchronized state, or one missing entries newer
+    than a running CLI of the account, is an old process's save: it is brought
+    up to date without spreading anything.
     """
+    guard = guard or RemovalGuard(lock_dir)
     config, common = config_directory(base), Path.home() / ".claude"
     local_root, common_root = config / "plugins", common / "plugins"
     local_forms, common_forms = plugin_root_forms(config), plugin_root_forms(common)
     bases = dict_field(record, "plugins")
+    history = dict_field(record, "registry_history")
     private_marketplaces, private_plugins = set(), set()
-    plans = []
+    settings = {"local": settings_snapshot(config / "settings.json"), "common": settings_snapshot(common / "settings.json")}
+    starts = None
     for name, field in PLUGIN_REGISTRIES:
-        local_raw, local = json_snapshot(local_root / name)
-        common_raw, shared = json_snapshot(common_root / name)
+        snapshots = {}
+        for side, root, owner in (("local", local_root, base.name), ("common", common_root, "common")):
+            raw, data = json_snapshot(root / name)
+            if raw and data is None and not linked(root / name):
+                # Unreadable: keep it in the backups and rebuild from the other side.
+                prefix = lock_dir / "backups" / owner / "plugins" / (name + ".corrupt")
+                if set_aside_corrupt(root / name, raw, prefix):
+                    raw, data = None, {}
+                    item = shown_path(root / name)
+                    message = (f"插件登记无法读取：{item} 已移到备份并按另一侧重建。"
+                               f"原文件保留在 {shown_path(prefix.parent)}。")
+                    if notices is not None:
+                        notices.event("corrupt:" + owner + ":" + name, "registry_corrupt", message, item=name, local=item)
+                    else:
+                        print(message, file=sys.stderr)
+            snapshots[side] = (raw, data)
+        (local_raw, local), (common_raw, shared) = snapshots["local"], snapshots["common"]
         if local is None or shared is None:
             continue
         if field and (local.get("version", 2) != 2 or shared.get("version", 2) != 2):
@@ -1165,70 +1335,81 @@ def sync_plugin_registries(base, lock_dir, record):
             private_marketplaces |= excluded
         else:
             private_plugins |= excluded
-        plan = {
-            "name": name, "field": field, "merger": merger,
-            "local_raw": local_raw, "local": local, "local_map": local_map,
-            "common_raw": common_raw, "shared": shared, "common_map": common_map,
-            "local_form": plugin_form(local_map, local_forms), "common_form": plugin_form(common_map, common_forms),
-            "local_shareable": {k: v for k, v in local_neutral.items() if k not in excluded},
-            "common_shareable": {k: v for k, v in common_neutral.items() if k not in excluded},
-            "previous": {k: v for k, v in previous_raw.items() if k not in excluded and allow(k, v)},
-            "local_private": {k: v for k, v in local_map.items() if k in excluded},
-            "common_private": {k: v for k, v in common_map.items() if k in excluded},
-        }
-        plan["merged"] = merger(plan["local_shareable"], plan["previous"], plan["common_shareable"])
-        plans.append(plan)
-    # Judge both registries together before anything is written.
-    reset = any(plan["local_raw"] is None or plan["common_raw"] is None for plan in plans)
-    suspicious = None
-    installed = next((plan for plan in plans if plan["name"] == "installed_plugins.json"), None)
-    for plan in plans:
-        merged_local, merged_common, _ = plan["merged"]
-        if not plan["previous"]:
-            continue
-        if removes_everything(plan["local_shareable"], merged_local) or removes_everything(plan["common_shareable"], merged_common):
-            suspicious = suspicious or ("插件市场登记" if plan["name"] == "known_marketplaces.json" else "已安装插件登记")
-        if plan["name"] == "known_marketplaces.json" and installed is not None:
-            for side, merged, plugins in ((0, merged_local, installed["merged"][0]), (1, merged_common, installed["merged"][1])):
-                before = plan["local_shareable"] if side == 0 else plan["common_shareable"]
-                removed = {key for key in before if key not in merged}
-                if any(marketplace_of(plugin) in removed for plugin in plugins):
-                    suspicious = suspicious or "插件市场登记"
-    if suspicious:
-        print(f"{suspicious}：一侧一次移除了全部共用条目，或移除了仍有插件在用的插件市场，已按异常处理，"
-              "未同步删除，并从另一侧补回。若确实要全部移除，请分次移除（每次至少保留一项），"
-              "移除插件市场前先卸载其中的插件。", file=sys.stderr)
-    for plan in plans:
-        name, field, merger = plan["name"], plan["field"], plan["merger"]
-        previous = plan["previous"]
-        if reset or suspicious:
-            # Nothing is known to be removed on purpose: merge as a first sync.
-            previous = {}
-            plan["merged"] = merger(plan["local_shareable"], previous, plan["common_shareable"])
-        merged_local_n, merged_common_n, merged_base = plan["merged"]
-        local_raw, local, local_map = plan["local_raw"], plan["local"], plan["local_map"]
-        common_raw, shared, common_map = plan["common_raw"], plan["shared"], plan["common_map"]
-        merged_common = {**plan["common_private"], **plugin_paths(merged_common_n, [NEUTRAL_PLUGINS], plan["common_form"])}
+        local_shareable = {k: v for k, v in local_neutral.items() if k not in excluded}
+        common_shareable = {k: v for k, v in common_neutral.items() if k not in excluded}
+        previous = {k: v for k, v in previous_raw.items() if k not in excluded and allow(k, v)}
+        local_private = {k: v for k, v in local_map.items() if k in excluded}
+        common_private = {k: v for k, v in common_map.items() if k in excluded}
+        merged_local_n, merged_common_n, merged_base = merger(local_shareable, previous, common_shareable)
+        intact = {"local": registry_intact(name, local_raw, local), "common": registry_intact(name, common_raw, shared)}
+
+        def evidence(side, key):
+            if guard.is_confirmed(name, key):
+                return True
+            if not intact[side]:
+                return False
+            chosen = settings[side]
+            if name == "known_marketplaces.json":
+                extra = chosen.get("extraKnownMarketplaces") if chosen else None
+                return isinstance(extra, dict) and key not in extra
+            for item in previous.get(key) or ():
+                location = item.get("installPath") if isinstance(item, dict) else None
+                if isinstance(location, str) and location.startswith(NEUTRAL_PLUGINS):
+                    folder = common_root / location[len(NEUTRAL_PLUGINS):]
+                    if (folder / ".orphaned_at").is_file() or not folder.exists():
+                        return True
+            enabled = chosen.get("enabledPlugins") if chosen else None
+            return isinstance(enabled, dict) and key not in enabled
+
+        restore = set()
+        label = "插件市场登记" if name == "known_marketplaces.json" else "已安装插件登记"
+        local_missing = {key for key in removed_by(local_shareable, common_shareable, previous, merged_common_n) if not evidence("local", key)}
+        if local_missing:
+            recent = history.get(name) if isinstance(history.get(name), list) else []
+            if starts is None:
+                starts = live_cli_starts(config)
+            stale = canonical_digest(local_shareable) in recent or any(
+                entry_time(common_shareable.get(key)) > start for key in local_missing for start in starts)
+            if stale:
+                # An older process saved what it had loaded: bring it up to date.
+                restore |= local_missing
+                guard.hold(base.name, name, ())
+            else:
+                restore |= guard.hold(base.name, name, local_missing, label, "本账号")
+        else:
+            guard.hold(base.name, name, ())
+        common_missing = {key for key in removed_by(common_shareable, local_shareable, previous, merged_local_n) if not evidence("common", key)}
+        restore |= guard.hold("common", name, common_missing, label, "共用配置（~/.claude）")
+        if restore:
+            previous = {key: value for key, value in previous.items() if key not in restore}
+            merged_local_n, merged_common_n, merged_base = merger(local_shareable, previous, common_shareable)
+        local_form, common_form = plugin_form(local_map, local_forms), plugin_form(common_map, common_forms)
+        merged_common = {**common_private, **plugin_paths(merged_common_n, [NEUTRAL_PLUGINS], common_form)}
         common_written = False
-        if merged_common != common_map:
+        if merged_common != common_map or common_raw is None and merged_common:
             data = {**shared, "version": 2, field: merged_common} if field else merged_common
             if not replace_json(common_root / name, data, common_raw, lock_dir / "backups" / "common" / "plugins" / name):
+                guard.discard(name)
                 continue
             common_written = True
             # Persist common-side agreement immediately so a local race below
             # cannot resurrect a removed or modified entry on the next launch.
-            bases[name] = committed_common_baseline(previous, plan["local_shareable"], merged_common_n)
+            bases[name] = committed_common_baseline(previous, local_shareable, merged_common_n)
             write_record(base, record)
-        merged_local = {**plan["local_private"], **plugin_paths(merged_local_n, [NEUTRAL_PLUGINS], plan["local_form"])}
-        if merged_local != local_map:
+        merged_local = {**local_private, **plugin_paths(merged_local_n, [NEUTRAL_PLUGINS], local_form)}
+        if merged_local != local_map or local_raw is None and merged_local or field and not intact["local"] and merged_local:
             data = {**local, "version": 2, field: merged_local} if field else merged_local
             if not replace_json(local_root / name, data, local_raw, lock_dir / "backups" / base.name / "plugins" / name):
+                guard.discard(name)
                 if name == "installed_plugins.json" and common_written:
                     clear_active_plugin_orphans(common_root, merged_common)
                 continue
         if name == "installed_plugins.json":
             clear_active_plugin_orphans(common_root, merged_common)
         bases[name] = merged_base
+        recent = [item for item in (history.get(name) if isinstance(history.get(name), list) else []) if isinstance(item, str)]
+        digest = canonical_digest(merged_local_n)
+        history[name] = ([item for item in recent if item != digest] + [digest])[-REGISTRY_HISTORY:]
     return private_marketplaces, private_plugins
 
 
@@ -1251,7 +1432,7 @@ def withdraw_additions(result, additions):
             del result["hooks"]
 
 
-def sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces=frozenset(), private_plugins=frozenset()):
+def sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces=frozenset(), private_plugins=frozenset(), guard=None):
     """Copy shared settings into a profile for clients that take no flags.
 
     Only keys the profile does not set are added, and hook groups are appended
@@ -1274,7 +1455,7 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     # An interrupted earlier run may have written its additions without
     # completing the record. Its intent names the exact file it was about to
     # publish; only that file proves the additions landed and are Cage's.
-    pending = confirmed_intent(previous_pending, original)
+    pending = confirmed_intent(previous_pending, original) or legacy_settings_intent(previous_pending, current, common)
     if common_raw is None:
         # A missing shared file says nothing about which shared values were
         # removed: keep every earlier addition as it is and add nothing.
@@ -1311,7 +1492,19 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
         excluded_marketplaces = set(private_marketplaces)
         # A settings file that is missing or was reset to {} records no
         # deliberate removal; it must not disable plugins everywhere else.
-        reset = original is None or current == {} or common_raw is None or common == {}
+        guard = guard or RemovalGuard(lock_dir)
+        sides = {"local": (settings_snapshot(path), config / "plugins"),
+                 "common": (settings_snapshot(common_path), Path.home() / ".claude/plugins")}
+        registries = {}
+        for side, (_, root) in sides.items():
+            installed_raw, installed = json_snapshot(root / "installed_plugins.json")
+            known_raw, known_markets = json_snapshot(root / "known_marketplaces.json")
+            registries[side] = {
+                "enabledPlugins": installed.get("plugins") if registry_intact("installed_plugins.json", installed_raw, installed) else None,
+                "extraKnownMarketplaces": known_markets if registry_intact("known_marketplaces.json", known_raw, known_markets) else None,
+            }
+        common_installed = registries["common"]["enabledPlugins"] or {}
+        starts = None
         # Process extraKnownMarketplaces first so any credentialed or org
         # marketplace excluded here also blocks its entries in enabledPlugins.
         for key in ("extraKnownMarketplaces", "enabledPlugins"):
@@ -1332,8 +1525,31 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
             mine_private = {k: v for k, v in mine.items() if k in excluded}
             theirs_private = {k: v for k, v in theirs.items() if k in excluded}
             label = "插件启用设置" if key == "enabledPlugins" else "额外插件市场设置"
-            merged_mine, merged_theirs, plugin_bases[key], known = guarded_merge(
-                three_way, mine_shareable, known, theirs_shareable, reset, label)
+            merged_mine, merged_theirs, plugin_bases[key] = three_way(mine_shareable, known, theirs_shareable)
+            # Uninstalling a plugin or removing a marketplace also removes it
+            # from the registry beside this settings file; a reset does not.
+            def evidence(side, name):
+                if guard.is_confirmed(key, name):
+                    return True
+                listed = registries[side][key]
+                return sides[side][0] is not None and isinstance(listed, dict) and name not in listed
+            restore = set()
+            local_missing = {name for name in removed_by(mine_shareable, theirs_shareable, known, merged_theirs) if not evidence("local", name)}
+            if local_missing:
+                if starts is None:
+                    starts = live_cli_starts(config)
+                if any(entry_time(common_installed.get(name)) > start for name in local_missing for start in starts):
+                    restore |= local_missing
+                    guard.hold(base.name, key, ())
+                else:
+                    restore |= guard.hold(base.name, key, local_missing, label, "本账号")
+            else:
+                guard.hold(base.name, key, ())
+            common_missing = {name for name in removed_by(theirs_shareable, mine_shareable, known, merged_mine) if not evidence("common", name)}
+            restore |= guard.hold("common", key, common_missing, label, "共用配置（~/.claude）")
+            if restore:
+                known = {name: value for name, value in known.items() if name not in restore}
+                merged_mine, merged_theirs, plugin_bases[key] = three_way(mine_shareable, known, theirs_shareable)
             common_baselines[key] = committed_common_baseline(known, mine_shareable, merged_theirs)
             final_mine = {**mine_private, **merged_mine}
             final_theirs = {**theirs_private, **merged_theirs}
@@ -1343,6 +1559,9 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     if common_result != common:
         # Publish plugin choices first: if this is refused, nothing else moves.
         if not replace_json(common_path, common_result, common_raw, lock_dir / "backups" / "common" / "settings.json"):
+            if guard is not None:
+                guard.discard("enabledPlugins")
+                guard.discard("extraKnownMarketplaces")
             return
         # Persist common-side baselines immediately so a local race below
         # cannot resurrect a disabled plugin on the next launch.
@@ -1363,6 +1582,31 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     plugin_record.update({key: plugin_bases[key] for key in PLUGIN_SETTINGS if key in plugin_bases})
 
 
+def legacy_settings_intent(intent, current, common):
+    """An interrupted write's intent from a version that recorded no digest.
+
+    Its additions are claimed only where the account still holds exactly the
+    shared value: then Cage most likely wrote them before the upgrade, and
+    claiming them lets them follow later shared changes again.
+    """
+    if not isinstance(intent, dict) or "digest" in intent or not isinstance(current, dict) or not isinstance(common, dict):
+        return {}
+    keys = intent.get("keys") if isinstance(intent.get("keys"), dict) else {}
+    claimed = {key: value for key, value in keys.items() if key in current and current[key] == value and common.get(key) == value}
+    hooks, shared_hooks = current.get("hooks"), common.get("hooks")
+    claimed_hooks = {}
+    if isinstance(hooks, dict) and isinstance(shared_hooks, dict) and isinstance(intent.get("hooks"), dict):
+        for event, groups in intent["hooks"].items():
+            present, shared = hooks.get(event), shared_hooks.get(event)
+            if isinstance(groups, list) and isinstance(present, list) and isinstance(shared, list):
+                kept = [group for group in groups if group in present and group in shared]
+                if kept:
+                    claimed_hooks[event] = kept
+    if not claimed and not claimed_hooks:
+        return {}
+    return {"keys": claimed, "hooks": claimed_hooks, "hooks_created": bool(intent.get("hooks_created")) and bool(claimed_hooks)}
+
+
 def confirmed_intent(intent, original):
     """An interrupted write's intent, only if the file is exactly what it was about to publish."""
     if not isinstance(intent, dict) or original is None or intent.get("digest") != bytes_digest(original):
@@ -1374,23 +1618,35 @@ def global_config_path(base):
     return Path.home() / ".claude.json" if base.name == DEFAULT else config_directory(base) / ".claude.json"
 
 
-def shared_mcp_state():
+def shared_mcp_state(with_evidence=False):
     """User-scope servers of the default configuration; None when that is unknown.
 
     A missing or unreadable ~/.claude.json, or one without an mcpServers map,
-    says nothing about which servers the user removed. Never its account fields.
+    says nothing about which servers the user removed. `claude mcp remove`
+    keeps the CLI's other entries in the file; a file holding nothing but the
+    server map was rewritten by something else. Only key names are inspected,
+    never the account fields' values.
     """
     raw, data = json_snapshot(Path.home() / ".claude.json")
     if raw is None or not isinstance(data, dict) or not isinstance(data.get("mcpServers"), dict):
-        return None
-    return {name: value for name, value in data["mcpServers"].items() if isinstance(value, dict)}
+        return (None, False) if with_evidence else None
+    servers = {name: value for name, value in data["mcpServers"].items() if isinstance(value, dict)}
+    return (servers, any(key != "mcpServers" for key in data)) if with_evidence else servers
 
 
 def shared_mcp_servers():
     return shared_mcp_state() or {}
 
 
-def sync_profile_mcp(base, lock_dir, record, add_missing):
+def legacy_mcp_intent(intent, servers, shared):
+    """Old pending_mcp records (no digest): claim servers the account holds exactly as shared."""
+    if not isinstance(intent, dict) or "digest" in intent or "servers" in intent:
+        return {}
+    return {name: value for name, value in intent.items()
+            if isinstance(value, dict) and servers.get(name) == value and shared.get(name) == value}
+
+
+def sync_profile_mcp(base, lock_dir, record, add_missing, guard=None):
     """Add shared user-scope MCP servers the profile lacks; refresh or withdraw earlier additions.
 
     Only the mcpServers entry changes. OAuth tokens for MCP servers stay in each
@@ -1400,7 +1656,7 @@ def sync_profile_mcp(base, lock_dir, record, add_missing):
     original, current = json_snapshot(path)
     if current is None or "mcpServers" in current and not isinstance(current["mcpServers"], dict):
         return
-    shared = shared_mcp_state()
+    shared, traced = shared_mcp_state(with_evidence=True)
     if shared is None:
         # Keep earlier additions until the shared definitions are readable again.
         return
@@ -1408,13 +1664,14 @@ def sync_profile_mcp(base, lock_dir, record, add_missing):
     ours = record.get("mcp") if isinstance(record.get("mcp"), dict) else {}
     previous_pending = record.get("pending_mcp")
     pending = confirmed_intent(previous_pending, original).get("servers")
-    pending = pending if isinstance(pending, dict) else {}
-    withdrawn = [name for added in (ours, pending) for name, value in added.items()
-                 if servers.get(name) == value and name not in shared]
-    if not shared and len(set(withdrawn)) >= MASS_REMOVAL_MINIMUM:
-        # The account may now hold the only copy of these definitions.
-        print("用户级 MCP 服务器：默认配置一次移除了全部共用服务器，已按异常处理，各账号中的副本保留不动。"
-              "若确实要全部移除，请分次移除（每次至少保留一项）。", file=sys.stderr)
+    if not isinstance(pending, dict):
+        pending = legacy_mcp_intent(previous_pending, servers, shared)
+    withdrawn = {name for added in (ours, pending) for name, value in added.items()
+                 if servers.get(name) == value and name not in shared}
+    guard = guard or RemovalGuard(lock_dir)
+    untraced = set() if traced else {name for name in withdrawn if not guard.is_confirmed("mcp", name)}
+    # The account may now hold the only copy of these definitions.
+    if guard.hold("common", "mcp", untraced, "用户级 MCP 服务器", "默认配置 ~/.claude.json"):
         return
     for added in (ours, pending):
         for name, value in added.items():
@@ -1576,43 +1833,129 @@ def path_state(path):
     return f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}:{target}"
 
 
-class Notices:
-    """Show each launch problem when it first appears or changes, then daily."""
+NOTICE_EVENT_AGE = 3 * 24 * 60 * 60
 
-    def __init__(self, record, now=None):
+
+def notice_file(account):
+    """Pending notices for the workbench: in claude-shared, outside every configuration."""
+    return shared_root() / "notices" / (account + ".json")
+
+
+class Notices:
+    """Launch problems for the user: on stderr when new or changed, then daily.
+
+    Every active notice is also listed in claude-shared/notices/<account>.json
+    so the workbench can show what Desktop's stderr never reaches. A conflict
+    disappears once resolved; a one-off event stays listed for a few days.
+    Each launch path owns a scope and only replaces the notices of its scope.
+    """
+
+    def __init__(self, record, scope="resources", now=None):
         stored = record.get("notices")
-        self.previous = stored if isinstance(stored, dict) else {}
+        # Entries without "since" predate the structured format; they are re-created.
+        self.all = {key: entry for key, entry in stored.items() if isinstance(entry, dict) and "since" in entry} if isinstance(stored, dict) else {}
+        self.scope = scope
         self.current = {}
         self.record = record
         self.now = time.time() if now is None else now
 
-    def show(self, key, state, message):
-        entry = self.previous.get(key)
+    def _key(self, key):
+        return self.scope + ":" + key
+
+    def show(self, key, state, message, kind="resource_conflict", item="", local="", shared=""):
+        key = self._key(key)
+        entry = self.all.get(key)
+        details = {"kind": kind, "item": item, "local": local, "shared": shared, "message": message}
         if (isinstance(entry, dict) and entry.get("state") == state and type(entry.get("at")) in (int, float)
                 and 0 <= self.now - entry["at"] < NOTICE_INTERVAL):
-            self.current[key] = entry
+            self.current[key] = {**entry, **details}
             return
         print(message, file=sys.stderr)
-        self.current[key] = {"state": state, "at": self.now}
+        since = entry.get("since") if isinstance(entry, dict) and entry.get("state") == state else None
+        self.current[key] = {"state": state, "at": self.now, "since": since if type(since) in (int, float) else self.now, **details}
 
-    def finish(self):
+    def event(self, key, kind, message, item="", local="", shared=""):
+        """A one-off occurrence: shown now and listed for NOTICE_EVENT_AGE."""
+        print(message, file=sys.stderr)
+        self.current[self._key(key)] = {"state": "event", "at": self.now, "since": self.now, "until": self.now + NOTICE_EVENT_AGE,
+                                        "kind": kind, "item": item, "local": local, "shared": shared, "message": message}
+
+    def finish(self, account=None):
         # Resolved problems are forgotten, so a recurrence is explained again.
-        if self.current:
-            self.record["notices"] = self.current
+        stored = self.record.get("notices")
+        stored = {key: entry for key, entry in stored.items() if isinstance(entry, dict) and "since" in entry} if isinstance(stored, dict) else {}
+        kept = {key: entry for key, entry in stored.items() if not key.startswith(self.scope + ":")
+                or entry.get("state") == "event" and type(entry.get("until")) in (int, float) and entry["until"] > self.now}
+        kept.update(self.current)
+        if kept:
+            self.record["notices"] = kept
         else:
             self.record.pop("notices", None)
+        if account:
+            publish_notices(account, kept, self.now)
+
+
+def publish_notices(account, entries, now):
+    listed = []
+    for key, entry in sorted(entries.items()):
+        until = entry.get("until")
+        if type(until) in (int, float) and until <= now:
+            continue
+        listed.append({"id": hashlib.sha256(key.encode()).hexdigest()[:16], "kind": str(entry.get("kind") or ""),
+                       "item": str(entry.get("item") or ""), "local": str(entry.get("local") or ""),
+                       "shared": str(entry.get("shared") or ""), "since": int(entry.get("since") or entry.get("at") or now),
+                       "message": str(entry.get("message") or "")})
+    path = notice_file(account)
+    if not listed:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        stream.write(json.dumps({"version": 1, "account": account, "updated_at": int(now), "notices": listed},
+                                ensure_ascii=False, separators=(",", ":")).encode())
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    try:
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def read_notices(account):
+    try:
+        data = json_file(notice_file(account))
+    except (ValueError, OSError):
+        return []
+    notices = data.get("notices") if isinstance(data, dict) else None
+    return [entry for entry in notices if isinstance(entry, dict)] if isinstance(notices, list) else []
 
 
 def resource_conflict_notice(notices, local, shared):
     local_text, shared_text = shown_path(local), shown_path(shared)
+    try:
+        item = local.relative_to(config_directory(local_owner(local))).as_posix()
+    except (ValueError, AttributeError):
+        item = local.name
     if linked(local):
         message = (f"共用资料同名冲突：账号中的 {local_text} 是指向共用位置以外的链接。本次未共享这一项，"
                    f"原链接保留，启动不受影响。若不再需要它，删除 {local_text} 后下次启动即改为共享 {shared_text}。")
+        kind = "link_conflict"
     else:
         message = (f"共用资料同名冲突：账号中的 {local_text} 与共用的 {shared_text} 内容不同。本次未共享这一项，"
                    f"两份都原样保留，启动不受影响。请对照两份内容，把要保留的部分并入 {shared_text}，"
                    f"再删除 {local_text}，下次启动即改为共享。")
-    notices.show("resource:" + str(local), path_state(local) + "|" + path_state(shared), message)
+        kind = "resource_conflict"
+    notices.show("resource:" + str(local), path_state(local) + "|" + path_state(shared), message,
+                 kind=kind, item=item, local=local_text, shared=shared_text)
+
+
+def local_owner(path):
+    """The account base directory a path inside an account configuration belongs to."""
+    root = profile(DEFAULT).parent
+    relative = path.relative_to(root)
+    return root / relative.parts[0]
 
 
 def shared_profile_resources(base, desktop=False):
@@ -1628,6 +1971,7 @@ def shared_profile_resources(base, desktop=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = read_record(base)
         notices = Notices(record)
+        guard = RemovalGuard(lock_dir, notices)
         conflict = "账号的技能或指令与共用资料同名冲突，请先核对 ~/.claude 中的对应文件；原文件已保留"
         healable_names = {"CLAUDE.md", "AGENTS.md"}
         def check(local, shared):
@@ -1724,11 +2068,12 @@ def shared_profile_resources(base, desktop=False):
         plugins_shared = share_plugin_folders(base, lock_dir)
         private_marketplaces, private_plugins = frozenset(), frozenset()
         if plugins_shared:
-            private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record)
+            private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record, guard, notices)
         else:
-            notices.show("plugins", "separate", "账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响")
-        sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins)
-        sync_profile_mcp(base, lock_dir, record, desktop)
+            notices.show("plugins", "separate", "账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响",
+                         kind="plugins_separate", item="plugins", local=shown_path(config / "plugins"), shared=shown_path(common / "plugins"))
+        sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins, guard)
+        sync_profile_mcp(base, lock_dir, record, desktop, guard)
         if desktop:
             link_known_project_memory(base)
         for prefix in (lock_dir / "backups" / base.name / "settings.json",
@@ -1741,7 +2086,8 @@ def shared_profile_resources(base, desktop=False):
                        lock_dir / "backups" / "common" / "CLAUDE.md",
                        lock_dir / "backups" / "common" / "AGENTS.md"):
             prune_backup_series(prefix)
-        notices.finish()
+        guard.save()
+        notices.finish(base.name)
         write_record(base, record)
 
 
@@ -1995,6 +2341,16 @@ def main(args, *, mobile_settings_fd=None, verify_mobile=None):
             if quota:
                 result[candidate] = quota
         print(json.dumps(result))
+        return 0
+    if mode == "notices":
+        # Launch problems the workbench shows beside each account.
+        result = {}
+        for candidate in [account_id, *rest]:
+            profile(candidate)
+            listed = read_notices(candidate)
+            if listed:
+                result[candidate] = listed
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     base = profile(account_id)
     if account_id == DEFAULT and mode == "login":

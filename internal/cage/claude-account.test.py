@@ -816,7 +816,9 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
                               "installLocation": str(plugins / "marketplaces" / marketplace), "lastUpdated": "2026-11-01T00:00:00.000Z"}
         self.write(plugins / "known_marketplaces.json", known)
         installed = self.read(plugins / "installed_plugins.json") if (plugins / "installed_plugins.json").exists() else {"version": 2, "plugins": {}}
-        installed["plugins"][plugin + "@" + marketplace] = [{"scope": "user", "installPath": str(folder), "version": version}]
+        stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        installed["plugins"][plugin + "@" + marketplace] = [{"scope": "user", "installPath": str(folder), "version": version,
+                                                             "installedAt": stamp, "lastUpdated": stamp}]
         self.write(plugins / "installed_plugins.json", installed)
 
     def test_private_plugin_entries_and_identity_files_never_become_links(self):
@@ -1405,7 +1407,8 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
     def two_plugins_shared_by_two_accounts(self):
         self.install(self.common / "plugins", "team", "example/team", "lint")
         self.install(self.common / "plugins", "team", "example/team", "fmt")
-        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True, "fmt@team": True}})
+        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True, "fmt@team": True},
+                                                   "extraKnownMarketplaces": {"team": {"source": {"source": "github", "repo": "example/team"}}}})
         first, config = self.profile(FIRST)
         second, other = self.profile(SECOND)
         self.share(FIRST)
@@ -1415,6 +1418,28 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
             self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), both)
             self.assertEqual(sorted(self.read(root / "settings.json")["enabledPlugins"]), both)
         return config, other, both
+
+    def cli_uninstall(self, root, plugin_id):
+        """What `claude plugin uninstall` leaves behind (measured with CLI 2.1.314)."""
+        installed = self.read(root / "plugins/installed_plugins.json")
+        for entry in installed["plugins"].pop(plugin_id):
+            (Path(entry["installPath"]) / ".orphaned_at").write_text("1795163578718")
+        self.write(root / "plugins/installed_plugins.json", installed)
+        settings = self.read(root / "settings.json")
+        settings.get("enabledPlugins", {}).pop(plugin_id, None)
+        self.write(root / "settings.json", settings)
+
+    def cli_remove_marketplace(self, root, marketplace):
+        """`claude plugin marketplace remove`: its plugins uninstalled, both lists emptied of it."""
+        for plugin_id in list(self.read(root / "plugins/installed_plugins.json")["plugins"]):
+            if plugin_id.endswith("@" + marketplace):
+                self.cli_uninstall(root, plugin_id)
+        known = self.read(root / "plugins/known_marketplaces.json")
+        known.pop(marketplace)
+        self.write(root / "plugins/known_marketplaces.json", known)
+        settings = self.read(root / "settings.json")
+        settings.setdefault("extraKnownMarketplaces", {}).pop(marketplace, None)
+        self.write(root / "settings.json", settings)
 
     def assert_everyone_has(self, roots, both):
         for root in roots:
@@ -1436,75 +1461,105 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.share(SECOND)
         self.share(FIRST)
         self.assert_everyone_has((self.common, config, other), both)
-        # A deliberate single uninstall still reaches every account.
-        installed = self.read(other / "plugins/installed_plugins.json")
-        del installed["plugins"]["fmt@team"]
-        self.write(other / "plugins/installed_plugins.json", installed)
+        # A single plugin, its registry lost: still no uninstall.
+        self.cli_uninstall(other, "fmt@team")
         self.share(SECOND)
         self.share(FIRST)
         for root in (self.common, config, other):
             self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
-        # With a single plugin left, a lost registry is still no uninstall.
         (config / "plugins/installed_plugins.json").unlink()
         self.share(FIRST)
         self.share(SECOND)
         for root in (self.common, config, other):
             self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
         # Nor is a lost settings file a reason to disable its one plugin.
-        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True}})
-        self.write(config / "settings.json", {"enabledPlugins": {"lint@team": True}})
-        self.write(other / "settings.json", {"enabledPlugins": {"lint@team": True}})
-        self.share(FIRST)
         (config / "settings.json").unlink()
         self.share(FIRST)
         self.share(SECOND)
         for root in (self.common, config, other):
             self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {"lint@team": True})
-        # Removing the only marketplace while its plugin stays installed is a
-        # reset as well: the CLI would delete the directory the plugin needs.
+        # An emptied marketplace list while its plugin stays installed and the
+        # settings still declare it: no `marketplace remove` happened.
         self.write(config / "plugins/known_marketplaces.json", {})
         self.assertIn("插件市场登记", self.share(FIRST).stderr)
         self.share(SECOND)
         for root in (self.common, config, other):
             self.assertEqual(sorted(self.read(root / "plugins/known_marketplaces.json")), ["team"])
 
-    def test_emptied_registry_or_settings_does_not_spread_a_wholesale_removal(self):
+    def test_each_uninstall_trace_alone_lets_the_removal_spread(self):
         config, other, both = self.two_plugins_shared_by_two_accounts()
-        # The CLI recreated an empty registry after a reset: all entries at once.
-        self.write(config / "plugins/installed_plugins.json", {"version": 2, "plugins": {}})
-        self.write(config / "plugins/known_marketplaces.json", {})
+        # Only the .orphaned_at marker (the enabled entry left behind).
+        installed = self.read(config / "plugins/installed_plugins.json")
+        for entry in installed["plugins"].pop("fmt@team"):
+            (Path(entry["installPath"]) / ".orphaned_at").write_text("1795163578718")
+        self.write(config / "plugins/installed_plugins.json", installed)
+        self.assertNotIn("再移除一次", self.share(FIRST).stderr)
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # Only the enabled entry gone (no marker written).
+        installed = self.read(other / "plugins/installed_plugins.json")
+        del installed["plugins"]["lint@team"]
+        self.write(other / "plugins/installed_plugins.json", installed)
+        settings = self.read(other / "settings.json")
+        del settings["enabledPlugins"]["lint@team"]
+        self.write(other / "settings.json", settings)
+        self.assertNotIn("再移除一次", self.share(SECOND).stderr)
+        self.assertEqual(self.read(self.common / "plugins/installed_plugins.json")["plugins"], {})
+
+    def test_cli_uninstalls_spread_even_all_at_once_while_resets_are_held_until_repeated(self):
+        config, other, both = self.two_plugins_shared_by_two_accounts()
+        # A registry rewritten without its structure and no uninstall traces.
+        self.write(config / "plugins/installed_plugins.json", {})
         result = self.share(FIRST)
         self.assertIn("已安装插件登记", result.stderr)
-        self.assertIn("分次移除", result.stderr)
+        self.assertIn("再移除一次", result.stderr)
         self.share(SECOND)
         self.assert_everyone_has((self.common, config, other), both)
-        # Reported once: the restored registries agree again.
-        self.assertNotIn("已安装插件登记", self.share(FIRST).stderr)
-        # The account's settings file was deleted, or reset to {}.
-        (config / "settings.json").unlink()
-        self.share(FIRST)
-        self.assert_everyone_has((self.common, config, other), both)
+        self.assertEqual(self.read(config / "plugins/installed_plugins.json")["version"], 2)
+        # The workbench lists the event beside the account.
+        listed = json.loads(subprocess.run([sys.executable, str(source), "notices", FIRST, SECOND], env=self.env,
+                                           cwd=self.home, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual([entry["kind"] for entry in listed[FIRST]], ["removal_blocked"])
+        self.assertNotIn(SECOND, listed)
+        # Settings reset to {} or deleted: plugins stay enabled everywhere.
         self.write(other / "settings.json", {})
         self.share(SECOND)
+        self.share(FIRST)
         self.assert_everyone_has((self.common, config, other), both)
-        # The enabled list emptied in an otherwise intact file.
+        # The enabled list emptied by hand while both stay installed: held.
         settings = self.read(config / "settings.json")
         settings["enabledPlugins"] = {}
         self.write(config / "settings.json", settings)
         self.assertIn("插件启用设置", self.share(FIRST).stderr)
         self.assert_everyone_has((self.common, config, other), both)
-        # The shared settings file is missing: rebuilt with the accounts' choices.
-        (self.common / "settings.json").unlink()
-        self.share(SECOND)
-        self.share(FIRST)
-        self.assert_everyone_has((self.common, config, other), both)
-        # Disabling one plugin (not removing the entry) still synchronizes.
-        settings = self.read(config / "settings.json")
-        settings["enabledPlugins"]["fmt@team"] = False
+        # The same removal made again is the user's choice and spreads.
         self.write(config / "settings.json", settings)
         self.share(FIRST)
         self.share(SECOND)
-        self.assertIs(self.read(other / "settings.json")["enabledPlugins"]["fmt@team"], False)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {})
+        settings["enabledPlugins"] = {"lint@team": True, "fmt@team": True}
+        for root in (self.common, config, other):
+            data = self.read(root / "settings.json")
+            data["enabledPlugins"] = dict(settings["enabledPlugins"])
+            self.write(root / "settings.json", data)
+        self.share(FIRST)
+        self.share(SECOND)
+        # Uninstalling every plugin with the CLI spreads at once, no question asked.
+        self.cli_uninstall(config, "lint@team")
+        self.cli_uninstall(config, "fmt@team")
+        result = self.share(FIRST)
+        self.assertNotIn("再移除一次", result.stderr)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "plugins/installed_plugins.json")["plugins"], {})
+            self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {})
+        # Removing the marketplace with the CLI spreads too.
+        self.cli_remove_marketplace(other, "team")
+        self.share(SECOND)
+        self.share(FIRST)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "plugins/known_marketplaces.json"), {})
+            self.assertEqual(self.read(root / "settings.json")["extraKnownMarketplaces"], {})
 
     def test_an_older_snapshot_does_not_remove_a_plugin_its_account_never_saw(self):
         self.install(self.common / "plugins", "team", "example/team", "lint")
@@ -1521,6 +1576,93 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.share(FIRST)
         for root in (self.common, config, other):
             self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"])
+
+    def test_a_stale_save_after_a_later_sync_is_brought_up_to_date_not_spread(self):
+        # The reviewer's M2: the account already synchronized the new plugin
+        # before its long-running CLI saved the registry it had loaded earlier.
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        old = self.read(config / "plugins/installed_plugins.json")
+        self.install(other / "plugins", "team", "example/team", "fmt")
+        self.share(SECOND)
+        self.share(FIRST)
+        self.assertIn("fmt@team", self.read(config / "plugins/installed_plugins.json")["plugins"])
+        for _ in range(2):
+            # Saved twice: a repeat of a stale save never counts as confirmation.
+            self.write(config / "plugins/installed_plugins.json", old)
+            result = self.share(FIRST)
+            self.assertNotIn("再移除一次", result.stderr)
+            self.share(SECOND)
+            for root in (self.common, config, other):
+                self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"], root)
+
+    def test_entries_newer_than_a_running_cli_are_not_removed_by_its_save(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        # A CLI of the first account is running since before the next install.
+        running = subprocess.Popen(["sleep", "60"], env={**self.env, "CLAUDE_CONFIG_DIR": str(config)})
+        self.addCleanup(running.wait)
+        self.addCleanup(running.kill)
+        loaded = self.read(config / "plugins/installed_plugins.json")
+        time.sleep(0.2)
+        self.install(other / "plugins", "team", "example/team", "fmt")
+        self.share(SECOND)
+        self.share(FIRST)
+        # It saves its own state: what it loaded plus a change of its own.
+        loaded["plugins"]["lint@team"][0]["gitCommitSha"] = "0" * 40
+        self.write(config / "plugins/installed_plugins.json", loaded)
+        result = self.share(FIRST)
+        self.assertNotIn("再移除一次", result.stderr)
+        for root in (self.common, config, other):
+            self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"], root)
+        self.assertEqual(self.read(self.common / "plugins/installed_plugins.json")["plugins"]["lint@team"][0]["gitCommitSha"], "0" * 40)
+
+    def test_unreadable_registry_is_set_aside_and_rebuilt(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        self.share(FIRST)
+        (config / "plugins/installed_plugins.json").write_text("{ broken")
+        result = self.share(FIRST)
+        self.assertIn("无法读取", result.stderr)
+        self.assertEqual(sorted(self.read(config / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # The rebuilt registry uses this account's own spelling of the plugins folder.
+        self.assertTrue(self.read(config / "plugins/installed_plugins.json")["plugins"]["lint@team"][0]["installPath"]
+                        .startswith(tuple(helper.plugin_root_forms(config))))
+        kept = list((self.home / ".local/share/cage/claude-shared/backups" / FIRST / "plugins").glob("installed_plugins.json.corrupt-*"))
+        self.assertEqual([path.read_text() for path in kept], ["{ broken"])
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # The shared one, too, is rebuilt from the account.
+        (self.common / "plugins/installed_plugins.json").write_text("[]")
+        self.share(FIRST)
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        self.assertTrue(list((self.home / ".local/share/cage/claude-shared/backups/common/plugins").glob("installed_plugins.json.corrupt-*")))
+
+    def test_old_pending_records_without_digest_claim_only_values_equal_to_the_shared_ones(self):
+        self.write(self.common / "settings.json", {"language": "zh", "theme": "dark", "model": "sonnet"})
+        self.write(self.home / ".claude.json", {"firstStartTime": "x", "mcpServers": {"notes": {"command": "srv"}, "own": {"command": "shared"}}})
+        first, config = self.profile(FIRST)
+        # model equals the old intent but no longer the shared value: not claimed.
+        self.write(config / "settings.json", {"language": "zh", "theme": "light", "model": "opus"})
+        self.write(config / ".claude.json", {"mcpServers": {"notes": {"command": "srv"}, "own": {"command": "mine"}}})
+        helper.write_record(first, {"pending": {"keys": {"language": "zh", "theme": "dark", "model": "opus"}, "hooks": {}, "hooks_created": False},
+                                    "pending_mcp": {"notes": {"command": "srv"}, "own": {"command": "shared"}}})
+        self.share(FIRST)
+        record = helper.read_record(first)
+        self.assertEqual(record["keys"], {"language": "zh"})
+        self.assertEqual(record["mcp"], {"notes": {"command": "srv"}})
+        self.assertNotIn("pending", record)
+        # Claimed: follows the shared value away. Not claimed: stays the user's.
+        self.write(self.common / "settings.json", {"theme": "dark"})
+        self.write(self.home / ".claude.json", {"firstStartTime": "x", "mcpServers": {}})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {"theme": "light", "model": "opus"})
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"own": {"command": "mine"}})
 
     def test_interrupted_settings_intent_claims_only_the_file_it_was_about_to_write(self):
         self.write(self.common / "settings.json", {"theme": "dark", "language": "zh"})
@@ -1568,7 +1710,8 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
     def test_unknown_or_emptied_shared_configuration_keeps_earlier_copies(self):
         first, config = self.profile(FIRST)
         servers = {"notes": {"command": "notes-srv"}, "search": {"command": "search-srv"}}
-        self.write(self.home / ".claude.json", {"mcpServers": {"notes": servers["notes"]}})
+        cli_fields = {"firstStartTime": "x", "machineID": "x"}
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": {"notes": servers["notes"]}})
         self.write(self.common / "settings.json", {"theme": "dark"})
         self.share(FIRST)
         self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": servers["notes"]})
@@ -1580,17 +1723,25 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
                 self.write(self.home / ".claude.json", state)
             self.share(FIRST)
             self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": servers["notes"]})
-        self.write(self.home / ".claude.json", {"mcpServers": servers})
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": servers})
         self.share(FIRST)
         self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
-        # Every shared server removed at once: kept and reported.
+        # A file holding nothing but an empty server list was not written by
+        # `claude mcp remove`: the copies stay, and the user is told.
         self.write(self.home / ".claude.json", {"mcpServers": {}})
         self.assertIn("用户级 MCP", self.share(FIRST).stderr)
         self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
-        # Removing one server still withdraws that copy.
-        self.write(self.home / ".claude.json", {"mcpServers": {"notes": servers["notes"]}})
+        # Still the same on the next launch: taken as the user's choice.
         self.share(FIRST)
-        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": servers["notes"]})
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {})
+        # `claude mcp remove` of every server keeps the CLI's other fields: withdrawn at once.
+        servers = {"alpha": {"command": "alpha-srv"}, "beta": {"command": "beta-srv"}}
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": servers})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": {}})
+        self.assertNotIn("用户级 MCP", self.share(FIRST).stderr)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {})
         # A missing shared settings file keeps the copied settings too.
         (self.common / "settings.json").unlink()
         self.share(FIRST)
