@@ -239,6 +239,89 @@ func TestDiscoveryRunningStateUpdatesCatalogAndClearsMissingHistory(t *testing.T
 	}
 }
 
+// Session lists reuse a discovery for a few seconds; a write request, a
+// finished terminal or the reuse limit makes the next list observe the guest.
+func TestCachedDiscoveryReuseIsBoundedAndInvalidatedByWrites(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin:/usr/local/bin"})
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.mobileCLI.summaries(s.profile, map[string]bool{project: true}, false); err != nil {
+		t.Fatal(err)
+	}
+	observation := filepath.Join(home, "observation.json")
+	helper := filepath.Join(home, ".local/share/cage/cli-channel-code", fmt.Sprintf("%x.py", sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt))))
+	if err := os.MkdirAll(filepath.Dir(helper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	calls := filepath.Join(home, "calls")
+	code := fmt.Sprintf("import json,sys\njson.load(sys.stdin)\nopen(%q,'a').write('.')\nprint(open(%q).read())\n", calls, observation)
+	if err := os.WriteFile(helper, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.ready = true
+	observe := func(running bool) {
+		t.Helper()
+		found := []terminalConversation{{CLIID: record.CLIID, Workspace: guestPath(project), Config: filepath.Join(home, ".claude"), Running: running}}
+		if err := writePrivate(observation, found); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := func(cached bool) bool {
+		t.Helper()
+		discover := s.discoverTerminalConversations
+		if cached {
+			discover = s.discoverTerminalConversationsCached
+		}
+		if err := discover(context.Background(), []string{project}); err != nil {
+			t.Fatal(err)
+		}
+		summaries, err := s.mobileCLI.summaries(s.profile, map[string]bool{project: true}, false)
+		if err != nil || len(summaries) != 1 {
+			t.Fatalf("summaries = %+v, error = %v", summaries, err)
+		}
+		return summaries[0].Running
+	}
+	guestCalls := func() int { data, _ := os.ReadFile(calls); return len(data) }
+	observe(true)
+	if !list(true) || guestCalls() != 1 {
+		t.Fatal("first list did not observe the guest")
+	}
+	observe(false)
+	if !list(true) || guestCalls() != 1 {
+		t.Fatal("a list within the reuse window ran discovery again")
+	}
+	if list(false) || guestCalls() != 2 {
+		t.Fatal("an uncached discovery reused an earlier result")
+	}
+	observe(true)
+	s.invalidateConversationDiscovery() // as any POST, PUT or DELETE request does
+	if !list(true) || guestCalls() != 3 {
+		t.Fatal("a write request did not invalidate the reused discovery")
+	}
+	observe(false)
+	s.terminals.exits.Add(1)
+	if list(true) || guestCalls() != 4 {
+		t.Fatal("a finished terminal did not invalidate the reused discovery")
+	}
+	observe(true)
+	s.conversationMu.Lock()
+	s.conversationDiscovered.at = time.Now().Add(-conversationDiscoveryReuse)
+	s.conversationMu.Unlock()
+	if !list(true) || guestCalls() != 5 {
+		t.Fatal("a discovery was reused past its limit")
+	}
+	// Writes through the HTTP handler invalidate as well.
+	before := s.conversationGeneration.Load()
+	request(s, "POST", "/api/cli/sessions/"+id+"/metadata", s.origin, `{}`, true)
+	if s.conversationGeneration.Load() == before {
+		t.Fatal("a write request did not advance the discovery generation")
+	}
+}
+
 func installClaudeTestHelpers(t *testing.T, bin string) {
 	t.Helper()
 	for source, dest := range map[string]string{"claude-account.py": "cage-claude-account", "client_runtime.py": "client_runtime.py"} {

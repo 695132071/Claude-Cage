@@ -183,9 +183,32 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	return nil
 }
 
+// Session lists are polled every few seconds by each open list (desktop
+// panels, archive view, phones). A discovery result is reused for
+// conversationDiscoveryReuse unless a write request or a terminal exit ran
+// since; operations that must see current processes use the uncached form.
+const conversationDiscoveryReuse = 4 * time.Second
+
+type conversationDiscovery struct {
+	key        string
+	generation [2]uint64 // write requests, finished terminals
+	at         time.Time
+}
+
+func (s *Server) invalidateConversationDiscovery() { s.conversationGeneration.Add(1) }
+
+func (s *Server) discoverTerminalConversationsCached(ctx context.Context, paths []string) error {
+	return s.discoverConversations(ctx, paths, true)
+}
+
 func (s *Server) discoverTerminalConversations(ctx context.Context, paths []string) error {
+	return s.discoverConversations(ctx, paths, false)
+}
+
+func (s *Server) discoverConversations(ctx context.Context, paths []string, reuse bool) error {
 	s.conversationMu.Lock()
 	defer s.conversationMu.Unlock()
+	generation := [2]uint64{s.conversationGeneration.Load(), s.terminals.exits.Load()}
 	s.mu.Lock()
 	ready := s.ready && !s.closing
 	s.mu.Unlock()
@@ -208,10 +231,23 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	for _, path := range paths {
 		workspaces[guestPath(path)] = path
 	}
+	request := map[string]any{"accounts": accounts, "workspaces": workspaces}
+	keyData, _ := json.Marshal(request)
+	key := string(keyData)
+	if last := s.conversationDiscovered; reuse && last.key == key && last.generation == generation && time.Since(last.at) >= 0 && time.Since(last.at) < conversationDiscoveryReuse {
+		return nil
+	}
+	s.conversationDiscovered = conversationDiscovery{}
 	var found []terminalConversation
-	if err := s.runCLIChannel(ctx, "discover", map[string]any{"accounts": accounts, "workspaces": workspaces}, &found); err != nil {
+	if err := s.runCLIChannel(ctx, "discover", request, &found); err != nil {
 		return err
 	}
+	completed := false
+	defer func() {
+		if completed {
+			s.conversationDiscovered = conversationDiscovery{key: key, generation: generation, at: time.Now()}
+		}
+	}()
 	m := &s.mobileCLI
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -282,6 +318,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	}
 	m.running = running
 	m.desktop = desktop
+	completed = true
 	return nil
 }
 

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -43,6 +44,7 @@ type terminalManager struct {
 	sequence int
 	closed   bool
 	workers  sync.WaitGroup
+	exits    atomic.Uint64 // finished sessions, for cached session lists
 }
 
 func (m *terminalManager) startSession(cmd *exec.Cmd, workspace, kind string, selection claudeSelection, finished func()) (*terminalSession, error) {
@@ -93,6 +95,7 @@ func (m *terminalManager) startReplacing(previous *terminalSession, background b
 	go func() {
 		defer m.workers.Done()
 		session.run()
+		m.exits.Add(1)
 		if finished != nil {
 			finished()
 		}

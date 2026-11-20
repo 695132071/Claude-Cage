@@ -328,6 +328,8 @@ class ChannelTests(unittest.TestCase):
         self.history(other, self.project, [{"type":"user", "message":{"content":"other"}}])
         request = {"accounts":["default"], "workspaces":{self.project:self.project}}
         registry = [{"sessionId": self.session, "pid": os.getpid(), "status":"idle"}]
+        registration = self.home / ".claude/sessions" / (str(os.getpid()) + ".json")
+        channel.save(registration, registry[0])
         completed = subprocess.CompletedProcess([], 0, json.dumps(registry), "")
         with patch.object(channel.subprocess, "run", return_value=completed) as run:
             found = {item["cli_id"]: item for item in channel.discover(request)}
@@ -336,8 +338,14 @@ class ChannelTests(unittest.TestCase):
             self.assertFalse(found[other]["running"])
             self.assertEqual(run.call_count, 1, "registry must be read once per config, not per history")
             self.assertEqual(run.call_args.kwargs["env"]["CLAUDE_CONFIG_DIR"], str(self.home / ".claude"))
+            # Unchanged registrations reuse the listing on later polls.
+            self.assertTrue({item["cli_id"]: item for item in channel.discover(request)}[self.session]["running"])
+            self.assertEqual(run.call_count, 1, "unchanged registrations reran the registry listing")
+            # The CLI removes its registration when it exits.
             completed.stdout = "[]"
+            registration.unlink()
             self.assertFalse(any(item["running"] for item in channel.discover(request)))
+            self.assertEqual(run.call_count, 2)
 
     def test_discovery_identifies_desktop_from_live_registration_only(self):
         self.history(self.session, self.project, [{"type":"user", "entrypoint":"claude-desktop", "message":{"content":"hello"}}])
@@ -358,9 +366,60 @@ class ChannelTests(unittest.TestCase):
             registry.unlink()
             self.assertFalse(channel.discover(request)[0]["claude_desktop"], "transcript origin was used as live ownership")
             row["entrypoint"] = "claude-desktop"
+            channel.save(registry, row)  # the CLI rewrites its registration
             self.assertTrue(channel.discover(request)[0]["claude_desktop"], "explicit CLI source was ignored")
+            registry.unlink()
         with patch.object(channel, "running_sessions", return_value=[]):
             self.assertFalse(channel.discover(request)[0]["claude_desktop"])
+
+    def test_discovery_running_flag_follows_process_and_registrations(self):
+        self.history(self.session, self.project, [{"type":"user", "message":{"content":"hello"}}])
+        request = {"accounts":["default"], "workspaces":{self.project:self.project}}
+        registrations = self.home / ".claude/sessions"
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        rows = [{"sessionId": self.session, "pid": child.pid, "status": "idle"}]
+        listing = patch.object(channel, "running_sessions", side_effect=lambda config="": [dict(row) for row in rows])
+        calls = listing.start()
+        self.addCleanup(listing.stop)
+        channel.save(registrations / (str(child.pid) + ".json"), rows[0])
+        self.assertTrue(channel.discover(request)[0]["running"])
+        self.assertTrue(channel.discover(request)[0]["running"])
+        self.assertEqual(calls.call_count, 1)
+        # A process that dies without removing its registration is not running
+        # on the very next poll: liveness is checked on every call.
+        child.kill(); child.wait()
+        self.assertFalse(channel.discover(request)[0]["running"])
+        self.assertEqual(calls.call_count, 1)
+        # A new registration reruns the listing on the next poll.
+        other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (other.kill(), other.wait()))
+        rows[:] = [{"sessionId": self.session, "pid": other.pid, "status": "idle"}]
+        channel.save(registrations / (str(other.pid) + ".json"), rows[0])
+        self.assertTrue(channel.discover(request)[0]["running"])
+        self.assertEqual(calls.call_count, 2)
+        # The listing is also refreshed after AGENTS_REFRESH seconds.
+        with patch.object(channel.time, "time", return_value=time.time() + channel.AGENTS_REFRESH + 1):
+            channel.discover(request)
+        self.assertEqual(calls.call_count, 3)
+
+    def test_discovery_summary_cache_follows_transcript_changes(self):
+        path = self.history(self.session, self.project, [{"type":"user", "message":{"content":"first title"}}])
+        request = {"accounts":["default"], "workspaces":{self.project:self.project}}
+        with patch.object(channel, "running_sessions", return_value=[]):
+            with patch.object(channel, "history_summary", wraps=channel.history_summary) as summary:
+                self.assertEqual(channel.discover(request)[0]["title"], "first title")
+                self.assertEqual(channel.discover(request)[0]["title"], "first title")
+                self.assertEqual(summary.call_count, 1, "unchanged transcript was reread")
+                with path.open("a") as stream:
+                    stream.write(json.dumps({"type":"custom-title", "customTitle":"renamed", "uuid":str(uuid.uuid4())}) + "\n")
+                self.assertEqual(channel.discover(request)[0]["title"], "renamed")
+                self.assertEqual(summary.call_count, 2)
+                path.unlink()
+                self.assertEqual(channel.discover(request), [])
+        cached = channel.read_json(channel.cache_path("summaries", str(self.home / ".claude")))
+        self.assertEqual(cached, {}, "removed transcript kept a cache entry")
+        self.assertTrue(str(channel.cache_path("agents", "x")).startswith(str(self.home)))
 
     def test_purge_removes_only_target_transcripts_and_retries(self):
         target = self.history(self.session, self.project, [{"type":"user", "message":{"content":"delete this"}}])

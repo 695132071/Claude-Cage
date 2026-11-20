@@ -96,6 +96,8 @@ type Server struct {
 	terminals                                        terminalManager
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
+	conversationDiscovered                           conversationDiscovery // guarded by conversationMu
+	conversationGeneration                           atomic.Uint64
 	mobileConnectMu                                  sync.Mutex
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
@@ -609,6 +611,12 @@ func (s *Server) handler() http.Handler {
 				http.Error(w, err.Error(), http.StatusConflict)
 				return
 			}
+		}
+		if r.Method != "GET" && r.Method != "HEAD" {
+			// Writes may change session records; do not reuse a discovery
+			// made before or during them.
+			s.invalidateConversationDiscovery()
+			defer s.invalidateConversationDiscovery()
 		}
 		mux.ServeHTTP(w, r)
 	})
