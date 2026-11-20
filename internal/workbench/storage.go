@@ -86,7 +86,7 @@ func (s *Server) recoverEnvironmentStorage(w http.ResponseWriter, r *http.Reques
 	if !readJSON(w, r, &input) {
 		return
 	}
-	s.launch(w, "storage-recovery", func() error {
+	s.launchRequest(w, r, "storage-recovery", func() error {
 		s.setMessage("正在恢复环境存储并检查数据位置…")
 		if err := cage.RecoverStorage(s.operationContext(), s.profile, nil); err != nil {
 			return s.failStorageRecovery(err)
@@ -151,7 +151,7 @@ func (s *Server) environmentStorage(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
-	s.launch(w, "storage", func() error {
+	s.launchRequest(w, r, "storage", func() error {
 		if err := cage.RecoverStorage(s.operationContext(), s.profile, nil); err != nil {
 			return s.failStorageRecovery(err)
 		}

@@ -140,9 +140,18 @@ func BoundInterface(path string) (string, error) {
 	}
 	var config struct {
 		Interface string `yaml:"interface-name"`
+		Proxies   []struct {
+			Server string `yaml:"server"`
+		} `yaml:"proxies"`
 	}
 	if err := yaml.Unmarshal(data, &config); err != nil {
 		return "", err
+	}
+	local := newLocalServers()
+	for _, proxy := range config.Proxies {
+		if local.contains(proxy.Server) {
+			return "", ErrLocalProxyNode
+		}
 	}
 	return config.Interface, nil
 }
