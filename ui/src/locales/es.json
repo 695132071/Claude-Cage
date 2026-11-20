@@ -1621,7 +1621,6 @@
   "确认停止本机": "Confirmar detención de este equipo",
   "确认删除": "Confirmar eliminación",
   "确认可以联网": "Confirmar que hay conexión a internet",
-  "确认复制的是订阅地址，而非服务商登录页或管理页。暂不支持单条分享链接、Base64 节点列表，以及只引用远程节点列表的配置；请向服务商获取含节点的 Clash/Mihomo YAML。": "Asegúrese de copiar la dirección de suscripción, no la página de inicio de sesión ni el panel de administración del proveedor. Por ahora no se admiten enlaces de nodo individuales, listas de nodos en Base64 ni configuraciones que solo hagan referencia a listas de nodos remotas; solicite a su proveedor un YAML de Clash/Mihomo que contenga los nodos.",
   "确认安装": "Confirmar instalación",
   "确认密码": "Confirmar contraseña",
   "确认扩展安装": "Confirmar instalación de la extensión",
@@ -2431,5 +2430,6 @@
   "请先在本机安装 uv（https://docs.astral.sh/uv/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Instala uv (https://docs.astral.sh/uv/) en este equipo, asegúrate de que {0} funcione en la terminal y luego haz clic en «Recargar plugins».",
   "请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Instala Node.js (https://nodejs.org/) en este equipo, asegúrate de que {0} funcione en la terminal y luego haz clic en «Recargar plugins».",
   "请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Instala Python 3 (https://www.python.org/) en este equipo, asegúrate de que {0} funcione en la terminal y luego haz clic en «Recargar plugins».",
-  "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Instala {0} en este equipo, asegúrate de que funcione en la terminal y luego haz clic en «Recargar plugins»."
+  "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Instala {0} en este equipo, asegúrate de que funcione en la terminal y luego haz clic en «Recargar plugins».",
+  "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Comprueba que copiaste la dirección de suscripción y no la página de inicio de sesión o de gestión del proveedor. Se pueden importar YAML de Clash/Mihomo, listas de enlaces para compartir o su codificación Base64; aún no se admiten configuraciones que solo hacen referencia a listas de nodos remotas. Los nodos no reconocidos aparecen en los motivos de omisión."
 }

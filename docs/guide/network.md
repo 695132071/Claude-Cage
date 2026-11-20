@@ -35,7 +35,19 @@ Cage 会复制节点及认证参数，由内置核心独立连接；原软件的
 1. 应用节点后，在“设置 → 网络与代理”点击“验证出口”。该检查通过所选代理发起真实 HTTPS 请求，确认能取得出口 IP 和位置，并与预期出口核对；主机上其他代理客户端能够访问外网，不能代替这一步。
 2. 启动工作环境，查看底部网络状态及检查结果。宿主、环境终端和浏览器的出口采样及其他关键检查通过后，才会显示“已联网”。失败项的处理见[为什么应用了节点仍然离线](#为什么应用了节点仍然离线)。
 
-订阅或本地配置必须包含 `proxies` 或 `payload` 节点。Base64 列表、单个 `vless://` 等分享链接、Xray/v2rayN 原生 JSON、只引用远程 provider 的配置暂不支持。只有分享链接时，先从原客户端导出 Clash/Mihomo YAML；更改文件后缀不能完成转换。导入只采用支持的节点与代理链，不采用订阅中的主机系统代理、TUN、监听端口或直连规则。同一份配置中 `type: inline` 的 provider 节点会一并导入；设置了 `override` 或过滤规则的 inline provider 会列在跳过原因中。节点的 `dialer-proxy` 指向只含一个本来源节点的分组时，按该节点导入代理链；分组含多个节点、`DIRECT`、`use` 或过滤规则时仍会跳过该节点。
+订阅或本地配置可以是含 `proxies` 或 `payload` 节点的 Clash/Mihomo YAML，也可以是每行一条的分享链接列表或其 Base64 编码（v2rayN 风格订阅）。本地导入可以直接粘贴一条或多条分享链接，来源名称留空时使用“本地导入”。支持的分享链接：
+
+| 协议 | 链接格式 | 说明 |
+| --- | --- | --- |
+| Trojan | `trojan://密码@服务器:端口?sni=…#名称` | 支持 `sni`/`peer`、`allowInsecure`、`alpn`、`fp`，传输 `tcp`、`ws`、`grpc`、`h2` |
+| VLESS | `vless://UUID@服务器:端口?security=tls\|reality…#名称` | 支持 `flow`、`sni`、`fp`、`pbk`/`sid`（Reality）及同上传输；`encryption` 非 `none`、`xhttp`、`kcp`、`quic` 暂不支持 |
+| VMess | `vmess://Base64(v2rayN JSON)` | 支持 `tcp`、`ws`、`grpc`、`h2` 与 TLS |
+| Shadowsocks | `ss://Base64(方法:密码)@服务器:端口#名称`（SIP002）或旧式整段 Base64 | 插件只支持 `obfs-local`/`simple-obfs` |
+| Hysteria2 | `hysteria2://` 或 `hy2://认证@服务器:端口?sni=…&obfs=salamander…#名称` | 支持 `insecure`、`mport`、`pinSHA256` |
+| TUIC | `tuic://UUID:密码@服务器:端口?congestion_control=…#名称` | TUIC v4 token 链接暂不支持 |
+| AnyTLS | `anytls://密码@服务器:端口?sni=…#名称` | 支持 `insecure`、`fp`、`alpn` |
+
+无法无歧义转换的链接（其他协议、未支持的传输方式或伪装头、缺少端口或凭据等）不会被静默丢弃，会和名称一起列在来源的跳过原因中；跳过原因不包含链接内容或凭据。Xray/v2rayN 原生 JSON 与只引用远程 provider 的配置仍不支持。导入只采用支持的节点与代理链，不采用订阅中的主机系统代理、TUN、监听端口或直连规则。同一份配置中 `type: inline` 的 provider 节点会一并导入；设置了 `override` 或过滤规则的 inline provider 会列在跳过原因中。节点的 `dialer-proxy` 指向只含一个本来源节点的分组时，按该节点导入代理链；分组含多个节点、`DIRECT`、`use` 或过滤规则时仍会跳过该节点。
 
 普通节点参数保留并交给 Cage 随附的 Mihomo 核心校验。例如，从 FlClash 复制的 VLESS 节点可以保留 `xudp: true`，无需手动改成其他字段。内核可能忽略未知字段；配置校验通过后，仍需应用节点并检查实际出口。环境公网 UDP 的阻断规则不受这些协议选项影响。
 
@@ -62,7 +74,7 @@ proxies:
       - "ssh-ed25519 AAAA..."
 ```
 
-同一个订阅地址可能按请求的客户端身份返回不同格式。Cage 下载时使用 Clash 客户端身份，服务商返回 YAML 时可以导入；若返回 Base64 或分享链接列表，仍需向服务商获取 Clash/Mihomo YAML。
+同一个订阅地址可能按请求的客户端身份返回不同格式。Cage 下载时使用 Clash 客户端身份，服务商返回 YAML 时可以导入；返回 Base64 或分享链接列表时按上面的分享链接规则导入。
 
 <figure class="guide-shot">
   <a href="../../www/public/docs/screenshots/proxy-manual.jpg" target="_blank" rel="noopener" aria-label="查看原图：手动填写 HTTP / SOCKS5 节点"><img src="../../www/public/docs/screenshots/proxy-manual.jpg" alt="手动填写 HTTP / SOCKS5 节点" width="2560" height="1764" loading="lazy" decoding="async" /></a>

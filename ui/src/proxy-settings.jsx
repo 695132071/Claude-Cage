@@ -272,7 +272,9 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const submit = () => {
     let value = {
       id: form.id || "",
-      name: form.name,
+      // Pasted node data has no file name to borrow; an empty name used to
+      // leave "导入并验证" disabled with no visible reason (#410).
+      name: form.name.trim() || (mode === "file" && !form.id ? tr("本地导入") : form.name),
       url: form.url,
       content: form.content,
       interval_hours: form.interval_hours,
@@ -404,7 +406,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
           <div className="proxy-help-notes">
             <strong>{tr("导入失败或无法联网？")}</strong>
             <p>
-              {tr("确认复制的是订阅地址，而非服务商登录页或管理页。暂不支持单条分享链接、Base64 节点列表，以及只引用远程节点列表的配置；请向服务商获取含节点的 Clash/Mihomo YAML。")}
+              {tr("确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。")}
             </p>
             <p>
               {tr("订阅下载失败时，可检查主机是否能访问订阅地址，或改用本地 YAML。节点不可用时，换一个节点并查看「诊断」；更换节点后仍需通过出口 IP 和地区检查。")}
@@ -1145,7 +1147,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       (mode === "url"
                         ? !form.url || !form.name
                         : mode === "file"
-                          ? !form.content.trim() || !form.name
+                          ? !form.content.trim()
                           : !manualValid))
                   }
                   onClick={submit}

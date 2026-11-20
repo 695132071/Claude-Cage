@@ -1620,7 +1620,6 @@
   "确认停止本机": "Xaqiiji joojinta kombiyuutarkan",
   "确认删除": "Xaqiiji tirtirka",
   "确认可以联网": "Xaqiiji in internetka la geli karo",
-  "确认复制的是订阅地址，而非服务商登录页或管理页。暂不支持单条分享链接、Base64 节点列表，以及只引用远程节点列表的配置；请向服务商获取含节点的 Clash/Mihomo YAML。": "Hubi in waxa aad koobiyaysay ay tahay ciwaanka subscription-ka, ee aanay ahayn bogga galitaanka ama maamulka bixiyaha adeegga. Hadda lama taageero xidhiidhada wadaagga ee hal node ah, liisaska node-yada Base64, iyo qaabaynta tixraacaysa oo keliya liisas node-yo fog; fadlan bixiyaha adeegga ka hel Clash/Mihomo YAML ka kooban node-yo.",
   "确认安装": "Xaqiiji rakibidda",
   "确认密码": "Xaqiiji erayga sirta ah",
   "确认扩展安装": "Xaqiiji rakibidda extension-ka",
@@ -2431,5 +2430,6 @@
   "请先在本机安装 uv（https://docs.astral.sh/uv/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib uv (https://docs.astral.sh/uv/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
   "请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Node.js (https://nodejs.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
   "请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Python 3 (https://www.python.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
-  "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Marka hore ku rakib {0} kombiyuutarkan oo hubi inuu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\"."
+  "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Marka hore ku rakib {0} kombiyuutarkan oo hubi inuu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
+  "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Hubi inaad koobiyeysay cinwaanka rukunka, ee aanad koobiyeyn bogga gelitaanka ama maamulka bixiyaha. Waxaad soo dejin kartaa Clash/Mihomo YAML, liiska xiriirinada wadaagga ama koodhkiisa Base64; habaynta tixraacda oo kaliya liisaska nodes-ka fog weli lama taageero. Nodes-ka aan la aqoonsan waxay ka muuqdaan sababaha laga booday."
 }
