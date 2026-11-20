@@ -1,13 +1,15 @@
 # 插件
 
-插件用来扩展 Cage，分两种用途，一个插件可以两者兼有：
+Cage 的核心路线是把 Claude 的运行外壳关在轻量化的本地隔离环境中，再通过标准 [MCP](https://modelcontextprotocol.io) 插件，让 Claude 安全、受控地使用本机或环境内能力（比直接暴露 SSH 更安全）。
+
+在 Cage 中，**插件 = MCP + 扩展**，分别对应「给 Claude 的能力」与「定制 Cage 工作台」，一个插件可以两者兼有：
 
 | 用途 | 做什么 | 清单里的写法 |
 | --- | --- | --- |
-| 给 Claude 的能力 | 提供工具，让环境里的 Claude 多一项本事 | `contributes.mcpServers` |
-| 定制 Cage | 在 Cage 里加一个自己的页面 | `contributes.views` |
+| 给 Claude 的能力（MCP） | 提供工具，让环境里的 Claude 安全、受控地获得本机或环境内的能力 | `contributes.mcpServers` |
+| 定制 Cage（扩展） | 在 Cage 侧栏加一个自己的沙箱页面，扩展工作台界面与工作流 | `contributes.views` |
 
-工具由标准的 [MCP](https://modelcontextprotocol.io) 服务提供，通过标准输入输出通信，用任何语言都能写。页面是普通的 HTML，运行在沙箱里。
+工具由标准的 [MCP](https://modelcontextprotocol.io) 服务提供，通过标准输入输出通信，用任何语言都能写。页面是普通的 HTML，运行在沙箱里。所有社区插件通过开放的插件市场 [cage-plugins](https://github.com/Lee-xeo/cage-plugins) 与 Cage 主仓库解耦协作：社区在市场持续贡献 MCP 工具与页面扩展，Cage 维护团队专注于隔离环境、网络与工作台本身。日常安装、权限管理与使用说明也见[插件与插件市场指南](guide/plugins.md)。
 
 插件可以运行在两个地方，由清单的 `kind` 决定：
 

@@ -8,6 +8,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -49,6 +51,7 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
+	blocked := p.BlockedNodes()
 	sources := []any{}
 	for _, src := range p.Sources {
 		nodes := []any{}
@@ -58,6 +61,9 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 				// Local nodes can be edited in place, so the form shows their
 				// address. Credentials and other options are never returned.
 				node["server"], node["port"] = n.Config["server"], n.Config["port"]
+			}
+			if reason := blocked[n.ID]; reason != "" {
+				node["blocked_reason"] = reason
 			}
 			nodes = append(nodes, node)
 		}
@@ -109,6 +115,9 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 	routeError := ""
 	if routeErr != nil && selected {
 		routeError = routeErr.Error()
+		if errors.Is(routeErr, managedproxy.ErrLocalProxyNode) {
+			state, label = "migration_required", "需要迁移代理节点"
+		}
 	}
 	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(p.NodeResolvers(), "、"), "udp_blocked": true, "ipv6_blocked": true})
 }
@@ -211,6 +220,8 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 		}
 		return s.applyProxy(p, cfg, resumeVersion, action != "restart")
 	}
+	_, oldRouteErr := p.Route()
+	migrating := errors.Is(oldRouteErr, managedproxy.ErrLocalProxyNode)
 	index := -1
 	for i, src := range p.Sources {
 		if src.ID == in.ID {
@@ -337,11 +348,14 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 			return err
 		}
 		candidate := p
-		if candidate.Selected == "" {
-			candidate.Selected = candidate.Sources[0].Nodes[0].ID
-		}
-		if _, ok := candidate.Find(candidate.Selected); !ok {
-			candidate.Selected = candidate.Sources[0].Nodes[0].ID
+		if _, ok := candidate.Find(candidate.Selected); !ok || migrating {
+			// Validate new nodes without switching the saved environment chain.
+			added := p.Sources[len(p.Sources)-1]
+			if index >= 0 && in.ID != "" {
+				added = p.Sources[index]
+			}
+			candidate.Selected = added.Nodes[0].ID
+			candidate.Chain = nil
 		}
 		if err = validateProxyCore(ctx, s.profile, candidate); err != nil {
 			s.proxySourceFailure(in.ID, err)
@@ -351,7 +365,12 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 			p.Selected = ""
 		}
 	}
-	if cfg.ProxyRevision != "" && cfg.ProxyURL == p.Endpoint() {
+	if migrating {
+		// Even a refreshed node with the same ID must be explicitly applied.
+		p.Revision = ""
+		return p.Save(s.profile)
+	}
+	if cfg.ProxyRevision != "" && cfg.ProxyRevision == p.Revision && cfg.ProxyURL == p.Endpoint() {
 		if p.Selected == "" {
 			if err = s.closeProxyGate("当前节点已被移除，请选择新节点"); err != nil {
 				return err
@@ -457,6 +476,8 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	// Only a user request may resume networking, and a later pause wins even
 	// when it arrived while subscription download or core startup was pending.
 	paused := s.networkPaused
+	s.proxyNetworkLost = false
+	s.proxyNetworkRetry = time.Time{}
 	s.exitProbeError = ""
 	s.locationError = ""
 	s.location = nil
@@ -531,6 +552,10 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 			requestError(w, errors.New("节点不存在"))
 			return
 		}
+		if reason := p.BlockedNodes()[in.NodeID]; reason != "" {
+			requestError(w, errors.New(reason))
+			return
+		}
 		delay, err := measureProxyDelay(r.Context(), s.profile, in.NodeID)
 		if err != nil {
 			requestError(w, err)
@@ -559,6 +584,7 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 		}
 		seen[id] = true
 	}
+	blocked := p.BlockedNodes()
 	results := make([]proxyDelayResult, len(in.NodeIDs))
 	jobs := make(chan int)
 	var wg sync.WaitGroup
@@ -568,6 +594,10 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 			defer wg.Done()
 			for i := range jobs {
 				id := in.NodeIDs[i]
+				if reason := blocked[id]; reason != "" {
+					results[i] = proxyDelayResult{NodeID: id, Error: reason}
+					continue
+				}
 				delay, err := measureProxyDelay(r.Context(), s.profile, id)
 				results[i] = proxyDelayResult{NodeID: id, Delay: delay}
 				if err != nil {
@@ -662,6 +692,9 @@ func (s *Server) refreshProxySubscriptions() {
 	if err != nil {
 		return
 	}
+	if _, err := p.Route(); errors.Is(err, managedproxy.ErrLocalProxyNode) {
+		return
+	}
 	for _, src := range p.Sources {
 		if src.URL != "" && src.Interval > 0 && time.Since(src.Updated) >= time.Duration(src.Interval)*time.Hour && time.Since(src.Attempted) > 15*time.Minute {
 			// Automatic refresh never opts into a host-network fallback.
@@ -669,6 +702,40 @@ func (s *Server) refreshProxySubscriptions() {
 			return
 		}
 	}
+}
+
+// Before serving requests, retire an older core that could still expose local
+// nodes through the environment group or through per-account credentials.
+func (s *Server) retireLocalProxyCore() error {
+	path := filepath.Join(managedproxy.Dir(s.profile), "config.yaml")
+	file, statErr := os.Stat(path)
+	if statErr != nil {
+		return nil
+	}
+	_, err := managedproxy.BoundInterface(path)
+	if !errors.Is(err, managedproxy.ErrLocalProxyNode) {
+		return nil
+	}
+	_ = s.closeProxyGate(err.Error())
+	// CLI operations can replace the generated file while the gate is closing.
+	current, err := os.Stat(path)
+	if err != nil || !os.SameFile(file, current) {
+		return nil
+	}
+	if err := managedproxy.Stop(s.profile); err != nil {
+		return err
+	}
+	// The source records used for migration remain in sources.json. Without
+	// the retired runtime the next core start must render the filtered store.
+	if current, err := os.Stat(path); err == nil && os.SameFile(file, current) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	s.mu.Lock()
+	s.proxyNetworkLost = true
+	s.mu.Unlock()
+	return nil
 }
 
 func (s *Server) checkProxyHealth() {
@@ -687,11 +754,16 @@ func (s *Server) checkProxyHealth() {
 	p, err := s.proxyStore.Load(s.profile)
 	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 2*time.Second)
 	defer cancel()
-	if err == nil && s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) == nil && managedproxy.Running(ctx, s.profile, p) {
-		return
+	reason := "内置代理未就绪；外网保持关闭"
+	if err == nil {
+		if _, routeErr := p.Route(); errors.Is(routeErr, managedproxy.ErrLocalProxyNode) {
+			reason = routeErr.Error()
+		} else if s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) == nil && managedproxy.Running(ctx, s.profile, p) {
+			return
+		}
 	}
-	_ = s.closeProxyGate("内置代理已中断或节点状态变化，请重试应用节点")
+	_ = s.closeProxyGate(reason)
 	s.mu.Lock()
-	s.safety.monitorError = "内置代理未就绪；外网保持关闭"
+	s.safety.monitorError = reason
 	s.mu.Unlock()
 }

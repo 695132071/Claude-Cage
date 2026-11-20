@@ -263,7 +263,7 @@ function Initialization({ initial, onComplete }) {
   return <InitializationFrame>
     <section className="initialization-content">
       <ol className="initialization-steps" aria-label={tr("初始化步骤")}>{steps.map(([key, label], position) => <li key={key} aria-current={step === key ? "step" : undefined}><span>{position < index ? <Check size={14} /> : position + 1}</span>{tr(label)}</li>)}</ol>
-      <div className="initialization-title"><h1>{tr(title)}</h1><p>{step === "system" ? tr("Cage 会在这台电脑里创建一套独立的 Debian 系统，供终端、浏览器和编辑器使用。不需要更换磁盘时，可以保留默认存储位置。") : step === "proxy" ? tr("先导入已有的代理配置。下方会自动查找本机代理软件，无需自己找文件；也可以添加订阅或节点。导入后选择出口，点击「应用代理」，再开始安装。") : showReady ? tr("系统、开发组件和网络检查均已完成，可以进入工作台开始使用。") : networkPending ? tr("系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。") : tr("Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。")}</p></div>
+      <div className="initialization-title"><h1>{tr(title)}</h1><p>{step === "system" ? tr("Cage 会在这台电脑里创建一套独立的 Debian 系统，供终端、浏览器和编辑器使用。不需要更换磁盘时，可以保留默认存储位置。") : step === "proxy" ? tr("导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。") : showReady ? tr("系统、开发组件和网络检查均已完成，可以进入工作台开始使用。") : networkPending ? tr("系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。") : tr("Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。")}</p></div>
       {connectionError && <div className="initialization-notice" role="alert"><SafetyMessage message={connectionError} /><button onClick={() => pollNow.current?.()}>{tr("重新连接")}</button></div>}
       {!status ? <p role="status"><LoaderCircle size={18} className="spin" />{tr("正在读取安装状态…")}</p> : <>
         <div className="initialization-stage" key={step}>

@@ -812,7 +812,11 @@ func relay(configPath, kind string) int {
 			return fail(err)
 		}
 		profile := filepath.Dir(configPath)
-		cmd = exec.Command(core, "-d", managedproxy.Dir(profile), "-f", filepath.Join(managedproxy.Dir(profile), "config.yaml"))
+		runtimePath := filepath.Join(managedproxy.Dir(profile), "config.yaml")
+		if _, err := managedproxy.BoundInterface(runtimePath); err != nil {
+			return fail(err)
+		}
+		cmd = exec.Command(core, "-d", managedproxy.Dir(profile), "-f", runtimePath)
 		source = "proxy"
 	} else {
 		return 2

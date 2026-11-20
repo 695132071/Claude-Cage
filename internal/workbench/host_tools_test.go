@@ -241,6 +241,31 @@ func TestHostToolsViewListsPluginFolders(t *testing.T) {
 
 // A newer version replaces the installed one, which is kept aside; when the
 // new one cannot be installed the old one is put back.
+func TestMarketViewKeepsListingAttribution(t *testing.T) {
+	s := &Server{profile: t.TempDir()}
+	s.hostMarket.fetched = time.Now()
+	s.hostMarket.entries = []hostbridge.MarketEntry{
+		{Name: "official", Author: &hostbridge.MarketAuthor{Name: "Lee-xeo", Official: true}},
+		{Name: "community", Author: &hostbridge.MarketAuthor{Name: "Lin"}},
+		{Name: "legacy"},
+	}
+	recorder := httptest.NewRecorder()
+	s.getHostMarket(recorder, httptest.NewRequest(http.MethodGet, "/api/host-tools/market", nil))
+	var view struct {
+		Entries []struct {
+			Author *hostbridge.MarketAuthor `json:"author"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &view); err != nil || len(view.Entries) != len(s.hostMarket.entries) {
+		t.Fatalf("unexpected market response: %s", recorder.Body.String())
+	}
+	for i, entry := range view.Entries {
+		if !reflect.DeepEqual(entry.Author, s.hostMarket.entries[i].Author) {
+			t.Errorf("%s: got author %+v, want %+v", s.hostMarket.entries[i].Name, entry.Author, s.hostMarket.entries[i].Author)
+		}
+	}
+}
+
 func TestInstallFromMarketReplacesAndRestores(t *testing.T) {
 	manifest := func(version string) string {
 		return `{"name":"notes","version":"` + version + `","description":"Notes.","permissions":[],"command":["python3","server.py"]}`

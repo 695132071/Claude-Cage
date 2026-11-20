@@ -104,8 +104,8 @@ external-controller: 0.0.0.0:9090
 tun: {enable: true}
 rules: [MATCH,DIRECT]
 proxies:
-  - {name: edge, type: socks5, server: 127.0.0.1, port: 1080, password: private-secret}
-  - {name: chained, type: http, server: 127.0.0.1, port: 8080, dialer-proxy: edge}
+  - {name: edge, type: socks5, server: 203.0.113.10, port: 1080, password: private-secret}
+  - {name: chained, type: http, server: 203.0.113.10, port: 8080, dialer-proxy: edge}
 `
 
 func TestImportCompilesOnlyOwnedNetworkBoundary(t *testing.T) {

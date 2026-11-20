@@ -3,6 +3,7 @@ package managedproxy
 import (
 	"crypto/sha256"
 	"errors"
+	"path/filepath"
 	"sync"
 )
 
@@ -12,7 +13,21 @@ func Applied(profile, endpoint, revision string) (Store, error) {
 	if err != nil {
 		return Store{}, err
 	}
-	return appliedStore(b, missing, endpoint, revision)
+	p, err := appliedStore(b, missing, endpoint, revision)
+	if err != nil {
+		return p, err
+	}
+	return p, retiredRouteCheck(profile)
+}
+
+// A previous core may still expose a retired account route even when the
+// selected environment route is valid. Revocation also covers that interval.
+// The core configuration is outside the store bytes, so this is never cached.
+func retiredRouteCheck(profile string) error {
+	if _, err := BoundInterface(filepath.Join(Dir(profile), "config.yaml")); errors.Is(err, ErrLocalProxyNode) {
+		return err
+	}
+	return nil
 }
 
 func appliedStore(b []byte, missing bool, endpoint, revision string) (Store, error) {
@@ -23,11 +38,11 @@ func appliedStore(b []byte, missing bool, endpoint, revision string) (Store, err
 	if _, ok := p.Find(p.Selected); !ok {
 		return p, errors.New("尚未选择代理节点，请在网络与代理中添加来源并选择节点")
 	}
-	if revision == "" || p.Revision == "" || revision != p.Revision || endpoint != p.Endpoint() {
-		return p, errors.New("代理节点尚未应用或配置不一致，请重新应用节点；外网保持关闭")
-	}
 	if _, err := p.Route(); err != nil {
 		return p, err
+	}
+	if revision == "" || p.Revision == "" || revision != p.Revision || endpoint != p.Endpoint() {
+		return p, errors.New("代理节点尚未应用或配置不一致，请重新应用节点；外网保持关闭")
 	}
 	return p, nil
 }
@@ -89,14 +104,17 @@ func (r *StoreReader) Applied(profile, endpoint, revision string) error {
 		return err
 	}
 	key := [2]string{endpoint, revision}
-	if decided, ok := r.applied[key]; ok {
+	decided, ok := r.applied[key]
+	if !ok {
+		_, decided = appliedStore(b, false, endpoint, revision)
+		if len(r.applied) < 16 {
+			r.applied[key] = decided
+		}
+	}
+	if decided != nil {
 		return decided
 	}
-	_, err = appliedStore(b, false, endpoint, revision)
-	if len(r.applied) < 16 {
-		r.applied[key] = err
-	}
-	return err
+	return retiredRouteCheck(profile)
 }
 
 // AppliedCheck is Applied's error for the gate watcher's once-a-second check.

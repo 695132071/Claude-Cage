@@ -239,7 +239,7 @@ func (s *Store) Import(name, rawURL string, data []byte, id string, interval int
 			// Refresh must retain every hop of the saved route, including legacy
 			// node-level dialers. A partial import cannot shorten a working chain.
 			route, routeErr := s.Route()
-			if s.Selected != "" && routeErr != nil {
+			if s.Selected != "" && routeErr != nil && !errors.Is(routeErr, ErrLocalProxyNode) {
 				return routeErr
 			}
 			available := make(map[string]bool, len(nodes))
@@ -311,6 +311,10 @@ func unsafeField(key string, value any) bool {
 // Route returns the actual hops from entry to exit. Explicit UI chains override
 // dialers at runtime without modifying subscription nodes or their credentials.
 func (s Store) Route() ([]string, error) {
+	return s.route(s.BlockedNodes())
+}
+
+func (s Store) route(blocked map[string]string) ([]string, error) {
 	if _, ok := s.Find(s.Selected); !ok {
 		return nil, errors.New("请先选择有效的最终出口")
 	}
@@ -328,7 +332,7 @@ func (s Store) Route() ([]string, error) {
 			}
 			seen[id] = true
 		}
-		return append([]string(nil), s.Chain...), nil
+		return s.checkRouteNodes(append([]string(nil), s.Chain...), blocked)
 	}
 	var reversed []string
 	seen := map[string]bool{}
@@ -344,11 +348,12 @@ func (s Store) Route() ([]string, error) {
 	for i, j := 0, len(reversed)-1; i < j; i, j = i+1, j-1 {
 		reversed[i], reversed[j] = reversed[j], reversed[i]
 	}
-	return reversed, nil
+	return s.checkRouteNodes(reversed, blocked)
 }
 
 func (s Store) Runtime(profile string) ([]byte, error) {
-	route, err := s.Route()
+	blocked := s.BlockedNodes()
+	route, err := s.route(blocked)
 	if err != nil {
 		return nil, err
 	}
@@ -363,6 +368,9 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	originals := map[string]map[string]any{}
 	for _, src := range s.Sources {
 		for _, n := range src.Nodes {
+			if blocked[n.ID] != "" {
+				continue
+			}
 			config := make(map[string]any, len(n.Config))
 			for key, value := range n.Config {
 				config[key] = value
@@ -425,6 +433,9 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	rules := []string{"IN-USER,cage," + Group}
 	for _, src := range s.Sources {
 		for _, n := range src.Nodes {
+			if blocked[n.ID] != "" {
+				continue
+			}
 			user := nodeUser(n.ID)
 			auth = append(auth, user+":"+s.nodePassword(n.ID))
 			rules = append(rules, "IN-USER,"+user+","+accountTarget(n.ID))

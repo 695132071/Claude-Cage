@@ -40,13 +40,14 @@ var CommunityMarket = Market{
 
 // MarketEntry is one plugin in the list.
 type MarketEntry struct {
-	Name        string   `json:"name"`
-	DisplayName string   `json:"displayName,omitempty"`
-	Version     string   `json:"version"`
-	Description string   `json:"description"`
-	Platforms   []string `json:"platforms,omitempty"`
-	Permissions []string `json:"permissions"`
-	Categories  []string `json:"categories,omitempty"`
+	Name        string        `json:"name"`
+	DisplayName string        `json:"displayName,omitempty"`
+	Version     string        `json:"version"`
+	Description string        `json:"description"`
+	Author      *MarketAuthor `json:"author,omitempty"`
+	Platforms   []string      `json:"platforms,omitempty"`
+	Permissions []string      `json:"permissions"`
+	Categories  []string      `json:"categories,omitempty"`
 	// Kind, Engines and Contributes repeat the plugin's manifest. Kind is
 	// host when the list leaves it out.
 	Kind        string       `json:"kind,omitempty"`
@@ -100,6 +101,12 @@ func (s *Source) valid() bool {
 	address, err := url.Parse(s.URL)
 	return err == nil && len(s.URL) <= 300 && address.Scheme == "https" && hostName.MatchString(address.Hostname()) &&
 		address.User == nil && address.Port() == ""
+}
+
+// MarketAuthor is the attribution published by the market for a listing.
+type MarketAuthor struct {
+	Name     string `json:"name"`
+	Official bool   `json:"official,omitempty"`
 }
 
 // FetchIcon downloads the entry's picture and returns it with its media type.

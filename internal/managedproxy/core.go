@@ -180,6 +180,9 @@ func Running(ctx context.Context, profile string, s Store) bool {
 }
 
 func checkRunning(ctx context.Context, profile string, s Store) error {
+	if _, err := s.Route(); err != nil {
+		return err
+	}
 	var cfg struct {
 		Port         int    `json:"mixed-port"`
 		Interface    string `json:"interface-name"`
@@ -250,6 +253,9 @@ func Stop(profile string) error {
 	return nil
 }
 func Start(ctx context.Context, profile string, s Store) error {
+	if _, err := s.Route(); err != nil {
+		return err
+	}
 	if runtime.GOOS == "windows" {
 		return startWindowsCore(ctx, profile, s)
 	}
