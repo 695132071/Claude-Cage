@@ -532,6 +532,27 @@ var logMu sync.Mutex
 // withLog runs fn with Lima's logrus output going to log.
 // Until the guest's SSH server is up, the hostagent reports every refused
 // forwarding attempt. They remain in ha.stderr.log but are not progress.
+const (
+	// FirstBootIdleWait is how long a first boot may go without any new
+	// hostagent event or cloud-init output line.
+	FirstBootIdleWait = 10 * time.Minute
+	// FirstBootMaxWait bounds a first boot that keeps making progress.
+	FirstBootMaxWait = 2 * time.Hour
+)
+
+type firstBootKey struct{}
+
+// WithFirstBoot marks a start as the base system's first boot, which waits
+// for cloud-init with a progress-based timeout instead of the fixed one.
+func WithFirstBoot(ctx context.Context) context.Context {
+	return context.WithValue(ctx, firstBootKey{}, true)
+}
+
+func firstBoot(ctx context.Context) bool {
+	v, _ := ctx.Value(firstBootKey{}).(bool)
+	return v
+}
+
 type quietBootLog struct{ io.Writer }
 
 func (q quietBootLog) Write(p []byte) (int, error) {
@@ -603,7 +624,15 @@ func (l *Lima) Start(ctx context.Context, name string, log io.Writer) error {
 			return err
 		}
 		started := time.Now()
-		return vmStartError(instance.StartWithPaths(ctx, inst, false, false, "", guestAgent), inst.Dir, started)
+		progress := firstBoot(ctx)
+		if progress {
+			// A first boot installs packages through the selected proxy and
+			// may take long on a slow link. Follow cloud-init output and fail
+			// only when it stalls, within an overall bound (#281).
+			ctx = instance.WithWatchHostAgentTimeout(ctx, FirstBootMaxWait)
+			ctx = instance.WithWatchHostAgentIdleTimeout(ctx, FirstBootIdleWait)
+		}
+		return vmStartError(instance.StartWithPaths(ctx, inst, false, progress, "", guestAgent), inst.Dir, started)
 	})
 }
 
