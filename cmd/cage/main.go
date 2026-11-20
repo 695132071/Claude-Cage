@@ -49,7 +49,13 @@ cage proxy-start   Start Cage's bundled proxy core with the applied node
 cage proxy-stop    Stop Cage's core and close external networking
 cage setup         Build the isolated base VM through the specified proxy
 cage up            Start the shared Cage environment, editor and browser
+                   --reset re-clones the VM; files and logins on its disk are lost
+                   --cpus N; --memory N or --ram N (GiB); --disk N (GiB)
+                   --ssh-port N (0 for automatic, otherwise 1024-65535)
 cage login         Start cage services, then Claude's login flow inside the VM
+                   Same VM options as up: --reset, --cpus N, --memory N or --ram N (GiB),
+                   --disk N (GiB), --ssh-port N (0 or 1024-65535)
+                   --reset re-clones the VM; files and logins on its disk are lost
 cage access        Inspect legacy viewer credentials (diagnostics only)
 cage shell         Open a shell in the shared environment
 cage run COMMAND   Execute a command in the shared environment
@@ -105,6 +111,15 @@ func run() int {
 	if text, ok := subcommandHelp(args); ok {
 		fmt.Print(text)
 		return 0
+	}
+	var startArgs []string
+	if args[0] == "up" || args[0] == "login" {
+		var err error
+		startArgs, err = cli.StartArgs(args[1:])
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\nUsage: cage %s [--reset] [--cpus N] [--memory N | --ram N] [--disk N] [--ssh-port N]\n", err, args[0])
+			return 2
+		}
 	}
 	// These read only this build's own metadata. Answering them before the
 	// profile is opened keeps `cage version --min` usable on a fresh install.
@@ -616,18 +631,9 @@ func run() int {
 		args = append([]string{"setup", "--memory", fmt.Sprint(memory), "--cpus", fmt.Sprint(cpus), "--disk", "24", "--preinstall=node,python,chromium,gh,claude,code-server"}, requireWorkbenchTools(args[1:])...)
 	}
 	if args[0] == "up" || args[0] == "login" {
-		result := cli.Main([]string{"run", "true"}, cli.Stdio())
-		if result != 0 {
-			return result
-		}
-		if err := workbench.StartGuestServices(context.Background(), path, os.Stdout, os.Stderr); err != nil {
-			return fail(err)
-		}
-		fmt.Println("Cage local services are ready. Open Cage or run cage desktop to complete the required network checks. External networking stays closed until the workbench approves this VM; no local access password is required.")
-		if args[0] == "login" {
-			return cli.Main([]string{"run", "--tty", "bash", "-lc", "source /etc/profile.d/claude-cage.sh; exec claude auth login"}, cli.Stdio())
-		}
-		return 0
+		return startEnvironment(args[0], startArgs, cli.Stdio(), cli.Main, func() error {
+			return workbench.StartGuestServices(context.Background(), path, os.Stdout, os.Stderr)
+		})
 	}
 	if args[0] == "update-tools" {
 		if result := cli.Main([]string{"run", "true"}, cli.Stdio()); result != 0 {
@@ -673,6 +679,20 @@ func containerInstallScript(kind string) (string, error) {
 func runGuestServiceStart(script string, stdio cli.IO, invoke func([]string, cli.IO) int) int {
 	stdio.Stdin = strings.NewReader(script)
 	return invoke([]string{"run", "bash", "-s"}, stdio)
+}
+
+func startEnvironment(command string, args []string, stdio cli.IO, invoke func([]string, cli.IO) int, startServices func() error) int {
+	if result := invoke(args, stdio); result != 0 {
+		return result
+	}
+	if err := startServices(); err != nil {
+		return fail(err)
+	}
+	fmt.Fprintln(stdio.Stdout, "Cage local services are ready. Open Cage or run cage desktop to complete the required network checks. External networking stays closed until the workbench approves this VM; no local access password is required.")
+	if command == "login" {
+		return invoke([]string{"run", "--tty", "bash", "-lc", "source /etc/profile.d/claude-cage.sh; exec claude auth login"}, stdio)
+	}
+	return 0
 }
 
 // The shared environment's start script needs these tools. A --preinstall
@@ -725,6 +745,9 @@ var helpPassthrough = map[string]bool{
 // command's lines from the overview, or the overview when it has none.
 func subcommandHelp(args []string) (string, bool) {
 	if len(args) < 2 || args[1] != "--help" && args[1] != "-h" || helpPassthrough[args[0]] {
+		return "", false
+	}
+	if (args[0] == "up" || args[0] == "login") && len(args) != 2 {
 		return "", false
 	}
 	var lines []string
