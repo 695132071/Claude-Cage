@@ -713,7 +713,7 @@ func (s *Server) applyWithOptions(v savedProfile, validate, saveStaticDraft bool
 		}
 	}
 	if pendingStaticDraftErr != nil {
-		return networkCheckError{fmt.Errorf("已保存待验证的静态 IP 基准（%s），外网保持关闭。待代理恢复后请重新检测联网，实时出口、国家与隔离检查全部通过前不会放行外网：%w", v.Config.ExitPolicy.IP, pendingStaticDraftErr)}
+		return staticDraftPendingError{fmt.Errorf("已保存待验证的静态 IP 基准（%s），外网保持关闭。待代理恢复后请重新检测联网，实时出口、国家与隔离检查全部通过前不会放行外网：%w", v.Config.ExitPolicy.IP, pendingStaticDraftErr)}
 	}
 	return nil
 }

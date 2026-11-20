@@ -129,6 +129,13 @@ type networkCheckError struct{ error }
 
 func (e networkCheckError) Unwrap() error { return e.error }
 
+// staticDraftPendingError reports a saved, not yet verified static IP
+// baseline. Unlike networkCheckError it does not imply a running guest: a
+// draft saved before the first start leaves the environment stopped.
+type staticDraftPendingError struct{ error }
+
+func (e staticDraftPendingError) Unwrap() error { return e.error }
+
 func (s *Server) checkNetworkIfWanted() error {
 	s.mu.Lock()
 	paused := s.networkPaused
