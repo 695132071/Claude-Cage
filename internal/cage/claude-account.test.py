@@ -30,6 +30,12 @@ class ClaudeAccountTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
+        # A guest's temporary directory is outside HOME; the usage query relies
+        # on that to run the CLI from a directory without project settings.
+        # Create it before tempfile's default directory is redirected into HOME.
+        scratch = tempfile.TemporaryDirectory(prefix="account-scratch-")
+        self.addCleanup(scratch.cleanup)
+        self.scratch = Path(scratch.name)
         temp_patch = patch.object(tempfile, "tempdir", str(self.home))
         temp_patch.start()
         self.addCleanup(temp_patch.stop)
@@ -52,11 +58,6 @@ printf '%s\\n' "$@"
         fake.chmod(0o700)
         self.email = "owner@example.test"
         self.subject = hashlib.sha256((self.email + "\ntest-org").encode()).hexdigest()
-        # A guest's temporary directory is outside HOME; the usage query relies
-        # on that to run the CLI from a directory without project settings.
-        scratch = tempfile.TemporaryDirectory(prefix="account-scratch-")
-        self.addCleanup(scratch.cleanup)
-        self.scratch = Path(scratch.name)
         self.env = {"HOME": str(self.home), "PATH": os.defpath, "TEST_EMAIL": self.email,
                     "CAGE_CLAUDE_SUBJECT": self.subject, "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": str(self.scratch)}
 
