@@ -1323,15 +1323,25 @@ def launch_mcp_servers(base):
     return {name: value for name, value in shared_mcp_servers().items() if name not in present}
 
 
-def prune_stale_mcp_launch_files(folder, keep=None):
+# A running terminal keeps using the --mcp-config file it was started with
+# (the CLI can read it again, for example to reconnect a server). Each launch
+# refreshes the time of the file it uses; only files no launch used for this
+# long are removed.
+MCP_LAUNCH_FILE_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def prune_stale_mcp_launch_files(folder, keep=None, now=None):
     if not folder.is_dir():
         return
+    cutoff = (time.time() if now is None else now) - MCP_LAUNCH_FILE_MAX_AGE
     for candidate in folder.glob("mcp-*.json"):
-        if candidate != keep:
-            try:
+        if candidate == keep or linked(candidate):
+            continue
+        try:
+            if candidate.stat().st_mtime < cutoff:
                 candidate.unlink(missing_ok=True)
-            except OSError:
-                pass
+        except OSError:
+            pass
 
 
 def shared_mcp_arguments(base, args):
@@ -1347,7 +1357,13 @@ def shared_mcp_arguments(base, args):
     data = json.dumps({"mcpServers": servers}, separators=(",", ":")).encode()
     folder.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     path = folder / ("mcp-" + hashlib.sha256(data).hexdigest() + ".json")
-    if not path.exists():
+    try:
+        # Content-addressed and reused: mark it as used by this launch.
+        os.utime(path)
+        reused = True
+    except FileNotFoundError:
+        reused = False
+    if not reused:
         with tempfile.NamedTemporaryFile(dir=folder, delete=False) as stream:
             stream.write(data)
             stream.flush()

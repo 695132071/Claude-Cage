@@ -1256,9 +1256,22 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.write(self.home / ".claude.json", {"mcpServers": {"srv": {"command": "v2", "env": {"TOKEN": "s2"}}}})
         flags2 = helper.shared_mcp_arguments(first, ["--settings", "x"])
         mcp2 = Path(flags2[1]).resolve()
+        # A terminal started with the first file may still be running and read
+        # it again: a recently used launch file is kept.
+        self.assertTrue(mcp1.exists())
+        self.assertTrue(mcp2.exists())
+        aged = time.time() - helper.MCP_LAUNCH_FILE_MAX_AGE - 60
+        os.utime(mcp1, (aged, aged))
+        os.utime(mcp2, (aged, aged))
+        # Reusing a file marks it as used again; only the unused old one goes.
+        self.assertEqual(Path(helper.shared_mcp_arguments(first, ["--settings", "x"])[1]).resolve(), mcp2)
         self.assertFalse(mcp1.exists())
         self.assertTrue(mcp2.exists())
+        self.assertGreater(mcp2.stat().st_mtime, aged + 60)
         self.write(self.home / ".claude.json", {"mcpServers": {}})
+        helper.shared_mcp_arguments(first, ["--settings", "x"])
+        self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [mcp2])
+        os.utime(mcp2, (aged, aged))
         helper.shared_mcp_arguments(first, ["--settings", "x"])
         self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [])
         # Aborted replace_json (current != original) leaks zero backups.
