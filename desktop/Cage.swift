@@ -3,6 +3,7 @@ import LocalAuthentication
 import CryptoKit
 import WebKit
 import UniformTypeIdentifiers
+import UserNotifications
 
 enum CageDiagnostics {
     static func record(_ message: String) {
@@ -16,7 +17,7 @@ enum CageDiagnostics {
 }
 
 @main
-final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
+final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply, UNUserNotificationCenterDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var nativeInput: CageNativeInput!
@@ -172,6 +173,9 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         }, quit: { [weak self] in self?.allowQuit = true; NSApp.terminate(nil) }, reconnect: { [weak self] in self?.bootstrap() })
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if notificationsAvailable {
+            UNUserNotificationCenter.current().delegate = self
+        }
         bootstrap()
     }
     private func makeMenus() {
@@ -687,6 +691,18 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             panel.message = storage ? "请选择用于保存镜像和虚拟磁盘的空文件夹。" : "仅此文件夹会与 Cage 共享。请选择具体项目。"
             nativeFilePanelOpen = true
             panel.beginSheetModal(for:window) { response in self.nativeFilePanelOpen = false; replyHandler(response == .OK ? panel.url?.path : "",nil) }
+        case "notificationStatus":
+            queryNotificationStatus { status in replyHandler(status, nil) }
+        case "requestNotificationPermission":
+            requestNotificationAuthorization { status in replyHandler(status, nil) }
+        case "showNotification":
+            deliverNotification(body: body, reply: replyHandler)
+        case "openNotificationSettings":
+            if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+                replyHandler(NSWorkspace.shared.open(url), nil)
+            } else {
+                replyHandler(false, nil)
+            }
         case "refreshSession":
             requestEntry(options: controllerNeedsUpdate ? ["--existing"] : []) { result in
                 switch result {
@@ -714,11 +730,136 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         }
     }
     func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) { let alert = NSAlert(); alert.messageText = message; alert.addButton(withTitle:CageLanguage.text("确定")); alert.addButton(withTitle:CageLanguage.text("取消")); alert.beginSheetModal(for:window){completionHandler($0 == .alertFirstButtonReturn)} }
+    private var notificationsAvailable: Bool {
+        Bundle.main.bundleURL.pathExtension == "app"
+    }
+    private func notificationPermissionName(_ status: UNAuthorizationStatus) -> String {
+        switch status {
+        case .authorized: return "authorized"
+        case .provisional: return "provisional"
+        case .denied: return "denied"
+        case .notDetermined: return "not_determined"
+        @unknown default: return "denied"
+        }
+    }
+    private func queryNotificationStatus(_ reply: @escaping ([String: Any]) -> Void) {
+        guard notificationsAvailable else {
+            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false])
+            return
+        }
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            DispatchQueue.main.async {
+                reply([
+                    "supported": true,
+                    "permission": self.notificationPermissionName(settings.authorizationStatus),
+                    "canOpenSettings": true,
+                ])
+            }
+        }
+    }
+    private func requestNotificationAuthorization(_ reply: @escaping ([String: Any]) -> Void) {
+        guard notificationsAvailable else {
+            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false])
+            return
+        }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in
+            self.queryNotificationStatus(reply)
+        }
+    }
+    private func deliverNotification(body: [String: Any], reply: @escaping (Any?, String?) -> Void) {
+        guard let title = body["title"] as? String, !title.isEmpty, title.count <= 200 else {
+            reply(nil, "通知标题无效"); return
+        }
+        let message = body["body"] as? String ?? ""
+        guard message.count <= 500 else { reply(nil, "通知内容过长"); return }
+        let rawID = body["id"] as? String ?? ""
+        let identifier = (!rawID.isEmpty && rawID.count <= 128) ? rawID : UUID().uuidString
+        let terminalID = body["terminal_id"] as? String ?? ""
+        if !terminalID.isEmpty && terminalID.range(of: "^[a-f0-9]{16}$", options: .regularExpression) == nil {
+            reply(nil, "通知目标终端无效"); return
+        }
+        let connectionID = body["connection_id"] as? String ?? ""
+        guard connectionID.count <= 128 else { reply(nil, "通知连接标识无效"); return }
+        let playSound = (body["sound"] as? Bool) ?? true
+        guard notificationsAvailable else {
+            reply(["delivered": false, "permission": "unsupported"], nil); return
+        }
+        let center = UNUserNotificationCenter.current()
+        let post: (String) -> Void = { permission in
+            let content = UNMutableNotificationContent()
+            content.title = title
+            content.body = message
+            content.sound = playSound ? .default : nil
+            content.userInfo = ["terminal_id": terminalID, "connection_id": connectionID]
+            let request = UNNotificationRequest(identifier: identifier, content: content, trigger: nil)
+            center.add(request) { error in
+                DispatchQueue.main.async {
+                    reply(["delivered": error == nil, "permission": permission], nil)
+                }
+            }
+        }
+        center.getNotificationSettings { settings in
+            let status = settings.authorizationStatus
+            if status == .authorized || status == .provisional {
+                post(self.notificationPermissionName(status))
+            } else if status == .notDetermined {
+                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                    center.getNotificationSettings { updated in
+                        let permission = self.notificationPermissionName(updated.authorizationStatus)
+                        if granted {
+                            post(permission)
+                        } else {
+                            DispatchQueue.main.async {
+                                reply(["delivered": false, "permission": permission], nil)
+                            }
+                        }
+                    }
+                }
+            } else {
+                DispatchQueue.main.async {
+                    reply(["delivered": false, "permission": self.notificationPermissionName(status)], nil)
+                }
+            }
+        }
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completionHandler(notification.request.content.sound != nil ? [.banner, .list, .sound] : [.banner, .list])
+    }
+    func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) {
+        let info = response.notification.request.content.userInfo
+        let terminalID = info["terminal_id"] as? String ?? ""
+        let connectionID = info["connection_id"] as? String ?? ""
+        DispatchQueue.main.async {
+            if self.window != nil {
+                if self.window.isMiniaturized { self.window.deminiaturize(nil) }
+                self.window.makeKeyAndOrderFront(nil)
+            }
+            NSApp.activate(ignoringOtherApps: true)
+            self.publishWindowVisibility()
+            self.publishWindowFocus(true)
+            if !terminalID.isEmpty,
+               let data = try? JSONSerialization.data(withJSONObject: ["terminal_id": terminalID, "connection_id": connectionID]),
+               let json = String(data: data, encoding: .utf8) {
+                self.webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:\(json)}));", completionHandler: nil)
+            }
+        }
+        completionHandler()
+    }
+    private func publishWindowFocus(_ forceFocused: Bool? = nil) {
+        guard window != nil, webView != nil else { return }
+        let focused = forceFocused ?? (NSApp.isActive && window.isKeyWindow && window.isVisible && !window.isMiniaturized)
+        webView.evaluateJavaScript("window.cageWindowFocused = \(focused ? "true" : "false"); window.dispatchEvent(new Event('cage-window-focus'));", completionHandler: nil)
+    }
     private func publishWindowVisibility(forceHidden: Bool = false) {
         guard window != nil, webView != nil else { return }
         let visible = !forceHidden && window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
         webView.evaluateJavaScript("window.cageWindowVisible = \(visible ? "true" : "false"); window.dispatchEvent(new Event('cage-window-visibility'));", completionHandler: nil)
+        publishWindowFocus(forceHidden ? false : nil)
     }
+    func windowDidBecomeKey(_ notification: Notification) { publishWindowFocus(true) }
+    func windowDidResignKey(_ notification: Notification) { publishWindowFocus(false) }
+    func applicationDidBecomeActive(_ notification: Notification) { publishWindowFocus() }
+    func applicationDidResignActive(_ notification: Notification) { publishWindowFocus(false) }
     func windowDidChangeOcclusionState(_ notification: Notification) { publishWindowVisibility() }
     func windowDidMiniaturize(_ notification: Notification) { publishWindowVisibility() }
     func windowDidDeminiaturize(_ notification: Notification) { publishWindowVisibility() }
