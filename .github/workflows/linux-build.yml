@@ -67,15 +67,17 @@ jobs:
             echo 'Release candidates require an explicitly dispatched release workflow.' >&2
             exit 1
           fi
+      # Release candidates restore no cache another branch or workflow wrote.
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: ${{ !inputs.release }}
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: ${{ !inputs.release && 'npm' || '' }}
           cache-dependency-path: ui/package-lock.json
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
       - name: Build Linux application and package
         run: |
           node scripts/check-version.mjs
