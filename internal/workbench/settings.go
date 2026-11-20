@@ -49,6 +49,14 @@ type Preferences struct {
 	// tool downloads for proxies that drop curl's TLS 1.3 ClientHello. Off by
 	// default; does not affect normal browsing or API connections.
 	InstallTLS12Compat bool `json:"install_tls12_compat,omitempty"`
+	// LocationIPInfoFallback lets ipinfo.io receive the measured exit IP
+	// after the five default location providers all fail. Off by default; its
+	// answer counts at country level only.
+	LocationIPInfoFallback bool `json:"location_ipinfo_fallback,omitempty"`
+}
+
+func (p Preferences) locationOptions() exitpolicy.LookupOptions {
+	return exitpolicy.LookupOptions{IPInfoFallback: p.LocationIPInfoFallback}
 }
 
 const defaultBrowserHomeURL = "https://www.bing.com/"
@@ -289,7 +297,7 @@ func validateWorkspace(path, profile string) (string, error) {
 
 // probeLocation uses the same fail-closed transport as the VM. No host resolver,
 // environment proxy, or direct fallback participates, including redirects.
-func probeLocation(ctx context.Context, c cage.Config) (Location, error) {
+func probeLocation(ctx context.Context, c cage.Config, options exitpolicy.LookupOptions) (Location, error) {
 	ip, err := cage.ProbeExitIP(ctx, c)
 	if err != nil {
 		return Location{}, err
@@ -297,7 +305,7 @@ func probeLocation(ctx context.Context, c cage.Config) (Location, error) {
 	if state, message := exitpolicy.CheckExitCountry(ip, nil); state == cage.CheckFailed {
 		return Location{IP: ip, CheckedAt: time.Now()}, errors.New(message)
 	}
-	loc, err := probeLocationForIP(ctx, c, ip)
+	loc, err := probeLocationForIP(ctx, c, ip, options)
 	if err != nil {
 		return Location{IP: ip, CheckedAt: time.Now()}, err
 	}
@@ -310,15 +318,15 @@ func probeLocation(ctx context.Context, c cage.Config) (Location, error) {
 
 // All exit modes need country evidence. Manual locale settings only control
 // whether the observed timezone/language is applied to the environment.
-func probeEnvironmentLocation(ctx context.Context, c cage.Config, _ Preferences) (Location, error) {
-	return probeLocation(ctx, c)
+func probeEnvironmentLocation(ctx context.Context, c cage.Config, p Preferences) (Location, error) {
+	return probeLocation(ctx, c, p.locationOptions())
 }
 
 func (l Location) exitLocation() cage.ExitLocation {
 	return cage.ExitLocation{IP: l.IP, CountryCode: l.CountryCode, Region: l.Region, City: l.City}
 }
 
-func probeLocationForIP(ctx context.Context, c cage.Config, ip string) (Location, error) {
+func probeLocationForIP(ctx context.Context, c cage.Config, ip string, options exitpolicy.LookupOptions) (Location, error) {
 	address := net.ParseIP(ip)
 	if address == nil {
 		return Location{}, errors.New("出口地址无效")
@@ -330,5 +338,5 @@ func probeLocationForIP(ctx context.Context, c cage.Config, ip string) (Location
 	transport := &http.Transport{Proxy: nil, DialContext: e.DialContext, ForceAttemptHTTP2: true}
 	defer transport.CloseIdleConnections()
 	client := &http.Client{Transport: transport, Timeout: 8 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("redirect refused") }}
-	return lookupLocation(ctx, client, address)
+	return lookupLocation(ctx, client, address, options)
 }

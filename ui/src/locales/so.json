@@ -2483,5 +2483,7 @@
   "原账号：": "Akoonka asalka ah:",
   "。可直接使用同组其他账号继续此会话，原账号历史保留不动。": ". Waxaad si toos ah ugu sii wadi kartaa fadhigan akoon kale oo isla kooxda ah; taariikhda akoonka asalka ah sidooda ayaa loo hayn doonaa.",
   "目标账号将基于历史副本继续处理，原账号会话保留不动，缓存可能重建。执行中的工具、后台任务和未确认结果会阻止切换。": "Akoonka la beegsaday wuxuu shaqada ku sii wadi doonaa nuqul ka mid ah taariikhda, fadhiga akoonka asalka ahna sidooda ayaa loo hayn doonaa; kaydka (cache) waxaa laga yaabaa in dib loo dhiso. Qalabka socda, hawlaha gadaasha iyo natiijooyinka aan la xaqiijin ayaa ka hortagaya beddelidda.",
-  "用所选账号继续": "Ku sii wad akoonka la doortay"
+  "用所选账号继续": "Ku sii wad akoonka la doortay",
+  "出口位置查询备用服务 ipinfo.io": "Adeegga goobta kaydka ah ee ipinfo.io",
+  "默认关闭。开启后，仅当默认的五家位置服务都失败时，经所选节点把已测得的出口 IP 发给 ipinfo.io 查询国家或地区；其结果只用于国家级判断，不用于绑定或核对州、省和城市。": "Si caadi ah waa dansan yahay. Marka la shido, kaliya marka ay shanta adeeg ee goobta caadiga ah dhammaantood fashilmaan, IP-ga bixitaanka ee la cabbiray waxaa loo diraa ipinfo.io iyadoo loo marayo noodhka la doortay si loo ogaado dalka ama gobolka; natiijada waxaa loo isticmaalaa heerka dalka oo keliya, looma isticmaalo xiridda ama hubinta gobol, maamul ama magaalo."
 }

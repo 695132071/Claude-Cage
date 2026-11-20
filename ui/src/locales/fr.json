@@ -2483,5 +2483,7 @@
   "原账号：": "Compte d'origine :",
   "。可直接使用同组其他账号继续此会话，原账号历史保留不动。": ". Vous pouvez poursuivre directement cette session avec un autre compte du même groupe ; l'historique du compte d'origine reste intact.",
   "目标账号将基于历史副本继续处理，原账号会话保留不动，缓存可能重建。执行中的工具、后台任务和未确认结果会阻止切换。": "Le compte cible poursuivra à partir d'une copie de l'historique tandis que la session du compte d'origine reste intacte ; le cache pourra être reconstruit. Des outils en cours d'exécution, des tâches en arrière-plan ou des résultats non confirmés empêchent le changement.",
-  "用所选账号继续": "Continuer avec le compte sélectionné"
+  "用所选账号继续": "Continuer avec le compte sélectionné",
+  "出口位置查询备用服务 ipinfo.io": "Service de localisation de secours ipinfo.io",
+  "默认关闭。开启后，仅当默认的五家位置服务都失败时，经所选节点把已测得的出口 IP 发给 ipinfo.io 查询国家或地区；其结果只用于国家级判断，不用于绑定或核对州、省和城市。": "Désactivé par défaut. Une fois activé, et seulement si les cinq services de localisation par défaut échouent, l’IP de sortie mesurée est envoyée à ipinfo.io via le nœud choisi pour connaître le pays ou la région ; le résultat ne sert qu’au niveau du pays, jamais pour lier ou vérifier un État, une province ou une ville."
 }

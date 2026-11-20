@@ -348,6 +348,20 @@ export function SettingsPanel({
                     onChange={(e) => update("install_tls12_compat", e.target.checked)}
                   />
                 </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>{tr("出口位置查询备用服务 ipinfo.io")}</strong>
+                    <small>
+                      {tr("默认关闭。开启后，仅当默认的五家位置服务都失败时，经所选节点把已测得的出口 IP 发给 ipinfo.io 查询国家或地区；其结果只用于国家级判断，不用于绑定或核对州、省和城市。")}
+                    </small>
+                  </span>
+                  <input
+                    role="switch"
+                    type="checkbox"
+                    checked={Boolean(draft.location_ipinfo_fallback)}
+                    onChange={(e) => update("location_ipinfo_fallback", e.target.checked)}
+                  />
+                </label>
                 <div className="probe-line">
                   <button disabled={busy} onClick={check}>
                     {probing ? (

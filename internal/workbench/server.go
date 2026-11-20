@@ -733,6 +733,7 @@ func (s *Server) proposedWithOptions(w http.ResponseWriter, r *http.Request) (sa
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	input.InstallTLS12Compat = s.preferences.InstallTLS12Compat
+	input.LocationIPInfoFallback = s.preferences.LocationIPInfoFallback
 	s.mu.Unlock()
 	// Clients predating the DNS options keep the saved ones.
 	if current, err := loadConfig(s.configPath); err == nil {
@@ -767,7 +768,7 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
-	loc, err := probeLocation(r.Context(), v.Config)
+	loc, err := probeLocation(r.Context(), v.Config, v.Preferences.locationOptions())
 	if finishErr := s.finishLocationProbe(v.Config, loc, err); finishErr != nil {
 		requestError(w, finishErr)
 		return
