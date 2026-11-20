@@ -173,7 +173,7 @@ func TestLinuxCoreStopPinsAndChecksProcessIdentity(t *testing.T) {
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() { _ = cmd.Process.Kill(); <-done })
-	record, err := identifyLinuxCore(cmd.Process.Pid)
+	record, err := identifyStartedLinuxCore(cmd.Process.Pid, cmd.Path)
 	if err != nil {
 		t.Fatal(err)
 	}
