@@ -205,9 +205,9 @@ func TestSingleNodeRouteKeepsImportedDialer(t *testing.T) {
 	s := testServer(t)
 	p, _ := managedproxy.Load(s.profile)
 	if err := p.Import("chain", "", []byte(`proxies:
-  - {name: T, type: http, server: 127.0.0.1, port: 1080}
-  - {name: A, type: socks5, server: 127.0.0.1, port: 1081, dialer-proxy: T}
-  - {name: B, type: socks5, server: 127.0.0.1, port: 1082, dialer-proxy: T}
+  - {name: T, type: http, server: transit.example, port: 1080}
+  - {name: A, type: socks5, server: exit-a.example, port: 1081, dialer-proxy: T}
+  - {name: B, type: socks5, server: exit-b.example, port: 1082, dialer-proxy: T}
 `), "chain", 0, ""); err != nil {
 		t.Fatal(err)
 	}
