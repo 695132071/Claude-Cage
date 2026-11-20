@@ -2433,5 +2433,8 @@
   "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Marka hore ku rakib {0} kombiyuutarkan oo hubi inuu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
   "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Hubi inaad koobiyeysay cinwaanka rukunka, ee aanad koobiyeyn bogga gelitaanka ama maamulka bixiyaha. Waxaad soo dejin kartaa Clash/Mihomo YAML, liiska xiriirinada wadaagga ama koodhkiisa Base64; habaynta tixraacda oo kaliya liisaska nodes-ka fog weli lama taageero. Nodes-ka aan la aqoonsan waxay ka muuqdaan sababaha laga booday.",
   "选用最快：{0}": "Dooro kan ugu dhaqsaha badan: {0}",
-  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Wuxuu ka dhigayaa node-ka ugu dhaqsaha badan bixitaan sugaya in la dabaqo; beddelka iyo dib-u-hubinta shabakadda waxay dhacaan kaliya marka aad gujiso «Dabaq proxy»"
+  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Wuxuu ka dhigayaa node-ka ugu dhaqsaha badan bixitaan sugaya in la dabaqo; beddelka iyo dib-u-hubinta shabakadda waxay dhacaan kaliya marka aad gujiso «Dabaq proxy»",
+  "修改节点地址": "Beddel cinwaanka node-ka",
+  "只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。": "Kaliya server-ka iyo port-ka ayaa isbeddela; aqoonsiga iyo xuduudaha borotokoolka isma beddelaan. Kadib waa in mar kale la dhaafo hubinta bixitaanka.",
+  "可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。": "Waxaad ku dhejin kartaa ama dooran kartaa YAML cusub si aad u cusboonaysiiso ilahan; nodes-ka magacoodu aanu is beddelin waxay haynayaan doorashada iyo xeerarka bixitaanka. Banee haddii aad rabto inaad magaca oo kaliya beddesho."
 }

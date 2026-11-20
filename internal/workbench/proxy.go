@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +34,8 @@ type proxyInput struct {
 	NodeID       string   `json:"node_id"`
 	NodeIDs      []string `json:"node_ids"`
 	Port         int      `json:"port"`
+	Server       string   `json:"server"`
+	ServerPort   int      `json:"server_port"`
 }
 
 func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +53,13 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 	for _, src := range p.Sources {
 		nodes := []any{}
 		for _, n := range src.Nodes {
-			nodes = append(nodes, map[string]any{"id": n.ID, "name": n.Name, "type": n.Type})
+			node := map[string]any{"id": n.ID, "name": n.Name, "type": n.Type}
+			if src.URL == "" {
+				// Local nodes can be edited in place, so the form shows their
+				// address. Credentials and other options are never returned.
+				node["server"], node["port"] = n.Config["server"], n.Config["port"]
+			}
+			nodes = append(nodes, node)
 		}
 		host := ""
 		if u, e := url.Parse(src.URL); e == nil {
@@ -110,7 +121,7 @@ func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.PathValue("action")
-	allowed := map[string]bool{"import": true, "import-local": true, "refresh": true, "edit": true, "delete": true, "select": true, "restart": true, "stop": true, "route": true}
+	allowed := map[string]bool{"import": true, "import-local": true, "refresh": true, "edit": true, "edit-node": true, "delete": true, "select": true, "restart": true, "stop": true, "route": true}
 	if !allowed[action] {
 		http.NotFound(w, r)
 		return
@@ -225,6 +236,42 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 			p.Selected = ""
 			p.Chain = nil
 		}
+	} else if action == "edit-node" {
+		// Address and port of a locally imported node can change in place; the
+		// credentials and protocol options stay as imported (#204). Nodes of a
+		// subscription are rewritten by its next refresh, so they are refused.
+		if index < 0 {
+			return errors.New("订阅来源不存在")
+		}
+		if p.Sources[index].URL != "" {
+			return errors.New("订阅节点会在更新订阅时被覆盖，请在服务商处修改；只能编辑本地导入的节点")
+		}
+		server := strings.Trim(strings.TrimSpace(in.Server), "[]")
+		if len(server) > 253 || net.ParseIP(server) == nil && !nodeHostname.MatchString(server) {
+			return errors.New("服务器地址无效，请填写 IP 地址或域名")
+		}
+		if in.ServerPort < 1 || in.ServerPort > 65535 {
+			return errors.New("节点端口应为 1–65535")
+		}
+		found := false
+		for i, n := range p.Sources[index].Nodes {
+			if n.ID == in.NodeID {
+				config := maps.Clone(n.Config)
+				config["server"], config["port"] = server, in.ServerPort
+				p.Sources[index].Nodes[i].Config = config
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("节点不存在")
+		}
+		candidate := p
+		if candidate.Selected == "" {
+			candidate.Selected = in.NodeID
+		}
+		if err = validateProxyCore(ctx, s.profile, candidate); err != nil {
+			return err
+		}
 	} else if action == "edit" {
 		if index < 0 {
 			return errors.New("订阅来源不存在")
@@ -246,10 +293,20 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 		var data []byte
 		usage := ""
 		if action == "refresh" {
-			if index < 0 || p.Sources[index].URL == "" {
-				return errors.New("该来源没有订阅链接")
+			if index < 0 {
+				return errors.New("订阅来源不存在")
 			}
 			src := p.Sources[index]
+			if src.URL == "" {
+				// A local source is updated from new YAML in place. The source ID
+				// and node names keep node IDs, selection and exit bindings (#507).
+				if strings.TrimSpace(in.Content) == "" {
+					return errors.New("本地来源需要提供新的配置内容才能更新")
+				}
+				data = []byte(in.Content)
+			} else if in.Content != "" {
+				return errors.New("订阅来源从订阅链接更新，不能用粘贴的内容替换")
+			}
 			in.Name, in.URL, in.Interval = src.Name, src.URL, src.Interval
 		} else {
 			data = []byte(in.Content)
@@ -425,6 +482,8 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	s.setMessage("节点已应用；启动 Cage 环境后完成联网检查")
 	return nil
 }
+
+var nodeHostname = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$`)
 
 // measureProxyDelay asks the running core to time one node. Tests replace it.
 var measureProxyDelay = func(ctx context.Context, profile, nodeID string) (int, error) {

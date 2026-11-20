@@ -2433,5 +2433,8 @@
   "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Instala {0} en este equipo, asegúrate de que funcione en la terminal y luego haz clic en «Recargar plugins».",
   "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Comprueba que copiaste la dirección de suscripción y no la página de inicio de sesión o de gestión del proveedor. Se pueden importar YAML de Clash/Mihomo, listas de enlaces para compartir o su codificación Base64; aún no se admiten configuraciones que solo hacen referencia a listas de nodos remotas. Los nodos no reconocidos aparecen en los motivos de omisión.",
   "选用最快：{0}": "Usar el más rápido: {0}",
-  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Marca el nodo más rápido como salida pendiente; solo se cambia y se vuelve a comprobar la red al hacer clic en «Aplicar proxy»"
+  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Marca el nodo más rápido como salida pendiente; solo se cambia y se vuelve a comprobar la red al hacer clic en «Aplicar proxy»",
+  "修改节点地址": "Cambiar la dirección del nodo",
+  "只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。": "Solo cambia el servidor y el puerto; las credenciales y los parámetros del protocolo no cambian. Después hay que volver a superar la comprobación de salida.",
+  "可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。": "Puedes pegar o elegir un YAML nuevo para actualizar esta fuente; los nodos que conserven su nombre mantienen la selección y las reglas de salida. Déjalo vacío para cambiar solo el nombre."
 }

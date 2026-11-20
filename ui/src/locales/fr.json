@@ -2433,5 +2433,8 @@
   "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Installez {0} sur cet ordinateur, vérifiez qu'il fonctionne dans le terminal, puis cliquez sur « Recharger les plugins ».",
   "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Vérifiez que vous avez copié l’adresse d’abonnement et non la page de connexion ou de gestion du fournisseur. Vous pouvez importer un YAML Clash/Mihomo, une liste de liens de partage ou son encodage Base64 ; les configurations qui ne font que référencer des listes de nœuds distantes ne sont pas encore prises en charge. Les nœuds non reconnus figurent dans les motifs d’omission.",
   "选用最快：{0}": "Choisir le plus rapide : {0}",
-  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Définit le nœud le plus rapide comme sortie en attente ; le changement et la nouvelle vérification du réseau n’ont lieu qu’après un clic sur « Appliquer le proxy »"
+  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Définit le nœud le plus rapide comme sortie en attente ; le changement et la nouvelle vérification du réseau n’ont lieu qu’après un clic sur « Appliquer le proxy »",
+  "修改节点地址": "Modifier l’adresse du nœud",
+  "只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。": "Seuls le serveur et le port changent ; les identifiants et les paramètres du protocole restent inchangés. La vérification de sortie doit ensuite être réussie à nouveau.",
+  "可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。": "Collez ou choisissez un nouveau YAML pour mettre à jour cette source ; les nœuds qui gardent leur nom conservent la sélection et les règles de sortie. Laissez vide pour ne modifier que le nom."
 }

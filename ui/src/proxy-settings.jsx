@@ -78,6 +78,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     [notice, setNotice] = useState(""),
     [delays, setDelays] = useState({}),
     [fastest, setFastest] = useState(""),
+    [nodeEdit, setNodeEdit] = useState({ id: "", server: "", port: "" }),
     [connections, setConnections] = useState({ connections: [] }),
     [logs, setLogs] = useState([]),
     [port, setPort] = useState("17896"),
@@ -279,7 +280,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
       if (alive.current) setPending("");
     }
   };
-  const submit = () => {
+  const submit = async () => {
     let value = {
       id: form.id || "",
       // Pasted node data has no file name to borrow; an empty name used to
@@ -315,7 +316,19 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
         interval_hours: 0,
       };
     }
+    if (form.id && !form.remote && form.content.trim()) {
+      // A local source is updated in place from new YAML; node IDs, the
+      // selection and exit rules follow unchanged node names (#507).
+      const id = form.id, content = form.content;
+      if (await mutate("edit", value)) await mutate("refresh", { id, content });
+      return;
+    }
     mutate(form.id ? "edit" : "import", value);
+  };
+  const editNodeAddress = () => {
+    const port = Number(nodeEdit.port);
+    if (!nodeEdit.id || !nodeEdit.server.trim() || !Number.isInteger(port) || port < 1 || port > 65535) return;
+    mutate("edit-node", { id: form.id, node_id: nodeEdit.id, server: nodeEdit.server.trim(), server_port: port });
   };
   const savedRoute = proxy?.route?.length
     ? proxy.route
@@ -877,6 +890,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       interval_hours: s.interval_hours,
                       remote: s.remote,
                     });
+                    const first = !s.remote && s.nodes[0];
+                    setNodeEdit(first ? { id: first.id, server: String(first.server ?? ""), port: String(first.port ?? "") } : { id: "", server: "", port: "" });
                     setMode("url");
                   }}
                 >
@@ -992,6 +1007,54 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                   </p>
                 </>
               )}
+              {form.id && !form.remote && (() => {
+                const source = proxy.sources.find((src) => src.id === form.id);
+                const nodesOfSource = source?.nodes ?? [];
+                return (
+                  <>
+                    <div className="proxy-node-edit">
+                      <strong>{tr("修改节点地址")}</strong>
+                      <div className="field-row">
+                        <label>
+                          {tr("节点")}
+                          <select
+                            value={nodeEdit.id}
+                            disabled={busy}
+                            onChange={(e) => {
+                              const n = nodesOfSource.find((x) => x.id === e.target.value);
+                              setNodeEdit({ id: e.target.value, server: String(n?.server ?? ""), port: String(n?.port ?? "") });
+                            }}
+                          >
+                            {nodesOfSource.map((n) => (
+                              <option key={n.id} value={n.id}>{n.name}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          {tr("服务器")}
+                          <input value={nodeEdit.server} disabled={busy} onChange={(e) => setNodeEdit({ ...nodeEdit, server: e.target.value })} />
+                        </label>
+                        <label>
+                          {tr("端口")}
+                          <input inputMode="numeric" value={nodeEdit.port} disabled={busy} onChange={(e) => setNodeEdit({ ...nodeEdit, port: e.target.value })} />
+                        </label>
+                      </div>
+                      <p className="field-help">{tr("只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。")}</p>
+                      <button type="button" disabled={busy || !nodeEdit.id || !nodeEdit.server.trim() || !nodeEdit.port} onClick={editNodeAddress}>
+                        {tr("保存地址")}
+                      </button>
+                    </div>
+                    <p className="field-help">{tr("可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。")}</p>
+                    <ProxyYAMLInput
+                      content={form.content}
+                      disabled={busy}
+                      onReadingChange={setReadingFile}
+                      onContentChange={(content) => setForm((old) => ({ ...old, content }))}
+                      onFileRead={(_, content) => setForm((old) => ({ ...old, content }))}
+                    />
+                  </>
+                );
+              })()}
               {mode === "file" && !form.id && (
                 <ProxyYAMLInput
                   content={form.content}
