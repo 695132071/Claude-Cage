@@ -217,6 +217,35 @@ function DetectedProfile({ profile, usageEnvironment, busy, join, perform, chang
   </article>;
 }
 
+// The guest account helper reports configuration conflicts it met while
+// preparing this account. Each notice disappears once it is resolved.
+const noticeTexts = (tr) => ({
+  resource_conflict: [tr("同名配置冲突"), tr("此账号和共享位置各有一份同名内容，两份都已保留。请把此账号中的内容合并到共享文件，再删除此账号中的这一份。")],
+  link_conflict: [tr("链接指向共享位置之外"), tr("此账号中的这一项链接到共享位置之外，未作改动。确认不再需要后，删除该链接即可改用共享内容。")],
+  memory_conflict: [tr("项目记忆冲突"), tr("项目记忆不一致且无法自动合并，此账号本次使用自己的项目记忆。请手动合并两份内容。")],
+  memory_merged: [tr("项目记忆已自动合并"), tr("项目记忆已自动合并。此账号原来的内容已另存为带后缀的文件，备份也已保留。")],
+  plugins_separate: [tr("插件单独保留"), tr("插件市场来源不同，此账号的插件单独保留。来源一致后会恢复共享。")],
+  removal_blocked: [tr("已恢复未确认的删除"), tr("这些条目消失时没有卸载记录，已恢复。如确需删除，请再执行一次删除。")],
+  registry_corrupt: [tr("插件登记已重建"), tr("无法读取的插件登记已移到一旁并重新建立。如有插件缺失，请重新安装。")],
+  mcp_kept: [tr("已保留此账号的 MCP 服务器"), tr("共享的 MCP 服务器在没有删除记录的情况下消失，已保留此账号中的副本。")],
+});
+
+function ProfileNotices({ notices }) {
+  const tr = useTranslation();
+  if (!notices?.length) return null;
+  const texts = noticeTexts(tr);
+  return notices.map((notice) => {
+    const [title, advice] = texts[notice.kind] || [tr("账号配置提示"), notice.message];
+    return <p className="field-help claude-profile-notice" role="status" key={notice.id}
+      title={notice.since ? timeLabel(notice.since) : undefined}>
+      <strong>{title}</strong>{notice.item && <>{" · "}<code>{notice.item}</code></>}
+      {notice.local && <><br />{tr("此账号：")}<code>{notice.local}</code></>}
+      {notice.shared && <><br />{tr("共享位置：")}<code>{notice.shared}</code></>}
+      {(advice || notice.message) && <><br />{advice || notice.message}</>}
+    </p>;
+  });
+}
+
 function accountCaption(profile) {
   const label = profile.label || profile.email;
   return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
@@ -291,6 +320,7 @@ function ProfileCard({ proxySources, desktopNetwork, profile, environment, usage
     </p>}
     {!fromTerminal && profile.status === "changed" && <p className="field-help">{tr("请用原账号重新登录。")}</p>}
     {profile.status === "duplicate" && <p className="field-help">{tr("同一订阅只参与一次分配。请在此位置登录另一个账号。")}</p>}
+    <ProfileNotices notices={profile.notices} />
     <div className="claude-profile-actions">
       {fromTerminal ? <span className="claude-profile-source">{tr("普通终端账号")}</span> :
         <button className="quiet-button" disabled={busy || !!environment || active > 0} onClick={() => perform(() => login(profile.id))}>

@@ -32,10 +32,12 @@ class ClaudeAccountTests(unittest.TestCase):
         self.home = Path(tmp.name)
         # A guest's temporary directory is outside HOME; the usage query relies
         # on that to run the CLI from a directory without project settings.
-        # Create it before tempfile's default directory is redirected into HOME.
+        # Create it before in-process temporary files are redirected into HOME.
         scratch = tempfile.TemporaryDirectory(prefix="account-scratch-")
         self.addCleanup(scratch.cleanup)
         self.scratch = Path(scratch.name)
+        if self.scratch.is_relative_to(self.home):
+            raise AssertionError("the helper's temporary directory must be outside HOME")
         temp_patch = patch.object(tempfile, "tempdir", str(self.home))
         temp_patch.start()
         self.addCleanup(temp_patch.stop)
@@ -303,18 +305,20 @@ printf '%s\\n' "$@"
         self.assertEqual(backups[0].read_text(), "new memory")
         self.run_helper("run", FIRST, cwd=project)
 
-    def test_memory_alias_conflict_preserves_both_versions_and_explains_failure(self):
+    def test_memory_alias_conflict_merges_without_losing_either_note(self):
         project, alias, target = self.replaced_memory_alias()
         (alias / "existing.md").write_text("changed memory")
-        result = self.run_helper("run", FIRST, cwd=project, check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("记忆", result.stderr)
-        self.assertIn("冲突", result.stderr)
-        self.assertNotIn("登录状态", result.stderr)
+        (target / "MEMORY.md").write_text("- [Existing](existing.md) — kept\n")
+        result = self.run_helper("run", FIRST, cwd=project)
+        self.assertIn("自动合并", result.stderr)
         self.assertNotIn(str(self.home), result.stderr)
         self.assertEqual((target / "existing.md").read_text(), "original memory")
-        self.assertEqual((alias / "existing.md").read_text(), "changed memory")
-        self.assertFalse(alias.is_symlink())
+        renamed = [path for path in target.glob("existing-*.md")]
+        self.assertEqual([path.read_text() for path in renamed], ["changed memory"])
+        self.assertEqual((target / "new.md").read_text(), "new memory")
+        self.assertEqual((target / "MEMORY.md").read_text().splitlines(),
+                         ["- [Existing](existing.md) — kept", f"- [{renamed[0].name}]({renamed[0].name})"])
+        self.assertTrue(alias.is_symlink())
 
     def test_memory_alias_backup_failure_preserves_source_and_target(self):
         project, alias, target = self.replaced_memory_alias()
@@ -350,8 +354,9 @@ printf '%s\\n' "$@"
         with patch.dict(os.environ, self.env, clear=True), patch.object(helper.Path, "cwd", return_value=project), \
                 patch.dict(helper._runtime["path"].__globals__, {"root": lambda: alias.parent.parent}), \
                 patch.object(helper.shutil, "copytree", side_effect=backup_then_write):
-            with self.assertRaises(helper.SharedResourceConflict):
-                helper.shared_launch_arguments(helper.profile(FIRST), [])
+            flags = helper.shared_launch_arguments(helper.profile(FIRST), [])
+        # Changed while merging: this launch uses the account's own memory.
+        self.assertNotIn("autoMemoryDirectory", json.loads(Path(flags[1]).read_text()))
         self.assertEqual((target / "new.md").read_text(), "concurrent memory")
         self.assertEqual((alias / "new.md").read_text(), "new memory")
         self.assertFalse(alias.is_symlink())
@@ -565,14 +570,41 @@ printf '%s\\n' "$@"
             (common/"CLAUDE.md").write_text("global")
             (config/"CLAUDE.md").write_text("account")
             (config/"commands").mkdir()
-            (config/"commands/keep.md").write_text("retain the original layout on conflict")
-            with self.assertRaises(ValueError):helper.shared_profile_resources(base)
+            (config/"commands/keep.md").write_text("shared despite the conflict elsewhere")
+            # A terminal behaves like Desktop: the conflicting entry is skipped
+            # on both sides, everything else is shared, and the launch goes on.
+            stderr=io.StringIO()
+            with contextlib.redirect_stderr(stderr):helper.shared_profile_resources(base)
             self.assertEqual((common/"CLAUDE.md").read_text(),"global")
             self.assertEqual((config/"CLAUDE.md").read_text(),"account")
-            self.assertFalse((config/"commands").is_symlink())
-            self.assertEqual((config/"commands/keep.md").read_text(),"retain the original layout on conflict")
-            failure=self.run_helper("run",FIRST,check=False)
-            self.assertIn("同名冲突",failure.stderr)
+            self.assertFalse((config/"CLAUDE.md").is_symlink())
+            self.assertTrue((config/"commands").is_symlink())
+            self.assertEqual((common/"commands/keep.md").read_text(),"shared despite the conflict elsewhere")
+            # The notice names both files and how to resolve the conflict.
+            notice=stderr.getvalue()
+            self.assertIn("同名冲突",notice)
+            self.assertIn("~/.claude/CLAUDE.md",notice)
+            self.assertIn("~/"+(config/"CLAUDE.md").relative_to(self.home).as_posix(),notice)
+            self.assertIn("并入",notice)
+        launch=self.run_helper("run",FIRST,check=False)
+        self.assertEqual(launch.returncode,0,launch.stderr)
+        # Explained once; an unchanged conflict is not repeated on every launch.
+        self.assertNotIn("同名冲突",launch.stderr)
+        self.assertNotIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        # It is explained again once a day, or as soon as either file changes.
+        record=json.loads((base/"shared-settings.json").read_text())
+        for entry in record["notices"].values():entry["at"]-=helper.NOTICE_INTERVAL
+        (base/"shared-settings.json").write_text(json.dumps(record))
+        self.assertIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        self.assertNotIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        (config/"CLAUDE.md").write_text("account, edited again")
+        self.assertIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        # Resolved: the file is shared and the notice is forgotten.
+        (config/"CLAUDE.md").unlink()
+        resolved=self.run_helper("run",FIRST)
+        self.assertNotIn("同名冲突",resolved.stderr)
+        self.assertTrue((config/"CLAUDE.md").is_symlink())
+        self.assertNotIn("notices",json.loads((base/"shared-settings.json").read_text()))
 
     def test_existing_project_memory_is_backed_up_and_remains_shared(self):
         with patch.dict(os.environ,self.env,clear=True),patch.object(helper.Path,"cwd",return_value=self.home):
@@ -585,8 +617,8 @@ printf '%s\\n' "$@"
             memory=Path(json.loads(Path(flags[1]).read_text())["autoMemoryDirectory"])
             self.assertEqual((memory/"MEMORY.md").read_text(),"account learning")
             self.assertTrue(original.is_symlink())
-            backup=self.home/".local/share/cage/claude-shared/backups"/FIRST/"projects"/key/"memory/MEMORY.md"
-            self.assertEqual(backup.read_text(),"account learning")
+            backups=list((self.home/".local/share/cage/claude-shared/backups"/FIRST/"projects"/key).glob("memory-*"))
+            self.assertEqual([(path/"MEMORY.md").read_text() for path in backups],["account learning"])
             self.assertTrue(Path(flags[1]).resolve().is_relative_to(base.resolve()))
 
     def test_mobile_settings_remain_anonymous_when_adding_shared_defaults(self):
@@ -787,7 +819,9 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
                               "installLocation": str(plugins / "marketplaces" / marketplace), "lastUpdated": "2026-11-01T00:00:00.000Z"}
         self.write(plugins / "known_marketplaces.json", known)
         installed = self.read(plugins / "installed_plugins.json") if (plugins / "installed_plugins.json").exists() else {"version": 2, "plugins": {}}
-        installed["plugins"][plugin + "@" + marketplace] = [{"scope": "user", "installPath": str(folder), "version": version}]
+        stamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        installed["plugins"][plugin + "@" + marketplace] = [{"scope": "user", "installPath": str(folder), "version": version,
+                                                             "installedAt": stamp, "lastUpdated": stamp}]
         self.write(plugins / "installed_plugins.json", installed)
 
     def test_private_plugin_entries_and_identity_files_never_become_links(self):
@@ -1025,59 +1059,78 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.assertTrue(marker.exists())
         self.assertNotIn("lint@team", self.read(self.common / "plugins/installed_plugins.json")["plugins"])
 
-    def test_backups_prune_by_count_and_age_without_deleting_sole_migration_backup(self):
+    def test_backups_prune_by_creation_time_and_always_keep_the_newest(self):
         backups = self.home / ".local/share/cage/claude-shared/backups" / FIRST
         backups.mkdir(parents=True)
         now = 1_800_000_000.0
+        ns = lambda seconds: int(seconds * 1e9)
         old = now - (helper.BACKUP_MAX_AGE + 10 * 86400)
         recent = now - 3600
-        # Count pruning: 25 recent timestamped backups -> keep newest 20.
+        # Count pruning: 25 recent backups -> keep newest 20 by their names.
         prefix = backups / "settings.json"
         for i in range(25):
-            entry = backups / f"settings.json-{1_700_000_000_000_000_000 + i}"
+            entry = backups / f"settings.json-{ns(recent) + i}"
             entry.write_text(f"v{i}")
-            os.utime(entry, (recent + i, recent + i))
+            # Copies keep their source's time; it must not decide the order.
+            os.utime(entry, (old - i, old - i))
         unrelated = backups / "settings.json.keep"
         unrelated.write_text("untouched")
         helper.prune_backup_series(prefix, now=now)
         kept = sorted(p.name for p in backups.glob("settings.json-*"))
         self.assertEqual(len(kept), helper.BACKUP_MAX_COUNT)
-        self.assertEqual(kept[0], f"settings.json-{1_700_000_000_000_000_000 + 5}")
-        self.assertEqual(kept[-1], f"settings.json-{1_700_000_000_000_000_000 + 24}")
+        self.assertEqual(kept[0], f"settings.json-{ns(recent) + 5}")
+        self.assertEqual(kept[-1], f"settings.json-{ns(recent) + 24}")
         self.assertTrue(unrelated.exists())
-        # Age pruning: old replaced backups are removed, recent one stays.
+        # Age pruning by creation time, even when the copied mtime is recent.
         aged_prefix = backups / "claude.json"
         for i in range(3):
-            entry = backups / f"claude.json-{1_700_000_000_000_000_100 + i}"
+            entry = backups / f"claude.json-{ns(old) + i}"
             entry.write_text(f"old{i}")
-            os.utime(entry, (old + i, old + i))
-        fresh = backups / f"claude.json-{1_700_000_000_000_000_200}"
+            os.utime(entry, (now, now))
+        fresh = backups / f"claude.json-{ns(recent)}"
         fresh.write_text("fresh")
-        os.utime(fresh, (recent, recent))
+        os.utime(fresh, (old, old))
         helper.prune_backup_series(aged_prefix, now=now)
         self.assertEqual([p.name for p in backups.glob("claude.json-*")], [fresh.name])
-        # Sole unreplaced migration backup (directory, > 30 days old): NEVER deleted.
+        # The newest backup of a series is kept regardless of age.
+        lone = backups / f"lone.json-{ns(old)}"
+        lone.write_text("lone")
+        helper.prune_backup_series(backups / "lone.json", now=now)
+        self.assertTrue(lone.exists())
+        newer_old = backups / f"lone.json-{ns(old) + 60}"
+        newer_old.write_text("newer-old")
+        helper.prune_backup_series(backups / "lone.json", now=now)
+        self.assertEqual([p.name for p in backups.glob("lone.json-*")], [newer_old.name])
+        # A backup at the bare name (older versions) has no known creation
+        # time: never removed by age, only beyond the count, oldest first.
         sole_dir = backups / "projects/demo/memory"
         sole_dir.mkdir(parents=True)
         (sole_dir / "MEMORY.md").write_text("original note")
         os.utime(sole_dir, (old, old))
         helper.prune_backup_series(sole_dir, now=now)
         self.assertTrue((sole_dir / "MEMORY.md").is_file())
-        # Sole timestamped backup (> 30 days old): NEVER deleted.
-        os.utime(fresh, (old, old))
-        helper.prune_backup_series(aged_prefix, now=now)
-        self.assertTrue(fresh.exists())
-        # Two old backups (> 30 days old): older is pruned, newest single copy remains.
-        newer_old = backups / f"claude.json-{1_700_000_000_000_000_300}"
-        newer_old.write_text("newer-old")
-        os.utime(newer_old, (old + 60, old + 60))
-        helper.prune_backup_series(aged_prefix, now=now)
-        self.assertEqual([p.name for p in backups.glob("claude.json-*")], [newer_old.name])
+        later = backups / f"projects/demo/memory-{ns(recent)}"
+        later.mkdir()
+        helper.prune_backup_series(sole_dir, now=now)
+        self.assertTrue((sole_dir / "MEMORY.md").is_file())
+        helper.prune_backup_series(sole_dir, now=now, keep_count=1)
+        self.assertFalse(sole_dir.exists())
+        self.assertTrue(later.is_dir())
+        # A real backup is named by when it was made, so a copy of an old file
+        # is not pruned the moment it is created.
+        source_file = self.home / "old-source.md"
+        source_file.write_text("old content")
+        os.utime(source_file, (old, old))
+        earlier = backups / f"rules-{ns(time.time() - helper.BACKUP_MAX_AGE - 86400)}"
+        earlier.write_text("earlier")
+        created = helper.unique_backup_path(backups / "rules")
+        shutil.copy2(source_file, created)
+        helper.prune_backup_series(backups / "rules")
+        self.assertEqual([p.name for p in backups.glob("rules-*")], [created.name])
         # Outside backups root: ignored.
-        outside = self.home / "outside-settings.json-1700000000000000001"
-        outside2 = self.home / "outside-settings.json-1700000000000000002"
+        outside = self.home / f"outside-settings.json-{ns(old)}"
+        outside2 = self.home / f"outside-settings.json-{ns(old) + 10}"
         outside.write_text("a"); outside2.write_text("b")
-        os.utime(outside, (old, old)); os.utime(outside2, (old + 10, old + 10))
         helper.prune_backup_series(self.home / "outside-settings.json", now=now)
         self.assertTrue(outside.exists() and outside2.exists())
 
@@ -1235,9 +1288,32 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.write(self.home / ".claude.json", {"mcpServers": {"srv": {"command": "v2", "env": {"TOKEN": "s2"}}}})
         flags2 = helper.shared_mcp_arguments(first, ["--settings", "x"])
         mcp2 = Path(flags2[1]).resolve()
+        # A terminal started with the first file may still be running and read
+        # it again: a recently used launch file is kept.
+        self.assertTrue(mcp1.exists())
+        self.assertTrue(mcp2.exists())
+        aged = time.time() - helper.MCP_LAUNCH_FILE_MAX_AGE - 60
+        os.utime(mcp1, (aged, aged))
+        os.utime(mcp2, (aged, aged))
+        # Reusing a file marks it as used again; only the unused old one goes.
+        self.assertEqual(Path(helper.shared_mcp_arguments(first, ["--settings", "x"])[1]).resolve(), mcp2)
         self.assertFalse(mcp1.exists())
         self.assertTrue(mcp2.exists())
+        self.assertGreater(mcp2.stat().st_mtime, aged + 60)
         self.write(self.home / ".claude.json", {"mcpServers": {}})
+        helper.shared_mcp_arguments(first, ["--settings", "x"])
+        self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [mcp2])
+        # A terminal running for longer than that, started with the alias path
+        # the CLI receives, still holds on to its file.
+        running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "--mcp-config", flags2[1]])
+        self.addCleanup(running.wait)
+        self.addCleanup(running.kill)
+        time.sleep(0.2)
+        os.utime(mcp2, (aged, aged))
+        helper.shared_mcp_arguments(first, ["--settings", "x"])
+        self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [mcp2])
+        running.kill()
+        running.wait()
         helper.shared_mcp_arguments(first, ["--settings", "x"])
         self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [])
         # Aborted replace_json (current != original) leaks zero backups.
@@ -1280,8 +1356,8 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         # Despite the CLAUDE.md conflict, Desktop still synced settings and MCP!
         self.assertEqual(self.read(config / "settings.json").get("theme"), "dark")
         self.assertIn("notes", self.read(config / ".claude.json")["mcpServers"])
-        # Preflight ordering: in terminal mode, if AGENTS.md conflicts, a healable
-        # CLAUDE.md must NOT mutate ~/.claude/CLAUDE.md before preflight fails.
+        # A terminal isolates a conflicting AGENTS.md too: the healable CLAUDE.md
+        # still folds back, and both versions of AGENTS.md stay untouched.
         (self.common / "CLAUDE.md").unlink()
         (self.common / "CLAUDE.md").write_text("v1", encoding="utf-8")
         (self.common / "AGENTS.md").write_text("shared-agents", encoding="utf-8")
@@ -1293,9 +1369,14 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         (cfg3 / "AGENTS.md").unlink()
         (cfg3 / "AGENTS.md").write_text("conflicting-agents", encoding="utf-8")
         (self.common / "AGENTS.md").write_text("other-agents", encoding="utf-8")
-        with self.assertRaises(helper.SharedResourceConflict):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
             helper.shared_profile_resources(base3, desktop=False)
-        self.assertEqual((self.common / "CLAUDE.md").read_text(encoding="utf-8"), "v1")
+        self.assertIn("AGENTS.md", stderr.getvalue())
+        self.assertEqual((self.common / "CLAUDE.md").read_text(encoding="utf-8"), "v2-edited")
+        self.assertTrue((cfg3 / "CLAUDE.md").is_symlink())
+        self.assertEqual((cfg3 / "AGENTS.md").read_text(encoding="utf-8"), "conflicting-agents")
+        self.assertEqual((self.common / "AGENTS.md").read_text(encoding="utf-8"), "other-agents")
 
     def test_volatile_last_updated_merges_memory_rejects_symlinks_and_statusline_hardening(self):
         first, config = self.profile(FIRST)
@@ -1335,6 +1416,433 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
             self.assertEqual(shown.returncode, 0, shown.stderr)
             self.assertEqual(shown.stdout.strip(), "Claude")
 
+
+    def two_plugins_shared_by_two_accounts(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        self.install(self.common / "plugins", "team", "example/team", "fmt")
+        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True, "fmt@team": True},
+                                                   "extraKnownMarketplaces": {"team": {"source": {"source": "github", "repo": "example/team"}}}})
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        both = ["fmt@team", "lint@team"]
+        for root in (self.common, config, other):
+            self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), both)
+            self.assertEqual(sorted(self.read(root / "settings.json")["enabledPlugins"]), both)
+        return config, other, both
+
+    def cli_uninstall(self, root, plugin_id):
+        """What `claude plugin uninstall` leaves behind (measured with CLI 2.1.314)."""
+        installed = self.read(root / "plugins/installed_plugins.json")
+        for entry in installed["plugins"].pop(plugin_id):
+            (Path(entry["installPath"]) / ".orphaned_at").write_text("1795163578718")
+        self.write(root / "plugins/installed_plugins.json", installed)
+        settings = self.read(root / "settings.json")
+        settings.get("enabledPlugins", {}).pop(plugin_id, None)
+        self.write(root / "settings.json", settings)
+
+    def cli_remove_marketplace(self, root, marketplace):
+        """`claude plugin marketplace remove`: its plugins uninstalled, both lists emptied of it."""
+        for plugin_id in list(self.read(root / "plugins/installed_plugins.json")["plugins"]):
+            if plugin_id.endswith("@" + marketplace):
+                self.cli_uninstall(root, plugin_id)
+        known = self.read(root / "plugins/known_marketplaces.json")
+        known.pop(marketplace)
+        self.write(root / "plugins/known_marketplaces.json", known)
+        settings = self.read(root / "settings.json")
+        settings.setdefault("extraKnownMarketplaces", {}).pop(marketplace, None)
+        self.write(root / "settings.json", settings)
+
+    def assert_everyone_has(self, roots, both):
+        for root in roots:
+            self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), both, root)
+            self.assertEqual(sorted(self.read(root / "plugins/known_marketplaces.json")), ["team"], root)
+            self.assertEqual(sorted(self.read(root / "settings.json")["enabledPlugins"]), both, root)
+
+    def test_missing_plugin_registries_are_restored_instead_of_uninstalling_everywhere(self):
+        config, other, both = self.two_plugins_shared_by_two_accounts()
+        # The account's plugins folder was reset: both registries are gone.
+        (config / "plugins/installed_plugins.json").unlink()
+        (config / "plugins/known_marketplaces.json").unlink()
+        self.share(FIRST)
+        self.share(SECOND)
+        self.assert_everyone_has((self.common, config, other), both)
+        # The shared registries go missing: rebuilt from the account, nothing removed.
+        (self.common / "plugins/installed_plugins.json").unlink()
+        (self.common / "plugins/known_marketplaces.json").unlink()
+        self.share(SECOND)
+        self.share(FIRST)
+        self.assert_everyone_has((self.common, config, other), both)
+        # A single plugin, its registry lost: still no uninstall.
+        self.cli_uninstall(other, "fmt@team")
+        self.share(SECOND)
+        self.share(FIRST)
+        for root in (self.common, config, other):
+            self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        (config / "plugins/installed_plugins.json").unlink()
+        self.share(FIRST)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(sorted(self.read(root / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # Nor is a lost settings file a reason to disable its one plugin.
+        (config / "settings.json").unlink()
+        self.share(FIRST)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {"lint@team": True})
+        # An emptied marketplace list while its plugin stays installed and the
+        # settings still declare it: no `marketplace remove` happened.
+        self.write(config / "plugins/known_marketplaces.json", {})
+        self.assertIn("插件市场登记", self.share(FIRST).stderr)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(sorted(self.read(root / "plugins/known_marketplaces.json")), ["team"])
+
+    def test_each_uninstall_trace_alone_lets_the_removal_spread(self):
+        config, other, both = self.two_plugins_shared_by_two_accounts()
+        # Only the .orphaned_at marker (the enabled entry left behind).
+        installed = self.read(config / "plugins/installed_plugins.json")
+        for entry in installed["plugins"].pop("fmt@team"):
+            (Path(entry["installPath"]) / ".orphaned_at").write_text("1795163578718")
+        self.write(config / "plugins/installed_plugins.json", installed)
+        self.assertNotIn("再移除一次", self.share(FIRST).stderr)
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # Only the enabled entry gone (no marker written).
+        installed = self.read(other / "plugins/installed_plugins.json")
+        del installed["plugins"]["lint@team"]
+        self.write(other / "plugins/installed_plugins.json", installed)
+        settings = self.read(other / "settings.json")
+        del settings["enabledPlugins"]["lint@team"]
+        self.write(other / "settings.json", settings)
+        self.assertNotIn("再移除一次", self.share(SECOND).stderr)
+        self.assertEqual(self.read(self.common / "plugins/installed_plugins.json")["plugins"], {})
+
+    def test_cli_uninstalls_spread_even_all_at_once_while_resets_are_held_until_repeated(self):
+        config, other, both = self.two_plugins_shared_by_two_accounts()
+        # A registry rewritten without its structure and no uninstall traces.
+        self.write(config / "plugins/installed_plugins.json", {})
+        result = self.share(FIRST)
+        self.assertIn("已安装插件登记", result.stderr)
+        self.assertIn("再移除一次", result.stderr)
+        self.share(SECOND)
+        self.assert_everyone_has((self.common, config, other), both)
+        self.assertEqual(self.read(config / "plugins/installed_plugins.json")["version"], 2)
+        # The workbench lists the event beside the account.
+        listed = json.loads(subprocess.run([sys.executable, str(source), "notices", FIRST, SECOND], env=self.env,
+                                           cwd=self.home, capture_output=True, text=True, check=True).stdout)
+        self.assertEqual([entry["kind"] for entry in listed[FIRST]], ["removal_blocked"])
+        self.assertNotIn(SECOND, listed)
+        # Settings reset to {} or deleted: plugins stay enabled everywhere.
+        self.write(other / "settings.json", {})
+        self.share(SECOND)
+        self.share(FIRST)
+        self.assert_everyone_has((self.common, config, other), both)
+        # The enabled list emptied by hand while both stay installed: held.
+        settings = self.read(config / "settings.json")
+        settings["enabledPlugins"] = {}
+        self.write(config / "settings.json", settings)
+        self.assertIn("插件启用设置", self.share(FIRST).stderr)
+        self.assert_everyone_has((self.common, config, other), both)
+        # The same removal made again is the user's choice and spreads.
+        self.write(config / "settings.json", settings)
+        self.share(FIRST)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {})
+        settings["enabledPlugins"] = {"lint@team": True, "fmt@team": True}
+        for root in (self.common, config, other):
+            data = self.read(root / "settings.json")
+            data["enabledPlugins"] = dict(settings["enabledPlugins"])
+            self.write(root / "settings.json", data)
+        self.share(FIRST)
+        self.share(SECOND)
+        # Uninstalling every plugin with the CLI spreads at once, no question asked.
+        self.cli_uninstall(config, "lint@team")
+        self.cli_uninstall(config, "fmt@team")
+        result = self.share(FIRST)
+        self.assertNotIn("再移除一次", result.stderr)
+        self.share(SECOND)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "plugins/installed_plugins.json")["plugins"], {})
+            self.assertEqual(self.read(root / "settings.json")["enabledPlugins"], {})
+        # Removing the marketplace with the CLI spreads too.
+        self.cli_remove_marketplace(other, "team")
+        self.share(SECOND)
+        self.share(FIRST)
+        for root in (self.common, config, other):
+            self.assertEqual(self.read(root / "plugins/known_marketplaces.json"), {})
+            self.assertEqual(self.read(root / "settings.json")["extraKnownMarketplaces"], {})
+
+    def test_an_older_snapshot_does_not_remove_a_plugin_its_account_never_saw(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        snapshot = (config / "plugins/installed_plugins.json").read_text()
+        # The second account installs fmt; the first account's running CLI
+        # then saves the registry it loaded before that install.
+        self.install(other / "plugins", "team", "example/team", "fmt")
+        self.share(SECOND)
+        (config / "plugins/installed_plugins.json").write_text(snapshot)
+        self.share(FIRST)
+        for root in (self.common, config, other):
+            self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"])
+
+    def test_a_stale_save_after_a_later_sync_is_brought_up_to_date_not_spread(self):
+        # The reviewer's M2: the account already synchronized the new plugin
+        # before its long-running CLI saved the registry it had loaded earlier.
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        old = self.read(config / "plugins/installed_plugins.json")
+        self.install(other / "plugins", "team", "example/team", "fmt")
+        self.share(SECOND)
+        self.share(FIRST)
+        self.assertIn("fmt@team", self.read(config / "plugins/installed_plugins.json")["plugins"])
+        for _ in range(2):
+            # Saved twice: a repeat of a stale save never counts as confirmation.
+            self.write(config / "plugins/installed_plugins.json", old)
+            result = self.share(FIRST)
+            self.assertNotIn("再移除一次", result.stderr)
+            self.share(SECOND)
+            for root in (self.common, config, other):
+                self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"], root)
+
+    # The helper runs in the Linux guest and finds running CLIs through /proc,
+    # which a macOS host (where CI also runs this file) does not have.
+    @unittest.skipUnless(Path("/proc/stat").exists(), "needs /proc to see the running CLI")
+    def test_entries_newer_than_a_running_cli_are_not_removed_by_its_save(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        # A CLI of the first account is running since before the next install.
+        running = subprocess.Popen(["sleep", "60"], env={**self.env, "CLAUDE_CONFIG_DIR": str(config)})
+        self.addCleanup(running.wait)
+        self.addCleanup(running.kill)
+        loaded = self.read(config / "plugins/installed_plugins.json")
+        time.sleep(0.2)
+        self.install(other / "plugins", "team", "example/team", "fmt")
+        self.share(SECOND)
+        self.share(FIRST)
+        # It saves its own state: what it loaded plus a change of its own.
+        loaded["plugins"]["lint@team"][0]["gitCommitSha"] = "0" * 40
+        self.write(config / "plugins/installed_plugins.json", loaded)
+        result = self.share(FIRST)
+        self.assertNotIn("再移除一次", result.stderr)
+        for root in (self.common, config, other):
+            self.assertIn("fmt@team", self.read(root / "plugins/installed_plugins.json")["plugins"], root)
+        self.assertEqual(self.read(self.common / "plugins/installed_plugins.json")["plugins"]["lint@team"][0]["gitCommitSha"], "0" * 40)
+
+    def test_unreadable_registry_is_set_aside_and_rebuilt(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, config = self.profile(FIRST)
+        self.share(FIRST)
+        (config / "plugins/installed_plugins.json").write_text("{ broken")
+        result = self.share(FIRST)
+        self.assertIn("无法读取", result.stderr)
+        self.assertEqual(sorted(self.read(config / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # The rebuilt registry uses this account's own spelling of the plugins folder.
+        self.assertTrue(self.read(config / "plugins/installed_plugins.json")["plugins"]["lint@team"][0]["installPath"]
+                        .startswith(tuple(helper.plugin_root_forms(config))))
+        kept = list((self.home / ".local/share/cage/claude-shared/backups" / FIRST / "plugins").glob("installed_plugins.json.corrupt-*"))
+        self.assertEqual([path.read_text() for path in kept], ["{ broken"])
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        # The shared one, too, is rebuilt from the account.
+        (self.common / "plugins/installed_plugins.json").write_text("[]")
+        self.share(FIRST)
+        self.assertEqual(sorted(self.read(self.common / "plugins/installed_plugins.json")["plugins"]), ["lint@team"])
+        self.assertTrue(list((self.home / ".local/share/cage/claude-shared/backups/common/plugins").glob("installed_plugins.json.corrupt-*")))
+
+    def test_old_pending_records_without_digest_claim_only_values_equal_to_the_shared_ones(self):
+        self.write(self.common / "settings.json", {"language": "zh", "theme": "dark", "model": "sonnet"})
+        self.write(self.home / ".claude.json", {"firstStartTime": "x", "mcpServers": {"notes": {"command": "srv"}, "own": {"command": "shared"}}})
+        first, config = self.profile(FIRST)
+        # model equals the old intent but no longer the shared value: not claimed.
+        self.write(config / "settings.json", {"language": "zh", "theme": "light", "model": "opus"})
+        self.write(config / ".claude.json", {"mcpServers": {"notes": {"command": "srv"}, "own": {"command": "mine"}}})
+        helper.write_record(first, {"pending": {"keys": {"language": "zh", "theme": "dark", "model": "opus"}, "hooks": {}, "hooks_created": False},
+                                    "pending_mcp": {"notes": {"command": "srv"}, "own": {"command": "shared"}}})
+        self.share(FIRST)
+        record = helper.read_record(first)
+        self.assertEqual(record["keys"], {"language": "zh"})
+        self.assertEqual(record["mcp"], {"notes": {"command": "srv"}})
+        self.assertNotIn("pending", record)
+        # Claimed: follows the shared value away. Not claimed: stays the user's.
+        self.write(self.common / "settings.json", {"theme": "dark"})
+        self.write(self.home / ".claude.json", {"firstStartTime": "x", "mcpServers": {}})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {"theme": "light", "model": "opus"})
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"own": {"command": "mine"}})
+
+    def memory_fixture(self):
+        first, config = self.profile(FIRST)
+        project = self.home / "work/demo"
+        project.mkdir(parents=True)
+        key = helper.project_key(project.resolve())
+        own, shared = config / "projects" / key / "memory", self.common / "projects" / key / "memory"
+        own.mkdir(parents=True)
+        shared.mkdir(parents=True)
+        return first, project, key, own, shared
+
+    def launch_in(self, first, project):
+        stderr = io.StringIO()
+        with patch.object(helper.Path, "cwd", return_value=project), contextlib.redirect_stderr(stderr):
+            flags = helper.shared_launch_arguments(first, [])
+        return json.loads(Path(flags[1]).read_text()), stderr.getvalue()
+
+    def test_differing_project_memory_merges_the_index_and_keeps_both_notes(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "MEMORY.md").write_text("- [A](a.md) — account\n- [Same](same.md) — both\n")
+        (own / "a.md").write_text("only in the account")
+        (own / "same.md").write_text("account version")
+        (shared / "MEMORY.md").write_text("- [Same](same.md) — both\n- [B](b.md) — shared")
+        (shared / "b.md").write_text("only shared")
+        (shared / "same.md").write_text("shared version")
+        settings, stderr = self.launch_in(first, project)
+        self.assertIn("自动合并", stderr)
+        self.assertIn("autoMemoryDirectory", settings)
+        self.assertTrue(own.is_symlink())
+        renamed = list(shared.glob("same-*.md"))
+        self.assertEqual([path.read_text() for path in renamed], ["account version"])
+        self.assertEqual((shared / "same.md").read_text(), "shared version")
+        self.assertEqual((shared / "a.md").read_text(), "only in the account")
+        self.assertEqual((shared / "MEMORY.md").read_text(),
+                         "- [Same](same.md) — both\n- [B](b.md) — shared\n- [A](a.md) — account\n"
+                         f"- [Same]({renamed[0].name}) — both\n")
+        # Both originals are kept in the backups.
+        backups = self.home / ".local/share/cage/claude-shared/backups"
+        self.assertEqual([(path / "same.md").read_text() for path in (backups / FIRST / "projects" / key).glob("memory-*")], ["account version"])
+        self.assertEqual([path.read_text() for path in (backups / "common/projects" / key / "memory").glob("MEMORY.md-*")],
+                         ["- [Same](same.md) — both\n- [B](b.md) — shared"])
+        listed = helper.read_notices(FIRST)
+        self.assertEqual([entry["kind"] for entry in listed], ["memory_merged"])
+
+    def test_unmergeable_project_memory_launches_with_the_accounts_own(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "topic").write_text("a note named like the shared folder")
+        (shared / "topic").mkdir()
+        (shared / "topic/x.md").write_text("shared note")
+        settings, stderr = self.launch_in(first, project)
+        self.assertIn("项目记忆冲突", stderr)
+        self.assertNotIn("autoMemoryDirectory", settings)
+        self.assertFalse(own.is_symlink())
+        self.assertEqual((own / "topic").read_text(), "a note named like the shared folder")
+        self.assertEqual((shared / "topic/x.md").read_text(), "shared note")
+        self.assertEqual([entry["kind"] for entry in helper.read_notices(FIRST)], ["memory_conflict"])
+        # Not repeated on the next launch; Desktop reports it too, and the
+        # notice is cleared once the user resolves it.
+        self.assertNotIn("项目记忆冲突", self.launch_in(first, project)[1])
+        self.share(FIRST)
+        self.assertEqual([entry["kind"] for entry in helper.read_notices(FIRST)], ["memory_conflict"])
+        (own / "topic").unlink()
+        settings, _ = self.launch_in(first, project)
+        self.assertIn("autoMemoryDirectory", settings)
+        self.assertTrue(own.is_symlink())
+        self.assertEqual(helper.read_notices(FIRST), [])
+
+    def test_memory_links_inside_are_skipped_and_links_outside_refuse(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "note.md").write_text("note")
+        (own / "alias.md").symlink_to(own / "note.md")
+        settings, stderr = self.launch_in(first, project)
+        self.assertNotIn("autoMemoryDirectory", settings)
+        self.assertTrue((own / "alias.md").is_symlink())
+        (own / "alias.md").unlink()
+        (own / "alias.md").symlink_to(self.home / "outside.md")
+        with patch.object(helper.Path, "cwd", return_value=project), self.assertRaisesRegex(helper.SharedResourceConflict, "异常链接"):
+            helper.shared_launch_arguments(first, [])
+
+    def test_interrupted_settings_intent_claims_only_the_file_it_was_about_to_write(self):
+        self.write(self.common / "settings.json", {"theme": "dark", "language": "zh"})
+        first, config = self.profile(FIRST)
+        self.write(config / "settings.json", {"theme": "light"})
+        real = helper.replace_json
+        def killed(path, *rest):
+            if path == config / "settings.json":
+                raise KeyboardInterrupt("killed after recording the intent")
+            return real(path, *rest)
+        with patch.object(helper, "replace_json", killed), self.assertRaises(KeyboardInterrupt):
+            helper.shared_profile_resources(first, desktop=True)
+        self.assertEqual(helper.read_record(first)["pending"]["keys"], {"language": "zh"})
+        # The write never happened; the user then sets the same value by hand.
+        self.write(config / "settings.json", {"theme": "light", "language": "zh"})
+        self.write(self.common / "settings.json", {"theme": "dark"})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {"theme": "light", "language": "zh"})
+        self.assertNotIn("pending", helper.read_record(first))
+        self.assertEqual(helper.read_record(first).get("keys"), {})
+        # The same for an MCP server addition.
+        self.write(self.home / ".claude.json", {"mcpServers": {"notes": {"command": "srv"}}})
+        def killed_mcp(path, *rest):
+            if path == config / ".claude.json":
+                raise KeyboardInterrupt("killed after recording the intent")
+            return real(path, *rest)
+        with patch.object(helper, "replace_json", killed_mcp), self.assertRaises(KeyboardInterrupt):
+            helper.shared_profile_resources(first, desktop=True)
+        self.assertEqual(helper.read_record(first)["pending_mcp"]["servers"], {"notes": {"command": "srv"}})
+        self.write(config / ".claude.json", {"mcpServers": {"notes": {"command": "srv"}}})
+        self.write(self.home / ".claude.json", {"mcpServers": {}})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": {"command": "srv"}})
+
+    def test_a_value_the_account_already_had_is_never_withdrawn(self):
+        first, config = self.profile(FIRST)
+        self.write(config / "settings.json", {"model": "opus"})
+        self.write(self.common / "settings.json", {"model": "opus", "theme": "dark"})
+        self.share(FIRST)
+        self.assertEqual(helper.read_record(first)["keys"], {"theme": "dark"})
+        self.write(self.common / "settings.json", {})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {"model": "opus"})
+
+    def test_unknown_or_emptied_shared_configuration_keeps_earlier_copies(self):
+        first, config = self.profile(FIRST)
+        servers = {"notes": {"command": "notes-srv"}, "search": {"command": "search-srv"}}
+        cli_fields = {"firstStartTime": "x", "machineID": "x"}
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": {"notes": servers["notes"]}})
+        self.write(self.common / "settings.json", {"theme": "dark"})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": servers["notes"]})
+        # Missing, unreadable, or without a server list: nothing is withdrawn.
+        for state in (None, "{ broken", {"oauthAccount": {}}):
+            if state is None:
+                (self.home / ".claude.json").unlink()
+            else:
+                self.write(self.home / ".claude.json", state)
+            self.share(FIRST)
+            self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"notes": servers["notes"]})
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": servers})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
+        # A file holding nothing but an empty server list was not written by
+        # `claude mcp remove`: the copies stay, and the user is told.
+        self.write(self.home / ".claude.json", {"mcpServers": {}})
+        self.assertIn("用户级 MCP", self.share(FIRST).stderr)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
+        # Still the same on the next launch: taken as the user's choice.
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {})
+        # `claude mcp remove` of every server keeps the CLI's other fields: withdrawn at once.
+        servers = {"alpha": {"command": "alpha-srv"}, "beta": {"command": "beta-srv"}}
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": servers})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], servers)
+        self.write(self.home / ".claude.json", {**cli_fields, "mcpServers": {}})
+        self.assertNotIn("用户级 MCP", self.share(FIRST).stderr)
+        self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {})
+        # A missing shared settings file keeps the copied settings too.
+        (self.common / "settings.json").unlink()
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {"theme": "dark"})
+        self.write(self.common / "settings.json", {})
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "settings.json"), {})
 
 def numpy_base36(value):
     digits = ""

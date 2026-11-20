@@ -46,7 +46,13 @@ def shared_root():
 
 
 class SharedResourceConflict(ValueError):
-    pass
+    def __init__(self, message, local=None, shared=None):
+        super().__init__(message)
+        self.local, self.shared = local, shared
+
+
+class MemoryConflict(SharedResourceConflict):
+    """Project memory that cannot be shared this time; the account keeps its own."""
 
 
 class SubscriptionStatusError(ValueError):
@@ -560,7 +566,14 @@ def write_backup_bytes(prefix, data):
 
 
 def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=BACKUP_MAX_AGE):
-    """Bound backup growth by count and age while keeping at least one backup."""
+    """Bound backup growth by count and age while always keeping the newest backup.
+
+    Age is the creation time in each backup's name (nanoseconds). Copies keep
+    their source's modification time, so that time says nothing about when the
+    backup was made. A backup at the bare prefix comes from an older version
+    that did not name the time: it sorts as the oldest and is removed only when
+    the series exceeds its count, never by an age it cannot know.
+    """
     backups_root = (shared_root() / "backups").resolve()
     parent = prefix.parent
     if not parent.is_dir():
@@ -580,25 +593,20 @@ def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=B
         if linked(child):
             continue
         if child.name == prefix.name:
-            stamp = 0
+            created = None
         elif child.name.startswith(head) and child.name[len(head):].isdigit() and len(child.name[len(head):]) >= 15:
-            stamp = int(child.name[len(head):])
+            created = int(child.name[len(head):])  # integer nanoseconds: a float cannot tell neighbours apart
         else:
             continue
-        try:
-            mtime = child.lstat().st_mtime
-        except OSError:
-            continue
-        entries.append((mtime, stamp, child))
-    # Always retain the newest entry so a sole unreplaced migration backup is
-    # never deleted regardless of age.
+        entries.append((created is not None, created or 0, child))
     if len(entries) <= 1:
         return
     entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    cutoff = (time.time() if now is None else now) - max_age
+    cutoff = int(((time.time() if now is None else now) - max_age) * 1e9)
     limit = max(1, keep_count)
-    for index, (mtime, _, child) in enumerate(entries):
-        if index == 0 or (index < limit and mtime >= cutoff):
+    for index, (named, created, child) in enumerate(entries):
+        # The newest backup of a series is kept regardless of its age.
+        if index == 0 or (index < limit and (not named or created >= cutoff)):
             continue
         try:
             if child.is_dir():
@@ -607,6 +615,15 @@ def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=B
                 child.unlink(missing_ok=True)
         except OSError:
             pass
+
+
+def json_bytes(data):
+    """The exact bytes replace_json publishes, so an intent can name its outcome."""
+    return (json.dumps(data, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def bytes_digest(data):
+    return hashlib.sha256(data).hexdigest()
 
 
 def replace_json(path, data, original, backup):
@@ -620,9 +637,8 @@ def replace_json(path, data, original, backup):
     backup_prefix = backup
     created_backup = write_backup_bytes(backup_prefix, original) if original is not None else None
     path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
-        json.dump(data, stream, indent=2, ensure_ascii=False)
-        stream.write("\n")
+    with tempfile.NamedTemporaryFile(mode="wb", dir=path.parent, delete=False) as stream:
+        stream.write(json_bytes(data))
         stream.flush()
         os.fsync(stream.fileno())
         temporary = stream.name
@@ -898,6 +914,160 @@ def committed_common_baseline(previous, local_before, common_after):
     return updated
 
 
+# The official CLI leaves traces when the user removes something on purpose
+# (measured with CLI 2.1.314): an uninstall keeps installed_plugins.json intact
+# ({"version": 2, "plugins": {...}}), writes .orphaned_at into the version's
+# cache folder and drops the plugin from enabledPlugins; removing a marketplace
+# also drops it from extraKnownMarketplaces; `claude mcp remove` keeps the rest
+# of .claude.json. A reset, a lost file or an old process saving a stale copy
+# leaves none of these. Entries that vanish without a trace are restored once;
+# the same entries vanishing again after that is taken as the user's choice.
+REMOVAL_BLOCK_AGE = 7 * 24 * 60 * 60
+REMOVAL_CONFIRMED_AGE = 30 * 24 * 60 * 60
+
+
+class RemovalGuard:
+    """Hold back removals without uninstall traces once; a repeat confirms them.
+
+    The state lives in claude-shared, outside every configuration directory,
+    and is only touched under resources.lock.
+    """
+
+    def __init__(self, root, notices=None, now=None):
+        self.path = root / "removal-guard.json"
+        self.now = time.time() if now is None else now
+        self.notices = notices
+        try:
+            state = json_file(self.path)
+        except (ValueError, OSError):
+            state = {}
+        state = state if isinstance(state, dict) else {}
+        blocked = state.get("blocked") if isinstance(state.get("blocked"), dict) else {}
+        self.blocked = {slot: entry for slot, entry in blocked.items() if isinstance(entry, dict)
+                        and type(entry.get("at")) in (int, float) and 0 <= self.now - entry["at"] < REMOVAL_BLOCK_AGE}
+        confirmed = state.get("confirmed") if isinstance(state.get("confirmed"), dict) else {}
+        self.confirmed = {}
+        for kind, keys in confirmed.items():
+            if isinstance(keys, dict):
+                fresh = {key: at for key, at in keys.items() if type(at) in (int, float) and 0 <= self.now - at < REMOVAL_CONFIRMED_AGE}
+                if fresh:
+                    self.confirmed[kind] = fresh
+        self.pending = {}
+        self.changed = False
+
+    def is_confirmed(self, kind, key):
+        return key in self.confirmed.get(kind, {})
+
+    def hold(self, side, kind, keys, label="", where="", item_names=None):
+        """Return the keys to restore; the same removal seen by the very next sync is confirmed.
+
+        Called on every sync, also with no keys: a sync that finds anything else
+        missing (or nothing) ends the earlier hold.
+        """
+        keys = sorted(keys)
+        slot = f"{side}|{kind}"
+        digest = bytes_digest(json.dumps(keys).encode())
+        earlier = self.blocked.get(slot)
+        if earlier is not None and (not keys or not isinstance(earlier, dict) or earlier.get("digest") != digest):
+            del self.blocked[slot]
+            self.changed = True
+            earlier = None
+        if not keys:
+            return set()
+        if isinstance(earlier, dict) and earlier.get("digest") == digest:
+            del self.blocked[slot]
+            for key in keys:
+                self.confirmed.setdefault(kind, {})[key] = self.now
+            self.changed = True
+            return set()
+        self.pending[slot] = {"digest": digest, "at": self.now}
+        names = "、".join((item_names or keys)[:5]) + ("等" if len(keys) > 5 else "")
+        message = (f"{label}：{where}中少了 {len(keys)} 项（{names}），但没有官方卸载或移除留下的痕迹，"
+                   "可能是文件被重置、损坏或旧进程写回了旧内容。已补回，没有同步删除到其他账号。"
+                   "若确实要移除，请用官方命令再移除一次；手动删除的，下次启动时仍缺少同一批即视为确认。")
+        if self.notices is not None:
+            self.notices.event("removal:" + slot + ":" + digest[:16], "removal_blocked", message, item=names)
+        else:
+            print(message, file=sys.stderr)
+        return set(keys)
+
+    def discard(self, kind):
+        """A held removal whose restore was not written must not count as shown."""
+        for slot in [slot for slot in self.pending if slot.endswith("|" + kind)]:
+            del self.pending[slot]
+
+    def save(self):
+        if not self.pending and not self.changed:
+            return
+        self.blocked.update(self.pending)
+        self.pending = {}
+        data = json.dumps({"blocked": self.blocked, "confirmed": self.confirmed}, separators=(",", ":")).encode()
+        self.path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=self.path.parent, delete=False) as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+            temporary = stream.name
+        try:
+            os.replace(temporary, self.path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+
+
+def removed_by(side, other, base, merged_other):
+    """Keys one side dropped that the merge would also drop from the other side."""
+    return {key for key in base if key not in side and key in other and key not in merged_other}
+
+
+def entry_time(value):
+    """Latest installedAt/lastUpdated of a registry entry, in seconds; 0 if none."""
+    stamps = []
+    for item in (value if isinstance(value, list) else [value]):
+        if isinstance(item, dict):
+            for field in ("installedAt", "lastUpdated"):
+                text = item.get(field)
+                if isinstance(text, str):
+                    try:
+                        stamps.append(datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp())
+                    except (ValueError, OverflowError):
+                        pass
+    return max(stamps, default=0)
+
+
+def live_cli_starts(config):
+    """Start times of running processes that use this configuration directory."""
+    proc = Path("/proc")
+    try:
+        boot = next(int(line.split()[1]) for line in (proc / "stat").read_text().splitlines() if line.startswith("btime "))
+        ticks = os.sysconf("SC_CLK_TCK")
+    except (OSError, ValueError, StopIteration):
+        return []
+    wanted = safe_resolve(config)
+    starts = []
+    for entry in proc.iterdir():
+        if not entry.name.isdigit() or int(entry.name) == os.getpid():
+            continue
+        try:
+            environ = (entry / "environ").read_bytes().split(b"\0")
+            value = next((item[len(b"CLAUDE_CONFIG_DIR="):] for item in environ if item.startswith(b"CLAUDE_CONFIG_DIR=")), None)
+            if value is None or safe_resolve(Path(os.fsdecode(value))) != wanted:
+                continue
+            fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+            starts.append(boot + int(fields[19]) / ticks)
+        except (OSError, ValueError, IndexError):
+            continue
+    return starts
+
+
+def canonical_digest(mapping):
+    return bytes_digest(json.dumps({key: [without_last_updated(item) for item in value] if isinstance(value, list) else without_last_updated(value)
+                                    for key, value in mapping.items()}, sort_keys=True, default=str).encode())
+
+
+REGISTRY_HISTORY = 8
+
+
 def share_plugin_folders(base, lock_dir):
     """Link the marketplace and plugin caches; False keeps this profile's plugins private."""
     config, common = config_directory(base), Path.home() / ".claude"
@@ -1065,7 +1235,39 @@ def clear_active_plugin_orphans(common_root, installed_plugins):
                 pass
 
 
-def sync_plugin_registries(base, lock_dir, record):
+def set_aside_corrupt(path, raw, backup_prefix):
+    """Move an unreadable registry into the backups; False if it changed meanwhile."""
+    backup = unique_backup_path(backup_prefix)
+    try:
+        os.rename(path, backup)
+    except FileNotFoundError:
+        return False
+    if backup.read_bytes() != raw:
+        # The CLI replaced it in between: put the newer file back if still free.
+        try:
+            os.link(backup, path)
+            backup.unlink()
+        except FileExistsError:
+            pass
+        return False
+    return True
+
+
+def settings_snapshot(path):
+    """A settings file that exists, parses and was not reset to {}; else None."""
+    raw, data = json_snapshot(path)
+    return data if raw is not None and isinstance(data, dict) and data else None
+
+
+def registry_intact(name, raw, data):
+    if raw is None or not isinstance(data, dict):
+        return False
+    if name == "installed_plugins.json":
+        return data.get("version") == 2 and isinstance(data.get("plugins"), dict)
+    return True
+
+
+def sync_plugin_registries(base, lock_dir, record, guard=None, notices=None):
     """Merge public installed plugins and known marketplaces in both directions.
 
     Private/org/claude.ai/credentialed entries and entries whose paths do not
@@ -1078,15 +1280,39 @@ def sync_plugin_registries(base, lock_dir, record):
     immediately deletes removed marketplace directories). Keeping a plugin
     installed in another account while one account uninstalled it would allow
     the official CLI to delete files still referenced by the other account.
+
+    Only removals with the CLI's traces spread (see RemovalGuard). An account
+    file equal to an earlier synchronized state, or one missing entries newer
+    than a running CLI of the account, is an old process's save: it is brought
+    up to date without spreading anything.
     """
+    guard = guard or RemovalGuard(lock_dir)
     config, common = config_directory(base), Path.home() / ".claude"
     local_root, common_root = config / "plugins", common / "plugins"
     local_forms, common_forms = plugin_root_forms(config), plugin_root_forms(common)
     bases = dict_field(record, "plugins")
+    history = dict_field(record, "registry_history")
     private_marketplaces, private_plugins = set(), set()
+    settings = {"local": settings_snapshot(config / "settings.json"), "common": settings_snapshot(common / "settings.json")}
+    starts = None
     for name, field in PLUGIN_REGISTRIES:
-        local_raw, local = json_snapshot(local_root / name)
-        common_raw, shared = json_snapshot(common_root / name)
+        snapshots = {}
+        for side, root, owner in (("local", local_root, base.name), ("common", common_root, "common")):
+            raw, data = json_snapshot(root / name)
+            if raw and data is None and not linked(root / name):
+                # Unreadable: keep it in the backups and rebuild from the other side.
+                prefix = lock_dir / "backups" / owner / "plugins" / (name + ".corrupt")
+                if set_aside_corrupt(root / name, raw, prefix):
+                    raw, data = None, {}
+                    item = shown_path(root / name)
+                    message = (f"插件登记无法读取：{item} 已移到备份并按另一侧重建。"
+                               f"原文件保留在 {shown_path(prefix.parent)}。")
+                    if notices is not None:
+                        notices.event("corrupt:" + owner + ":" + name, "registry_corrupt", message, item=name, local=item)
+                    else:
+                        print(message, file=sys.stderr)
+            snapshots[side] = (raw, data)
+        (local_raw, local), (common_raw, shared) = snapshots["local"], snapshots["common"]
         if local is None or shared is None:
             continue
         if field and (local.get("version", 2) != 2 or shared.get("version", 2) != 2):
@@ -1096,7 +1322,6 @@ def sync_plugin_registries(base, lock_dir, record):
         if not isinstance(local_map, dict) or not isinstance(common_map, dict):
             continue
         previous_raw = bases.get(name) if isinstance(bases.get(name), dict) else {}
-        local_form, common_form = plugin_form(local_map, local_forms), plugin_form(common_map, common_forms)
         local_neutral = plugin_paths(local_map, local_forms, NEUTRAL_PLUGINS)
         common_neutral = plugin_paths(common_map, common_forms, NEUTRAL_PLUGINS)
         if name == "known_marketplaces.json":
@@ -1120,11 +1345,55 @@ def sync_plugin_registries(base, lock_dir, record):
         local_private = {k: v for k, v in local_map.items() if k in excluded}
         common_private = {k: v for k, v in common_map.items() if k in excluded}
         merged_local_n, merged_common_n, merged_base = merger(local_shareable, previous, common_shareable)
+        intact = {"local": registry_intact(name, local_raw, local), "common": registry_intact(name, common_raw, shared)}
+
+        def evidence(side, key):
+            if guard.is_confirmed(name, key):
+                return True
+            if not intact[side]:
+                return False
+            chosen = settings[side]
+            if name == "known_marketplaces.json":
+                extra = chosen.get("extraKnownMarketplaces") if chosen else None
+                return isinstance(extra, dict) and key not in extra
+            for item in previous.get(key) or ():
+                location = item.get("installPath") if isinstance(item, dict) else None
+                if isinstance(location, str) and location.startswith(NEUTRAL_PLUGINS):
+                    folder = common_root / location[len(NEUTRAL_PLUGINS):]
+                    if (folder / ".orphaned_at").is_file() or not folder.exists():
+                        return True
+            enabled = chosen.get("enabledPlugins") if chosen else None
+            return isinstance(enabled, dict) and key not in enabled
+
+        restore = set()
+        label = "插件市场登记" if name == "known_marketplaces.json" else "已安装插件登记"
+        local_missing = {key for key in removed_by(local_shareable, common_shareable, previous, merged_common_n) if not evidence("local", key)}
+        if local_missing:
+            recent = history.get(name) if isinstance(history.get(name), list) else []
+            if starts is None:
+                starts = live_cli_starts(config)
+            stale = canonical_digest(local_shareable) in recent or any(
+                entry_time(common_shareable.get(key)) > start for key in local_missing for start in starts)
+            if stale:
+                # An older process saved what it had loaded: bring it up to date.
+                restore |= local_missing
+                guard.hold(base.name, name, ())
+            else:
+                restore |= guard.hold(base.name, name, local_missing, label, "本账号")
+        else:
+            guard.hold(base.name, name, ())
+        common_missing = {key for key in removed_by(common_shareable, local_shareable, previous, merged_local_n) if not evidence("common", key)}
+        restore |= guard.hold("common", name, common_missing, label, "共用配置（~/.claude）")
+        if restore:
+            previous = {key: value for key, value in previous.items() if key not in restore}
+            merged_local_n, merged_common_n, merged_base = merger(local_shareable, previous, common_shareable)
+        local_form, common_form = plugin_form(local_map, local_forms), plugin_form(common_map, common_forms)
         merged_common = {**common_private, **plugin_paths(merged_common_n, [NEUTRAL_PLUGINS], common_form)}
         common_written = False
-        if merged_common != common_map:
+        if merged_common != common_map or common_raw is None and merged_common:
             data = {**shared, "version": 2, field: merged_common} if field else merged_common
             if not replace_json(common_root / name, data, common_raw, lock_dir / "backups" / "common" / "plugins" / name):
+                guard.discard(name)
                 continue
             common_written = True
             # Persist common-side agreement immediately so a local race below
@@ -1132,15 +1401,19 @@ def sync_plugin_registries(base, lock_dir, record):
             bases[name] = committed_common_baseline(previous, local_shareable, merged_common_n)
             write_record(base, record)
         merged_local = {**local_private, **plugin_paths(merged_local_n, [NEUTRAL_PLUGINS], local_form)}
-        if merged_local != local_map:
+        if merged_local != local_map or local_raw is None and merged_local or field and not intact["local"] and merged_local:
             data = {**local, "version": 2, field: merged_local} if field else merged_local
             if not replace_json(local_root / name, data, local_raw, lock_dir / "backups" / base.name / "plugins" / name):
+                guard.discard(name)
                 if name == "installed_plugins.json" and common_written:
                     clear_active_plugin_orphans(common_root, merged_common)
                 continue
         if name == "installed_plugins.json":
             clear_active_plugin_orphans(common_root, merged_common)
         bases[name] = merged_base
+        recent = [item for item in (history.get(name) if isinstance(history.get(name), list) else []) if isinstance(item, str)]
+        digest = canonical_digest(merged_local_n)
+        history[name] = ([item for item in recent if item != digest] + [digest])[-REGISTRY_HISTORY:]
     return private_marketplaces, private_plugins
 
 
@@ -1163,7 +1436,7 @@ def withdraw_additions(result, additions):
             del result["hooks"]
 
 
-def sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces=frozenset(), private_plugins=frozenset()):
+def sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces=frozenset(), private_plugins=frozenset(), guard=None):
     """Copy shared settings into a profile for clients that take no flags.
 
     Only keys the profile does not set are added, and hook groups are appended
@@ -1183,36 +1456,59 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     if not all(isinstance(previous.get(name, {}), dict) for name in ("keys", "hooks")):
         previous = {}
     previous_pending = record.get("pending")
-    pending = previous_pending if isinstance(previous_pending, dict) else {}
     # An interrupted earlier run may have written its additions without
-    # completing the record; its intent lists them, so they are ours too.
-    withdraw_additions(result, previous)
-    withdraw_additions(result, pending)
-    added = {key: common[key] for key in sorted(PROFILE_SETTINGS - {"hooks"}) if key in common and key not in result}
-    result.update(added)
-    added_hooks, created = {}, "hooks" not in result
-    if isinstance(common.get("hooks"), dict):
-        target = result.setdefault("hooks", {})
-        for event, groups in common["hooks"].items():
-            present = target.get(event, [])
-            if not isinstance(groups, list) or not isinstance(present, list):
-                continue
-            missing = []
-            for group in groups:
-                if group not in present and group not in missing:
-                    missing.append(group)
-            if missing:
-                target[event] = present + missing
-                added_hooks[event] = missing
-        if created and not target:
-            del result["hooks"]
-    additions = {"keys": added, "hooks": added_hooks, "hooks_created": created and bool(added_hooks)}
+    # completing the record. Its intent names the exact file it was about to
+    # publish; only that file proves the additions landed and are Cage's.
+    pending = confirmed_intent(previous_pending, original) or legacy_settings_intent(previous_pending, current, common)
+    if common_raw is None:
+        # A missing shared file says nothing about which shared values were
+        # removed: keep every earlier addition as it is and add nothing.
+        kept = pending or previous
+        additions = {"keys": dict(kept.get("keys") or {}), "hooks": dict(kept.get("hooks") or {}),
+                     "hooks_created": bool(kept.get("hooks_created"))}
+    else:
+        withdraw_additions(result, previous)
+        withdraw_additions(result, pending)
+        added = {key: common[key] for key in sorted(PROFILE_SETTINGS - {"hooks"}) if key in common and key not in result}
+        result.update(added)
+        added_hooks, created = {}, "hooks" not in result
+        if isinstance(common.get("hooks"), dict):
+            target = result.setdefault("hooks", {})
+            for event, groups in common["hooks"].items():
+                present = target.get(event, [])
+                if not isinstance(groups, list) or not isinstance(present, list):
+                    continue
+                missing = []
+                for group in groups:
+                    if group not in present and group not in missing:
+                        missing.append(group)
+                if missing:
+                    target[event] = present + missing
+                    added_hooks[event] = missing
+            if created and not target:
+                del result["hooks"]
+        additions = {"keys": added, "hooks": added_hooks, "hooks_created": created and bool(added_hooks)}
     common_result = dict(common)
     plugin_record = dict_field(record, "plugins")
     plugin_bases = dict(plugin_record)
     common_baselines = {}
     if plugins_shared:
         excluded_marketplaces = set(private_marketplaces)
+        # A settings file that is missing or was reset to {} records no
+        # deliberate removal; it must not disable plugins everywhere else.
+        guard = guard or RemovalGuard(lock_dir)
+        sides = {"local": (settings_snapshot(path), config / "plugins"),
+                 "common": (settings_snapshot(common_path), Path.home() / ".claude/plugins")}
+        registries = {}
+        for side, (_, root) in sides.items():
+            installed_raw, installed = json_snapshot(root / "installed_plugins.json")
+            known_raw, known_markets = json_snapshot(root / "known_marketplaces.json")
+            registries[side] = {
+                "enabledPlugins": installed.get("plugins") if registry_intact("installed_plugins.json", installed_raw, installed) else None,
+                "extraKnownMarketplaces": known_markets if registry_intact("known_marketplaces.json", known_raw, known_markets) else None,
+            }
+        common_installed = registries["common"]["enabledPlugins"] or {}
+        starts = None
         # Process extraKnownMarketplaces first so any credentialed or org
         # marketplace excluded here also blocks its entries in enabledPlugins.
         for key in ("extraKnownMarketplaces", "enabledPlugins"):
@@ -1232,7 +1528,32 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
             known = {k: v for k, v in known_raw.items() if k not in excluded and allow(k, v)}
             mine_private = {k: v for k, v in mine.items() if k in excluded}
             theirs_private = {k: v for k, v in theirs.items() if k in excluded}
+            label = "插件启用设置" if key == "enabledPlugins" else "额外插件市场设置"
             merged_mine, merged_theirs, plugin_bases[key] = three_way(mine_shareable, known, theirs_shareable)
+            # Uninstalling a plugin or removing a marketplace also removes it
+            # from the registry beside this settings file; a reset does not.
+            def evidence(side, name):
+                if guard.is_confirmed(key, name):
+                    return True
+                listed = registries[side][key]
+                return sides[side][0] is not None and isinstance(listed, dict) and name not in listed
+            restore = set()
+            local_missing = {name for name in removed_by(mine_shareable, theirs_shareable, known, merged_theirs) if not evidence("local", name)}
+            if local_missing:
+                if starts is None:
+                    starts = live_cli_starts(config)
+                if any(entry_time(common_installed.get(name)) > start for name in local_missing for start in starts):
+                    restore |= local_missing
+                    guard.hold(base.name, key, ())
+                else:
+                    restore |= guard.hold(base.name, key, local_missing, label, "本账号")
+            else:
+                guard.hold(base.name, key, ())
+            common_missing = {name for name in removed_by(theirs_shareable, mine_shareable, known, merged_mine) if not evidence("common", name)}
+            restore |= guard.hold("common", key, common_missing, label, "共用配置（~/.claude）")
+            if restore:
+                known = {name: value for name, value in known.items() if name not in restore}
+                merged_mine, merged_theirs, plugin_bases[key] = three_way(mine_shareable, known, theirs_shareable)
             common_baselines[key] = committed_common_baseline(known, mine_shareable, merged_theirs)
             final_mine = {**mine_private, **merged_mine}
             final_theirs = {**theirs_private, **merged_theirs}
@@ -1242,6 +1563,9 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     if common_result != common:
         # Publish plugin choices first: if this is refused, nothing else moves.
         if not replace_json(common_path, common_result, common_raw, lock_dir / "backups" / "common" / "settings.json"):
+            if guard is not None:
+                guard.discard("enabledPlugins")
+                guard.discard("extraKnownMarketplaces")
             return
         # Persist common-side baselines immediately so a local race below
         # cannot resurrect a disabled plugin on the next launch.
@@ -1249,7 +1573,7 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
             plugin_record.update(common_baselines)
             write_record(base, record)
     if result != current:
-        write_record(base, {**record, "pending": additions})
+        write_record(base, {**record, "pending": {**additions, "digest": bytes_digest(json_bytes(result))}})
         if not replace_json(path, result, original, lock_dir / "backups" / base.name / "settings.json"):
             if previous_pending is None:
                 record.pop("pending", None)
@@ -1262,18 +1586,71 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared, private_market
     plugin_record.update({key: plugin_bases[key] for key in PLUGIN_SETTINGS if key in plugin_bases})
 
 
+def legacy_settings_intent(intent, current, common):
+    """An interrupted write's intent from a version that recorded no digest.
+
+    Its additions are claimed only where the account still holds exactly the
+    shared value: then Cage most likely wrote them before the upgrade, and
+    claiming them lets them follow later shared changes again.
+    """
+    if not isinstance(intent, dict) or "digest" in intent or not isinstance(current, dict) or not isinstance(common, dict):
+        return {}
+    keys = intent.get("keys") if isinstance(intent.get("keys"), dict) else {}
+    claimed = {key: value for key, value in keys.items() if key in current and current[key] == value and common.get(key) == value}
+    hooks, shared_hooks = current.get("hooks"), common.get("hooks")
+    claimed_hooks = {}
+    if isinstance(hooks, dict) and isinstance(shared_hooks, dict) and isinstance(intent.get("hooks"), dict):
+        for event, groups in intent["hooks"].items():
+            present, shared = hooks.get(event), shared_hooks.get(event)
+            if isinstance(groups, list) and isinstance(present, list) and isinstance(shared, list):
+                kept = [group for group in groups if group in present and group in shared]
+                if kept:
+                    claimed_hooks[event] = kept
+    if not claimed and not claimed_hooks:
+        return {}
+    return {"keys": claimed, "hooks": claimed_hooks, "hooks_created": bool(intent.get("hooks_created")) and bool(claimed_hooks)}
+
+
+def confirmed_intent(intent, original):
+    """An interrupted write's intent, only if the file is exactly what it was about to publish."""
+    if not isinstance(intent, dict) or original is None or intent.get("digest") != bytes_digest(original):
+        return {}
+    return intent
+
+
 def global_config_path(base):
     return Path.home() / ".claude.json" if base.name == DEFAULT else config_directory(base) / ".claude.json"
 
 
+def shared_mcp_state(with_evidence=False):
+    """User-scope servers of the default configuration; None when that is unknown.
+
+    A missing or unreadable ~/.claude.json, or one without an mcpServers map,
+    says nothing about which servers the user removed. `claude mcp remove`
+    keeps the CLI's other entries in the file; a file holding nothing but the
+    server map was rewritten by something else. Only key names are inspected,
+    never the account fields' values.
+    """
+    raw, data = json_snapshot(Path.home() / ".claude.json")
+    if raw is None or not isinstance(data, dict) or not isinstance(data.get("mcpServers"), dict):
+        return (None, False) if with_evidence else None
+    servers = {name: value for name, value in data["mcpServers"].items() if isinstance(value, dict)}
+    return (servers, any(key != "mcpServers" for key in data)) if with_evidence else servers
+
+
 def shared_mcp_servers():
-    """User-scope servers of the default configuration; never its account fields."""
-    _, data = json_snapshot(Path.home() / ".claude.json")
-    servers = data.get("mcpServers") if isinstance(data, dict) else None
-    return {name: value for name, value in servers.items() if isinstance(value, dict)} if isinstance(servers, dict) else {}
+    return shared_mcp_state() or {}
 
 
-def sync_profile_mcp(base, lock_dir, record, add_missing):
+def legacy_mcp_intent(intent, servers, shared):
+    """Old pending_mcp records (no digest): claim servers the account holds exactly as shared."""
+    if not isinstance(intent, dict) or "digest" in intent or "servers" in intent:
+        return {}
+    return {name: value for name, value in intent.items()
+            if isinstance(value, dict) and servers.get(name) == value and shared.get(name) == value}
+
+
+def sync_profile_mcp(base, lock_dir, record, add_missing, guard=None):
     """Add shared user-scope MCP servers the profile lacks; refresh or withdraw earlier additions.
 
     Only the mcpServers entry changes. OAuth tokens for MCP servers stay in each
@@ -1283,23 +1660,36 @@ def sync_profile_mcp(base, lock_dir, record, add_missing):
     original, current = json_snapshot(path)
     if current is None or "mcpServers" in current and not isinstance(current["mcpServers"], dict):
         return
+    shared, traced = shared_mcp_state(with_evidence=True)
+    if shared is None:
+        # Keep earlier additions until the shared definitions are readable again.
+        return
     servers = dict(current.get("mcpServers") or {})
     ours = record.get("mcp") if isinstance(record.get("mcp"), dict) else {}
     previous_pending = record.get("pending_mcp")
-    pending = previous_pending if isinstance(previous_pending, dict) else {}
+    pending = confirmed_intent(previous_pending, original).get("servers")
+    if not isinstance(pending, dict):
+        pending = legacy_mcp_intent(previous_pending, servers, shared)
+    withdrawn = {name for added in (ours, pending) for name, value in added.items()
+                 if servers.get(name) == value and name not in shared}
+    guard = guard or RemovalGuard(lock_dir)
+    untraced = set() if traced else {name for name in withdrawn if not guard.is_confirmed("mcp", name)}
+    # The account may now hold the only copy of these definitions.
+    if guard.hold("common", "mcp", untraced, "用户级 MCP 服务器", "默认配置 ~/.claude.json"):
+        return
     for added in (ours, pending):
         for name, value in added.items():
             if servers.get(name) == value:
                 del servers[name]
-    shared, additions = shared_mcp_servers(), {}
+    additions = {}
     for name, value in shared.items():
-        if name not in servers and (add_missing or name in ours):
+        if name not in servers and (add_missing or name in ours or name in pending):
             servers[name] = additions[name] = value
     result = {key: value for key, value in current.items() if key != "mcpServers"}
     if servers or "mcpServers" in current:
         result["mcpServers"] = servers
     if result != current:
-        write_record(base, {**record, "pending_mcp": additions})
+        write_record(base, {**record, "pending_mcp": {"servers": additions, "digest": bytes_digest(json_bytes(result))}})
         if not replace_json(path, result, original, lock_dir / "backups" / base.name / "claude.json"):
             if previous_pending is None:
                 record.pop("pending_mcp", None)
@@ -1321,15 +1711,65 @@ def launch_mcp_servers(base):
     return {name: value for name, value in shared_mcp_servers().items() if name not in present}
 
 
-def prune_stale_mcp_launch_files(folder, keep=None):
+# A running terminal keeps using the --mcp-config file it was started with
+# (the CLI can read it again, for example to reconnect a server). A file named
+# on the command line of a live process is never removed; of the rest, only
+# those no launch used for this long are. Each launch refreshes the time of the
+# file it uses.
+MCP_LAUNCH_FILE_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def launch_files_in_use():
+    """Real paths of the .json files named on the command line of any live process.
+
+    The CLI receives a runtime alias (a link with a different name) rather
+    than the file itself, so each argument is resolved through its links.
+    """
+    used = set()
+    proc = Path("/proc")
+    if proc.is_dir():
+        command_lines = []
+        for entry in proc.iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                command_lines.append((entry / "cmdline").read_bytes().split(b"\0"))
+            except OSError:
+                continue
+    else:
+        # No /proc (macOS): read every process's arguments from ps instead.
+        try:
+            listing = subprocess.run(["ps", "-axww", "-o", "command="], capture_output=True, timeout=10, check=True).stdout
+        except (OSError, subprocess.SubprocessError):
+            # Cannot tell which files are in use: report that, never "none".
+            return None
+        command_lines = [line.split() for line in listing.splitlines()]
+    for arguments in command_lines:
+        for argument in arguments:
+            for part in argument.split():
+                text = os.fsdecode(part)
+                if text.endswith(".json") and os.sep in text:
+                    used.add(os.path.realpath(text))
+    return used
+
+
+def prune_stale_mcp_launch_files(folder, keep=None, now=None):
     if not folder.is_dir():
         return
+    cutoff = (time.time() if now is None else now) - MCP_LAUNCH_FILE_MAX_AGE
+    in_use = False  # not looked up yet; None below means it cannot be told
     for candidate in folder.glob("mcp-*.json"):
-        if candidate != keep:
-            try:
+        if candidate == keep or linked(candidate):
+            continue
+        try:
+            if candidate.stat().st_mtime >= cutoff:
+                continue
+            if in_use is False:
+                in_use = launch_files_in_use()
+            if in_use is not None and os.path.realpath(candidate) not in in_use:
                 candidate.unlink(missing_ok=True)
-            except OSError:
-                pass
+        except OSError:
+            pass
 
 
 def shared_mcp_arguments(base, args):
@@ -1345,7 +1785,13 @@ def shared_mcp_arguments(base, args):
     data = json.dumps({"mcpServers": servers}, separators=(",", ":")).encode()
     folder.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     path = folder / ("mcp-" + hashlib.sha256(data).hexdigest() + ".json")
-    if not path.exists():
+    try:
+        # Content-addressed and reused: mark it as used by this launch.
+        os.utime(path)
+        reused = True
+    except FileNotFoundError:
+        reused = False
+    if not reused:
         with tempfile.NamedTemporaryFile(dir=folder, delete=False) as stream:
             stream.write(data)
             stream.flush()
@@ -1404,6 +1850,158 @@ def heal_shared_file(base, local, shared, record):
     prune_backup_series(backup_prefix)
 
 
+# A conflict that stays unresolved is explained again at most this often, so a
+# terminal does not repeat the same paragraph on every launch.
+NOTICE_INTERVAL = 24 * 60 * 60
+
+
+def shown_path(path):
+    """A path as the user would type it in the guest, without Home spelled out."""
+    try:
+        return "~/" + Path(path).relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def path_state(path):
+    try:
+        info = path.lstat()
+    except OSError:
+        return "missing"
+    target = ""
+    if linked(path):
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = "?"
+    return f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}:{target}"
+
+
+NOTICE_EVENT_AGE = 3 * 24 * 60 * 60
+
+
+def notice_file(account):
+    """Pending notices for the workbench: in claude-shared, outside every configuration."""
+    return shared_root() / "notices" / (account + ".json")
+
+
+class Notices:
+    """Launch problems for the user: on stderr when new or changed, then daily.
+
+    Every active notice is also listed in claude-shared/notices/<account>.json
+    so the workbench can show what Desktop's stderr never reaches. A conflict
+    disappears once resolved; a one-off event stays listed for a few days.
+    Each launch path owns a scope and only replaces the notices of its scope.
+    """
+
+    def __init__(self, record, scope="resources", now=None):
+        stored = record.get("notices")
+        # Entries without "since" predate the structured format; they are re-created.
+        self.all = {key: entry for key, entry in stored.items() if isinstance(entry, dict) and "since" in entry} if isinstance(stored, dict) else {}
+        self.scope = scope
+        self.current = {}
+        self.record = record
+        self.now = time.time() if now is None else now
+
+    def _key(self, key):
+        return self.scope + ":" + key
+
+    def show(self, key, state, message, kind="resource_conflict", item="", local="", shared=""):
+        key = self._key(key)
+        entry = self.all.get(key)
+        details = {"kind": kind, "item": item, "local": local, "shared": shared, "message": message}
+        if (isinstance(entry, dict) and entry.get("state") == state and type(entry.get("at")) in (int, float)
+                and 0 <= self.now - entry["at"] < NOTICE_INTERVAL):
+            self.current[key] = {**entry, **details}
+            return
+        print(message, file=sys.stderr)
+        since = entry.get("since") if isinstance(entry, dict) and entry.get("state") == state else None
+        self.current[key] = {"state": state, "at": self.now, "since": since if type(since) in (int, float) else self.now, **details}
+
+    def event(self, key, kind, message, item="", local="", shared=""):
+        """A one-off occurrence: shown now and listed for NOTICE_EVENT_AGE."""
+        print(message, file=sys.stderr)
+        self.current[self._key(key)] = {"state": "event", "at": self.now, "since": self.now, "until": self.now + NOTICE_EVENT_AGE,
+                                        "kind": kind, "item": item, "local": local, "shared": shared, "message": message}
+
+    def finish(self, account=None):
+        # Resolved problems are forgotten, so a recurrence is explained again.
+        stored = self.record.get("notices")
+        stored = {key: entry for key, entry in stored.items() if isinstance(entry, dict) and "since" in entry} if isinstance(stored, dict) else {}
+        kept = {key: entry for key, entry in stored.items() if not key.startswith(self.scope + ":")
+                or entry.get("state") == "event" and type(entry.get("until")) in (int, float) and entry["until"] > self.now}
+        kept.update(self.current)
+        if kept:
+            self.record["notices"] = kept
+        else:
+            self.record.pop("notices", None)
+        if account:
+            publish_notices(account, kept, self.now)
+
+
+def publish_notices(account, entries, now):
+    listed = []
+    for key, entry in sorted(entries.items()):
+        until = entry.get("until")
+        if type(until) in (int, float) and until <= now:
+            continue
+        listed.append({"id": hashlib.sha256(key.encode()).hexdigest()[:16], "kind": str(entry.get("kind") or ""),
+                       "item": str(entry.get("item") or ""), "local": str(entry.get("local") or ""),
+                       "shared": str(entry.get("shared") or ""), "since": int(entry.get("since") or entry.get("at") or now),
+                       "message": str(entry.get("message") or "")})
+    path = notice_file(account)
+    if not listed:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False) as stream:
+        stream.write(json.dumps({"version": 1, "account": account, "updated_at": int(now), "notices": listed},
+                                ensure_ascii=False, separators=(",", ":")).encode())
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    try:
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+
+
+def read_notices(account):
+    try:
+        data = json_file(notice_file(account))
+    except (ValueError, OSError):
+        return []
+    notices = data.get("notices") if isinstance(data, dict) else None
+    return [entry for entry in notices if isinstance(entry, dict)] if isinstance(notices, list) else []
+
+
+def resource_conflict_notice(notices, local, shared):
+    local_text, shared_text = shown_path(local), shown_path(shared)
+    try:
+        item = local.relative_to(config_directory(local_owner(local))).as_posix()
+    except (ValueError, AttributeError):
+        item = local.name
+    if linked(local):
+        message = (f"共用资料同名冲突：账号中的 {local_text} 是指向共用位置以外的链接。本次未共享这一项，"
+                   f"原链接保留，启动不受影响。若不再需要它，删除 {local_text} 后下次启动即改为共享 {shared_text}。")
+        kind = "link_conflict"
+    else:
+        message = (f"共用资料同名冲突：账号中的 {local_text} 与共用的 {shared_text} 内容不同。本次未共享这一项，"
+                   f"两份都原样保留，启动不受影响。请对照两份内容，把要保留的部分并入 {shared_text}，"
+                   f"再删除 {local_text}，下次启动即改为共享。")
+        kind = "resource_conflict"
+    notices.show("resource:" + str(local), path_state(local) + "|" + path_state(shared), message,
+                 kind=kind, item=item, local=local_text, shared=shared_text)
+
+
+def local_owner(path):
+    """The account base directory a path inside an account configuration belongs to."""
+    root = profile(DEFAULT).parent
+    relative = path.relative_to(root)
+    return root / relative.parts[0]
+
+
 def shared_profile_resources(base, desktop=False):
     """Share local customizations; credentials, synced skills and history stay private."""
     config = config_directory(base)
@@ -1416,6 +2014,8 @@ def shared_profile_resources(base, desktop=False):
     with (lock_dir / "resources.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = read_record(base)
+        notices = Notices(record)
+        guard = RemovalGuard(lock_dir, notices)
         conflict = "账号的技能或指令与共用资料同名冲突，请先核对 ~/.claude 中的对应文件；原文件已保留"
         healable_names = {"CLAUDE.md", "AGENTS.md"}
         def check(local, shared):
@@ -1423,7 +2023,7 @@ def shared_profile_resources(base, desktop=False):
                 return
             if linked(local):
                 if safe_resolve(local) != safe_resolve(shared):
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
             elif local.exists() and shared.exists():
                 if local.name in healable_names and local.parent == config and can_heal_shared_file(base, local, shared, record):
                     return
@@ -1431,14 +2031,14 @@ def shared_profile_resources(base, desktop=False):
                     for child in local.iterdir():
                         check(child, shared / child.name)
                 elif not (local.is_file() and shared.is_file() and local.read_bytes() == shared.read_bytes()):
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
         def merge(local, shared):
             if same_path(local, shared):
                 return
             if linked(local):
                 if safe_resolve(local) == safe_resolve(shared):
                     return
-                raise SharedResourceConflict(conflict)
+                raise SharedResourceConflict(conflict, local, shared)
             if local.exists():
                 if local.is_dir() and shared.is_dir():
                     for child in list(local.iterdir()):
@@ -1450,15 +2050,11 @@ def shared_profile_resources(base, desktop=False):
                     shared.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
                     local.rename(shared)
                 elif local.is_file() and shared.is_file() and local.read_bytes() == shared.read_bytes():
-                    # Keep a recoverable copy before replacing a local resource.
-                    backup = lock_dir / "backups" / base.name / local.relative_to(config)
-                    backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-                    if not backup.exists():
-                        shutil.copy2(local, backup)
+                    # An identical copy; the caller backed up the whole entry first.
                     local.unlink()
                 else:
                     # Never choose which conflicting instruction or skill wins.
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
             if not shared.exists():
                 if local.name in ("CLAUDE.md", "AGENTS.md"):
                     shared.touch(mode=0o600)
@@ -1475,25 +2071,21 @@ def shared_profile_resources(base, desktop=False):
             # If config/skills is already a symlink to ~/.claude/skills, never
             # iterate and unlink entries through the self-alias.
             if safe_resolve(local_skills) != safe_resolve(shared_skills):
-                if desktop:
-                    print(conflict, file=sys.stderr)
-                else:
-                    raise SharedResourceConflict(conflict)
+                resource_conflict_notice(notices, local_skills, shared_skills)
         else:
             local_skills.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
             names = {p.name for folder in (local_skills, shared_skills) for p in folder.iterdir()} - {"synced"}
             resources += [(local_skills / name, shared_skills / name) for name in sorted(names)]
-        # Validate before mutating: terminals fail atomically; Desktop isolates
-        # conflicting entries so plugins, settings, MCP and memory still sync.
+        # Validate before mutating. A conflicting entry is left exactly as it
+        # is on both sides and explained; terminals and Desktop still start and
+        # everything else (plugins, settings, MCP and memory) still syncs.
         ready_resources = []
         for source, destination in resources:
             try:
                 check(source, destination)
                 ready_resources.append((source, destination))
             except SharedResourceConflict as error:
-                if not desktop:
-                    raise
-                print(str(error), file=sys.stderr)
+                resource_conflict_notice(notices, error.local or source, error.shared or destination)
         for source, destination in ready_resources:
             if source.name in healable_names and source.parent == config:
                 heal_shared_file(base, source, destination, record)
@@ -1501,15 +2093,17 @@ def shared_profile_resources(base, desktop=False):
             backup_prefix = None
             if source.exists() and not linked(source) and not same_path(source, destination):
                 backup_prefix = lock_dir / "backups" / base.name / source.relative_to(config)
-                backup = backup_prefix
-                if backup.exists() or linked(backup):
-                    backup = unique_backup_path(backup_prefix)
-                backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+                backup = unique_backup_path(backup_prefix)
                 if source.is_dir():
                     shutil.copytree(source, backup, symlinks=True)
                 else:
                     shutil.copy2(source, backup)
-            merge(source, destination)
+            try:
+                merge(source, destination)
+            except SharedResourceConflict as error:
+                # Changed after validation (a concurrent save): each rename is
+                # atomic, so what is not yet linked stays where it was.
+                resource_conflict_notice(notices, error.local or source, error.shared or destination)
             if backup_prefix is not None:
                 prune_backup_series(backup_prefix)
         for source, destination in ready_resources:
@@ -1518,13 +2112,14 @@ def shared_profile_resources(base, desktop=False):
         plugins_shared = share_plugin_folders(base, lock_dir)
         private_marketplaces, private_plugins = frozenset(), frozenset()
         if plugins_shared:
-            private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record)
+            private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record, guard, notices)
         else:
-            print("账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响", file=sys.stderr)
-        sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins)
-        sync_profile_mcp(base, lock_dir, record, desktop)
+            notices.show("plugins", "separate", "账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响",
+                         kind="plugins_separate", item="plugins", local=shown_path(config / "plugins"), shared=shown_path(common / "plugins"))
+        sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins, guard)
+        sync_profile_mcp(base, lock_dir, record, desktop, guard)
         if desktop:
-            link_known_project_memory(base)
+            link_known_project_memory(base, record)
         for prefix in (lock_dir / "backups" / base.name / "settings.json",
                        lock_dir / "backups" / base.name / "claude.json",
                        lock_dir / "backups" / base.name / "plugins/installed_plugins.json",
@@ -1535,6 +2130,8 @@ def shared_profile_resources(base, desktop=False):
                        lock_dir / "backups" / "common" / "CLAUDE.md",
                        lock_dir / "backups" / "common" / "AGENTS.md"):
             prune_backup_series(prefix)
+        guard.save()
+        notices.finish(base.name)
         write_record(base, record)
 
 
@@ -1563,65 +2160,237 @@ def legacy_project_key(directory):
     return key[:140] + "-" + hashlib.sha256(str(directory).encode()).hexdigest()[:32] if len(key) > 180 else key
 
 
-def link_project_memory(own, memory, backup):
-    """Move a memory folder's notes into the shared one and leave a link behind."""
-    if same_path(own, memory) or own == memory or linked(own):
+MEMORY_INDEX = "MEMORY.md"
+
+
+def memory_entries(folder, allowed_roots):
+    """Files of a memory folder; links are refused unless they stay inside allowed_roots."""
+    files = []
+    for entry in sorted(folder.rglob("*")):
+        if linked(entry):
+            target = safe_resolve(entry)
+            if target is None or not any(target.is_relative_to(root) for root in allowed_roots if root is not None):
+                raise SharedResourceConflict("项目记忆包含指向配置目录之外的异常链接，原记忆已保留，请先核对记忆目录")
+            raise MemoryConflict("项目记忆包含链接，本次未合并")
+        if entry.is_file():
+            files.append(entry)
+        elif not entry.is_dir():
+            raise MemoryConflict("项目记忆包含无法合并的条目")
+    return files
+
+
+def suffixed_name(relative, data):
+    return relative.with_name(f"{relative.stem}-{hashlib.sha256(data).hexdigest()[:8]}{relative.suffix}")
+
+
+def plan_memory_merge(source, memory, allowed_roots):
+    """Plan folding one memory folder into the shared one without losing either side.
+
+    Same-name notes with different content keep both: the incoming one under a
+    name with a content suffix. MEMORY.md, one index entry per line, becomes
+    the shared lines followed by every incoming line not already present (with
+    links to renamed notes pointing at their new names), plus a line for each
+    renamed note the incoming index did not mention. Anything else that differs
+    is not merged (MemoryConflict). Returns (copies, index, merged): copies maps
+    shared relative paths to bytes, index is (original bytes or None, new bytes)
+    or None, and merged tells whether both sides had to be combined.
+    """
+    copies, renamed = {}, {}
+    files = memory_entries(source, allowed_roots)
+    incoming_index = None
+    for file in files:
+        relative = file.relative_to(source)
+        data = file.read_bytes()
+        target = memory / relative
+        if linked(target) or any(linked(parent) for parent in target.parents if parent.is_relative_to(memory) and parent != memory):
+            raise MemoryConflict("共用项目记忆包含链接")
+        if relative.as_posix() == MEMORY_INDEX:
+            incoming_index = data
+            continue
+        if not target.exists():
+            if any(parent.exists() and not parent.is_dir() for parent in target.parents if parent.is_relative_to(memory)):
+                raise MemoryConflict("项目记忆的目录与文件同名")
+            copies[relative] = data
+        elif not target.is_file():
+            raise MemoryConflict("项目记忆的目录与文件同名")
+        elif target.read_bytes() != data:
+            alternative = suffixed_name(relative, data)
+            existing = memory / alternative
+            if existing.exists() and (not existing.is_file() or existing.read_bytes() != data):
+                raise MemoryConflict("项目记忆的备用文件名已被占用")
+            if not existing.exists():
+                copies[alternative] = data
+            renamed[relative.as_posix()] = alternative.as_posix()
+    index_path = memory / MEMORY_INDEX
+    shared_index = index_path.read_bytes() if index_path.is_file() else None
+    if index_path.exists() and not index_path.is_file():
+        raise MemoryConflict("项目记忆索引不是文件")
+    if incoming_index is None and not renamed:
+        return copies, None, False
+    try:
+        shared_lines = shared_index.decode("utf-8").splitlines() if shared_index is not None else []
+        incoming_lines = incoming_index.decode("utf-8").splitlines() if incoming_index is not None else []
+    except UnicodeDecodeError:
+        raise MemoryConflict("项目记忆索引不是文本")
+    if incoming_index is not None and not renamed and (shared_index is None or incoming_index == shared_index):
+        # Nothing to combine: a missing shared index is simply moved over.
+        if shared_index is None:
+            copies[Path(MEMORY_INDEX)] = incoming_index
+        return copies, None, False
+    present = set(shared_lines)
+    added = []
+    mentioned = set()
+    for line in incoming_lines:
+        rewritten = line
+        for old, new in renamed.items():
+            if f"]({old})" in rewritten:
+                rewritten = rewritten.replace(f"]({old})", f"]({new})")
+                mentioned.add(old)
+        if rewritten not in present:
+            added.append(rewritten)
+            present.add(rewritten)
+    for old, new in renamed.items():
+        if old not in mentioned:
+            line = f"- [{new}]({new})"
+            if line not in present:
+                added.append(line)
+                present.add(line)
+    if not added:
+        return copies, None, bool(renamed)
+    # The shared index keeps its exact bytes; incoming entries follow it.
+    head = shared_index or b""
+    if head and not head.endswith(b"\n"):
+        head += b"\n"
+    data = head + ("\n".join(added) + "\n").encode("utf-8")
+    return copies, (shared_index, data), bool(renamed) or shared_index is not None
+
+
+def apply_memory_merge(memory, copies, index, backup_prefix):
+    for relative, data in copies.items():
+        target = memory / relative
+        target.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+        try:
+            with target.open("xb") as output:
+                output.write(data)
+        except FileExistsError:
+            # A running CLI wrote it meanwhile; equal content is fine.
+            if not target.is_file() or target.read_bytes() != data:
+                raise MemoryConflict("项目记忆在合并期间发生变化")
+    if index is None:
         return
+    original, data = index
+    path = memory / MEMORY_INDEX
+    if original is not None:
+        write_backup_bytes(backup_prefix, original)
+    with tempfile.NamedTemporaryFile(dir=memory, delete=False) as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    try:
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current != original:
+            raise MemoryConflict("项目记忆索引在合并期间发生变化")
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    prune_backup_series(backup_prefix)
+
+
+def link_project_memory(own, memory, backup, allowed_roots=()):
+    """Move a memory folder's notes into the shared one and leave a link behind.
+
+    Returns True when notes had to be merged (renamed copies or index lines).
+    Raises MemoryConflict when they cannot be merged without loss (the account
+    keeps its own folder) and SharedResourceConflict for unsafe links.
+    """
+    if same_path(own, memory) or own == memory or linked(own):
+        return False
     backup_prefix = None
+    merged = False
     if own.exists():
-        entries = list(own.rglob("*"))
-        if any(linked(entry) for entry in entries):
-            raise SharedResourceConflict("账号的项目记忆包含异常链接，原记忆已保留，请先核对")
-        sources = [source for source in entries if source.is_file()]
-        for source in sources:
-            destination = memory / source.relative_to(own)
-            if linked(destination) or destination.exists() and (not destination.is_file() or destination.read_bytes() != source.read_bytes()):
-                raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
-        for source in sources:
-            destination = memory / source.relative_to(own)
-            if linked(destination) or destination.exists() and destination.read_bytes() != source.read_bytes():
-                raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
-            destination.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-            if not destination.exists():
-                shutil.copy2(source, destination)
+        roots = [safe_resolve(own), safe_resolve(memory), *(safe_resolve(root) for root in allowed_roots)]
+        copies, index, merged = plan_memory_merge(own, memory, roots)
+        apply_memory_merge(memory, copies, index, shared_root() / "backups/common/projects" / memory.parent.name / "memory" / MEMORY_INDEX)
         backup_prefix = backup
-        backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        if backup.exists() or linked(backup):
-            backup = unique_backup_path(backup_prefix)
+        backup = unique_backup_path(backup_prefix)
         own.rename(backup)
     resource_link(own, memory)
     if backup_prefix is not None:
         prune_backup_series(backup_prefix)
+    return merged
 
 
-def shared_project_memory(base, directory):
-    """Locate the shared memory of a project, folding in older Cage locations."""
+def memory_notice(notices, key, own, memory, error=None, merged=False):
+    if notices is None:
+        if error is not None:
+            print(str(error), file=sys.stderr)
+        return
+    local, shared = shown_path(own), shown_path(memory)
+    if error is not None:
+        message = (f"项目记忆冲突：账号中的 {local} 与共用的 {shared} 有同名内容无法自动合并。本次该项目使用账号自己的记忆，"
+                   f"两份都原样保留，启动不受影响。请把需要的内容并入 {shared}，再删除 {local}，下次启动即改为共用。")
+        notices.show("memory:" + key, path_state(own) + "|" + path_state(memory), message,
+                     kind="memory_conflict", item=key, local=local, shared=shared)
+    elif merged:
+        message = (f"项目记忆已自动合并：账号中的 {local} 已并入共用的 {shared}。内容不同的同名笔记两份都保留"
+                   f"（账号的那份加了后缀），索引 MEMORY.md 按行合并；合并前的两份都有备份。")
+        notices.event("memory-merged:" + key, "memory_merged", message, item=key, local=local, shared=shared)
+
+
+def shared_project_memory(base, directory, notices=None):
+    """Locate the shared memory of a project, folding in older Cage locations.
+
+    Returns (key, memory) or (key, None) when the account's own memory for the
+    project could not be merged and stays in use this time.
+    """
     key = project_key(directory)
     projects = Path.home() / ".claude/projects"
     memory = projects / key / "memory"
     memory.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     legacy = legacy_project_key(directory)
     if legacy != key and (projects / legacy / "memory").is_dir():
-        link_project_memory(projects / legacy / "memory", memory, shared_root() / "backups/common/projects" / legacy / "memory")
+        try:
+            link_project_memory(projects / legacy / "memory", memory, shared_root() / "backups/common/projects" / legacy / "memory")
+        except MemoryConflict as error:
+            memory_notice(notices, legacy, projects / legacy / "memory", memory, error)
+    use_own = False
     for name in sorted({key, legacy}):
         own = config_directory(base) / "projects" / name / "memory"
         if name == key or own.is_dir() and not linked(own):
-            link_project_memory(own, memory, shared_root() / "backups" / base.name / "projects" / name / "memory")
-    return key, memory
+            try:
+                merged = link_project_memory(own, memory, shared_root() / "backups" / base.name / "projects" / name / "memory",
+                                             (config_directory(base),))
+                memory_notice(notices, name, own, memory, merged=merged)
+            except MemoryConflict as error:
+                memory_notice(notices, name, own, memory, error)
+                use_own = use_own or name == key
+    return key, None if use_own else memory
 
 
-def link_known_project_memory(base):
+def link_known_project_memory(base, record=None):
     """Give clients without launch flags (Desktop) the shared memory of known projects."""
     shared, own = Path.home() / ".claude/projects", config_directory(base) / "projects"
     keys = {path.parent.name for path in shared.glob("*/memory") if path.is_dir() and not linked(path)}
     keys |= {path.parent.name for path in own.glob("*/memory") if path.is_dir() and not linked(path)}
     for key in sorted(keys):
+        notices = Notices(record, scope="memory-" + key) if record is not None else None
         try:
             memory = shared / key / "memory"
             memory.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-            link_project_memory(own / key / "memory", memory, shared_root() / "backups" / base.name / "projects" / key / "memory")
+            merged = link_project_memory(own / key / "memory", memory, shared_root() / "backups" / base.name / "projects" / key / "memory",
+                                         (config_directory(base),))
+            memory_notice(notices, key, own / key / "memory", memory, merged=merged)
+        except MemoryConflict as error:
+            memory_notice(notices, key, own / key / "memory", shared / key / "memory", error)
         except (SharedResourceConflict, OSError) as error:
             print(str(error), file=sys.stderr)
+        if notices is not None:
+            notices.finish()
 
 
 def shared_launch_arguments(base, args, settings_fd=None):
@@ -1633,8 +2402,14 @@ def shared_launch_arguments(base, args, settings_fd=None):
         return shared_launch_arguments_locked(base, args, settings_fd)
 
 
-def shared_memory_path(memory):
-    """Recover only an owned memory directory; never replace runtime executables."""
+def shared_memory_path(memory, notices=None):
+    """Recover only an owned memory directory; never replace runtime executables.
+
+    A real directory found where the runtime alias belongs holds notes a CLI
+    wrote there; they are merged into the shared memory like an account's own
+    (MemoryConflict when that is not possible without loss). Foreign owners and
+    links leading elsewhere are refused.
+    """
     try:
         return _runtime["path"](memory)
     except _runtime["RuntimePathConflict"] as error:
@@ -1643,41 +2418,18 @@ def shared_memory_path(memory):
         raise SharedResourceConflict("项目记忆的运行路径异常，原数据已保留，请同步环境组件后重试")
     if os.name != "nt" and alias.stat().st_uid != os.getuid():
         raise SharedResourceConflict("项目记忆的运行路径归属异常，原数据已保留，请检查目录权限")
-    # Inspect the entire tree before copying. A conflicting note must never be
-    # overwritten, and links must not redirect recovery outside this directory.
-    entries = sorted(alias.rglob("*"))
-    for source in entries:
-        destination = memory / source.relative_to(alias)
-        if linked(source) or linked(destination):
-            raise SharedResourceConflict("项目记忆包含异常链接，原数据已保留，请先核对记忆目录")
-        if source.is_dir():
-            conflict = destination.exists() and not destination.is_dir()
-        elif source.is_file():
-            conflict = destination.exists() and (not destination.is_file() or source.read_bytes() != destination.read_bytes())
-        else:
-            conflict = True
-        if conflict:
-            raise SharedResourceConflict("项目记忆存在同名内容冲突，两份记忆均已保留，请先核对后重试")
+    # Plan the entire tree before copying: a note is never overwritten, and
+    # links must not redirect recovery outside this directory.
+    copies, index, merged = plan_memory_merge(alias, memory, [safe_resolve(alias), safe_resolve(memory)])
     backup_prefix = shared_root() / "backups/runtime-memory" / alias.name
     backup = unique_backup_path(backup_prefix)
     shutil.copytree(alias, backup, symlinks=True)
-    for source in entries:
-        destination = memory / source.relative_to(alias)
-        if source.is_dir():
-            destination.mkdir(mode=PRIVATE_MODE, exist_ok=True)
-        else:
-            # Exclusive publication also preserves a note written by an active
-            # CLI after preflight. On failure both the source and backup remain.
-            try:
-                with destination.open("xb") as output, source.open("rb") as input:
-                    shutil.copyfileobj(input, output)
-            except FileExistsError:
-                if not destination.is_file() or destination.read_bytes() != source.read_bytes():
-                    raise SharedResourceConflict("项目记忆在恢复期间发生冲突，两份记忆均已保留，请先核对后重试")
+    apply_memory_merge(memory, copies, index, shared_root() / "backups/common/projects" / memory.parent.name / "memory" / MEMORY_INDEX)
     # Retain the original directory too: an older process may still hold it
     # open or write to it. Nothing in recovery recursively deletes user notes.
     alias.rename(alias.with_name(backup.name + ".recovered"))
     prune_backup_series(backup_prefix)
+    memory_notice(notices, memory.parent.name, backup, memory, merged=merged)
     return _runtime["path"](memory)
 
 
@@ -1704,8 +2456,22 @@ def shared_launch_arguments_locked(base, args, settings_fd):
                 directory = common_git.parent.resolve()
     except (OSError, subprocess.SubprocessError):
         pass
-    _, memory = shared_project_memory(base, directory)
-    settings = {"autoMemoryDirectory": shared_memory_path(memory)}
+    # Memory problems are reported like other launch problems: on stderr and,
+    # for a private profile, beside the account in the workbench.
+    record = read_record(base) if base.name != DEFAULT and base.is_dir() else None
+    key = project_key(directory)
+    notices = Notices(record, scope="memory-" + key) if record is not None else None
+    _, memory = shared_project_memory(base, directory, notices)
+    settings = {}
+    if memory is not None:
+        try:
+            settings["autoMemoryDirectory"] = shared_memory_path(memory, notices)
+        except MemoryConflict as error:
+            # The account's own project memory serves this launch.
+            memory_notice(notices, key, memory.parent / "runtime", memory, error)
+    if notices is not None:
+        notices.finish(base.name)
+        write_record(base, record)
     _, common_settings = json_snapshot(Path.home() / ".claude/settings.json")
     shared_keys = SHARED_SETTINGS
     if isinstance(common_settings, dict):
@@ -1790,6 +2556,16 @@ def main(args, *, mobile_settings_fd=None, verify_mobile=None):
             if quota:
                 result[candidate] = quota
         print(json.dumps(result))
+        return 0
+    if mode == "notices":
+        # Launch problems the workbench shows beside each account.
+        result = {}
+        for candidate in [account_id, *rest]:
+            profile(candidate)
+            listed = read_notices(candidate)
+            if listed:
+                result[candidate] = listed
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     base = profile(account_id)
     if account_id == DEFAULT and mode == "login":
