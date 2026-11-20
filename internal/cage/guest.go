@@ -357,13 +357,51 @@ func componentStartScript() string {
 
 func markGuestStart(body string) string {
 	manifest, _ := json.Marshal(RequiredGuestManifest())
-	return "set -euo pipefail\nsudo rm -f /etc/claude-cage/components.json\n(\n" + body + "\n)\nsudo python3 - <<'CAGE_COMPONENT_MANIFEST'\nfrom pathlib import Path\nimport os,tempfile\np=Path('/etc/claude-cage/components.json')\nfd,name=tempfile.mkstemp(prefix='.components-',dir=p.parent)\nwith os.fdopen(fd,'w') as f:\n f.write(" + fmt.Sprintf("%q", string(manifest)) + ")\n f.flush();os.fsync(f.fileno())\nos.chmod(name,0o644)\nos.replace(name,p)\nCAGE_COMPONENT_MANIFEST\n"
+	// Keep the last successful manifest, but invalidate it durably before any
+	// component changes. An interrupted start must be replayed, never accepted.
+	return `set -euo pipefail
+sudo python3 - <<'CAGE_COMPONENT_UPDATE'
+from pathlib import Path
+import os
+p=Path('/etc/claude-cage/components.updating')
+p.parent.mkdir(parents=True,exist_ok=True)
+with p.open('w') as f:
+ f.flush();os.fsync(f.fileno())
+fd=os.open(p.parent,os.O_RDONLY)
+try: os.fsync(fd)
+finally: os.close(fd)
+CAGE_COMPONENT_UPDATE
+(
+` + body + `
+)
+sudo python3 - <<'CAGE_COMPONENT_MANIFEST'
+from pathlib import Path
+import os,tempfile
+p=Path('/etc/claude-cage/components.json')
+directory=os.open(p.parent,os.O_RDONLY)
+name=None
+try:
+ fd,name=tempfile.mkstemp(prefix='.components-',dir=p.parent)
+ with os.fdopen(fd,'w') as f:
+  f.write(` + fmt.Sprintf("%q", string(manifest)) + `)
+  os.chmod(name,0o644)
+  f.flush();os.fsync(f.fileno())
+ os.replace(name,p)
+ os.fsync(directory)
+ p.with_suffix('.updating').unlink()
+ os.fsync(directory)
+finally:
+ if name is not None and os.path.exists(name): os.unlink(name)
+ os.close(directory)
+CAGE_COMPONENT_MANIFEST
+`
 }
 
 type GuestManifest struct {
 	Protocol   int    `json:"protocol"`
 	Revision   string `json:"revision"`
 	AppVersion string `json:"app_version"`
+	Updating   bool   `json:"updating,omitempty"`
 }
 
 var guestRevision = sync.OnceValue(func() string {
@@ -377,7 +415,7 @@ func RequiredGuestManifest() GuestManifest {
 
 func (m GuestManifest) Current() bool {
 	required := RequiredGuestManifest()
-	return m.Protocol == required.Protocol && m.Revision == required.Revision
+	return !m.Updating && m.Protocol == required.Protocol && m.Revision == required.Revision
 }
 
 func guestDiagnostics() string {
