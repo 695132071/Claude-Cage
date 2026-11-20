@@ -84,11 +84,22 @@ if not p.is_file():
 func (s *Server) installCLIChannel(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	command := "exec /bin/bash -c " + shellescape.Quote("exec /bin/bash -lc "+shellescape.Quote("exec "+cliChannelInstallCommand()))
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
-	cmd.Stdin = bytes.NewReader(cliChannelBundle())
-	cmd.WaitDelay = 2 * time.Second
-	if err := cmd.Run(); err != nil {
+	script := "exec /bin/bash -lc " + shellescape.Quote("exec "+cliChannelInstallCommand())
+	bundle := cliChannelBundle()
+	var err error
+	if reply, sent, runErr := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, bundle, 64<<10); sent {
+		err = runErr
+		if err == nil && reply.code != 0 {
+			err = fmt.Errorf("exit status %d", reply.code)
+		}
+	} else {
+		command := "exec /bin/bash -c " + shellescape.Quote(script)
+		cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
+		cmd.Stdin = bytes.NewReader(bundle)
+		cmd.WaitDelay = 2 * time.Second
+		err = cmd.Run()
+	}
+	if err != nil {
 		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=install failure=guest_command context=%v", ctx.Err()))
 		return errors.New("电脑未能准备会话通道，聊天记录已保留。")
 	}
