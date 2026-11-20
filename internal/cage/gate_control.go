@@ -88,6 +88,9 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 		return nil, err
 	}
 	_, err = temporary.Write(data)
+	if err == nil {
+		err = temporary.Sync()
+	}
 	if closeErr := temporary.Close(); err == nil {
 		err = closeErr
 	}

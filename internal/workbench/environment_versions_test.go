@@ -2,9 +2,15 @@ package workbench
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -12,6 +18,7 @@ import (
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
+	"golang.org/x/crypto/ssh"
 )
 
 func TestGuestVersionSnapshotFiltersCodeServerOutput(t *testing.T) {
@@ -269,5 +276,119 @@ func TestVersionQueryPublishesUpdateOnlyWithoutNewerDecision(t *testing.T) {
 	close(release)
 	if required, _ := status(); required {
 		t.Fatal("a query during maintenance published its result")
+	}
+}
+
+func TestMissingOrTruncatedManifestFailClosesAndRecoversOnReattach(t *testing.T) {
+	if _, err := os.Stat(sshExecutable()); err != nil {
+		t.Skip("OpenSSH unavailable")
+	}
+	for _, corrupt := range []string{"null", `{"protocol":`} {
+		t.Run("manifest-"+corrupt, func(t *testing.T) {
+			s := transferMountServer(t, true, "current")
+			cfg, err := loadConfig(s.configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gate, err := cage.NewEgressGate(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stopGate, err := cage.StartGateControl(s.configPath, s.instanceDir(), gate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(stopGate)
+			if err := gate.BeginCheck(); err != nil {
+				t.Fatal(err)
+			}
+			grantTestGate(t, gate)
+			s.publishGate(gate.Status())
+
+			listener, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+			_, key, err := ed25519.GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatal(err)
+			}
+			signer, err := ssh.NewSignerFromKey(key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sshConfig := &ssh.ServerConfig{NoClientAuth: true}
+			sshConfig.AddHostKey(signer)
+			var mu sync.Mutex
+			manifestPayload := corrupt
+			go func() {
+				for {
+					conn, err := listener.Accept()
+					if err != nil {
+						return
+					}
+					go func() {
+						server, channels, requests, err := ssh.NewServerConn(conn, sshConfig)
+						if err != nil {
+							_ = conn.Close()
+							return
+						}
+						go ssh.DiscardRequests(requests)
+						for incoming := range channels {
+							ch, reqs, err := incoming.Accept()
+							if err != nil {
+								break
+							}
+							for req := range reqs {
+								if req.Type != "exec" {
+									_ = req.Reply(false, nil)
+									continue
+								}
+								_ = req.Reply(true, nil)
+								mu.Lock()
+								payload := manifestPayload
+								mu.Unlock()
+								_, _ = ch.Write([]byte("{\"token\":\"guest-token\"}\nvnc-secret\n" + payload + "\n"))
+								_, _ = ch.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{0}))
+								break
+							}
+							_ = ch.Close()
+						}
+						_ = server.Close()
+					}()
+				}
+			}()
+			clientConfig := fmt.Sprintf("Host *\n HostName 127.0.0.1\n Port %d\n User cage\n StrictHostKeyChecking no\n UserKnownHostsFile %s\n", listener.Addr().(*net.TCPAddr).Port, os.DevNull)
+			if err := os.WriteFile(filepath.Join(s.instanceDir(), "ssh.config"), []byte(clientConfig), 0600); err != nil {
+				t.Fatal(err)
+			}
+
+			// First attach sees missing/truncated manifest from interrupted boot:
+			// must fail-closed (close proxy gate) and flag environment_update_required.
+			if err := s.attach(); !errors.Is(err, errGuestUpdateRequired) {
+				t.Fatalf("attach with %q: got %v, want errGuestUpdateRequired", corrupt, err)
+			}
+			if gate.Status().Mode != cage.GateClosed {
+				t.Fatalf("proxy gate stayed open despite %q manifest", corrupt)
+			}
+			s.mu.Lock()
+			needsUpdate := s.guestUpdateRequired
+			ready := s.ready
+			s.mu.Unlock()
+			if !needsUpdate || ready {
+				t.Fatalf("state after %q manifest: needsUpdate=%v ready=%v", corrupt, needsUpdate, ready)
+			}
+
+			// Once retry republishes the current manifest, parseGuestConnection accepts it.
+			required, _ := json.Marshal(cage.RequiredGuestManifest())
+			mu.Lock()
+			manifestPayload = string(required)
+			mu.Unlock()
+			creds, parsed, err := parseGuestConnection([]byte("{\"token\":\"guest-token\"}\nvnc-secret\n" + string(required)))
+			if err != nil || parsed == nil || !parsed.Current() || creds.Token != "guest-token" {
+				t.Fatalf("republished manifest not accepted: creds=%+v parsed=%+v err=%v", creds, parsed, err)
+			}
+		})
 	}
 }

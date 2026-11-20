@@ -127,3 +127,46 @@ func TestUnreadableRunningRecordDoesNotBlockStart(t *testing.T) {
 		t.Fatal("temporary records left behind:", leftovers)
 	}
 }
+
+func TestTruncatedRunningAndGateRecordsAllowRecovery(t *testing.T) {
+	dir := t.TempDir()
+	instance := filepath.Join(dir, "lima", "interrupted")
+	if err := os.MkdirAll(instance, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for _, content := range []string{"", `{"pid":`} {
+		if err := os.WriteFile(filepath.Join(instance, "cage-running.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := stoppedStorage(dir); err != nil {
+			t.Fatalf("unreadable cage-running.json %q blocked storage check: %v", content, err)
+		}
+	}
+	// Truncated cage-gate.json left by a crash is replaced cleanly on next start.
+	gatePath := filepath.Join(instance, gateRecordName)
+	if err := os.WriteFile(gatePath, []byte(`{"socket":`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := DefaultConfig()
+	cfgPath := filepath.Join(dir, "config.json")
+	rawCfg, _ := json.Marshal(cfg)
+	if err := os.WriteFile(cfgPath, rawCfg, 0600); err != nil {
+		t.Fatal(err)
+	}
+	gate, err := NewEgressGate(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, err := StartGateControl(cfgPath, instance, gate)
+	if err != nil {
+		t.Fatalf("StartGateControl failed over truncated gate record: %v", err)
+	}
+	defer stop()
+	rawGate, err := os.ReadFile(gatePath)
+	if err != nil || !json.Valid(rawGate) {
+		t.Fatalf("gate record not replaced cleanly: %q %v", rawGate, err)
+	}
+	if leftovers, _ := filepath.Glob(filepath.Join(instance, ".gate-*")); len(leftovers) != 0 {
+		t.Fatal("temporary gate records left behind:", leftovers)
+	}
+}

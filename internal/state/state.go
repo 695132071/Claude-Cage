@@ -88,7 +88,7 @@ func (d Dir) Write(name string, data []byte) error {
 		return err
 	}
 	_, werr := tmp.Write(data)
-	if err := errors.Join(werr, tmp.Chmod(0o644), tmp.Close()); err != nil {
+	if err := errors.Join(werr, tmp.Sync(), tmp.Chmod(0o644), tmp.Close()); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}

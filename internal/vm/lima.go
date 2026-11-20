@@ -485,6 +485,9 @@ func (l *Lima) Edit(ctx context.Context, name string, s Settings) error {
 	}
 	tmp := f.Name()
 	_, err = f.Write(y)
+	if err == nil {
+		err = f.Sync()
+	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
