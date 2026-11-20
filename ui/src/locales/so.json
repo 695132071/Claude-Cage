@@ -2472,5 +2472,9 @@
   "暂不支持编辑分区 Cookie": "Wax ka beddelka Cookie-ga qaybsan weli lama taageero",
   "请在网站页面中新增 Cookie": "Cookie ka dar bog mareeg ah",
   "当前账户模式暂不支持手机访问，请在「设置 → 账户」设置密码或开启「记住登录」后重新连接。": "Habka akoonka hadda ma taageero gelitaanka taleefanka. Fadlan ka deji eray sir ah ama daar \"Xasuuso gelitaanka\" gudaha \"Dejinta → Akoonka\", kadibna dib u xidh.",
-  "当前电脑处于免密码本机工作区或未开启「记住登录」，手机连接后会无法访问。请在「设置 → 账户」设置账户密码或开启「记住登录」。": "Kombiyuutarkani wuxuu ku jiraa goob shaqo oo maxalli ah oo aan eray sir lahayn ama \"Xasuuso gelitaanka\" ma shidna, taleefankuna ma geli karo xidhiidhka kadib. Fadlan ka deji erayga sirta ah ee akoonka ama daar \"Xasuuso gelitaanka\" gudaha \"Dejinta → Akoonka\"."
+  "当前电脑处于免密码本机工作区或未开启「记住登录」，手机连接后会无法访问。请在「设置 → 账户」设置账户密码或开启「记住登录」。": "Kombiyuutarkani wuxuu ku jiraa goob shaqo oo maxalli ah oo aan eray sir lahayn ama \"Xasuuso gelitaanka\" ma shidna, taleefankuna ma geli karo xidhiidhka kadib. Fadlan ka deji erayga sirta ah ee akoonka ama daar \"Xasuuso gelitaanka\" gudaha \"Dejinta → Akoonka\".",
+  "离线保存待验证的静态 IP 草稿": "Keydi qabyo-qoraalka IP-ga taagan ee sugaya xaqiijin (offline)",
+  "离线保存待验证的静态 IP 草稿？": "Ma la keydiyaa qabyo-qoraalka IP-ga taagan ee sugaya xaqiijin?",
+  "仅保存静态 IP 基准，不会放行外网。待代理恢复并通过实时出口、国家与隔离检查后才允许联网。": "Waxaa la keydinayaa oo keliya tixraaca IP-ga taagan, shabakadda dibaddana lama furayo. Shabakadda waxaa la oggolaanayaa oo keliya marka wakiilku soo noqdo oo baadhitaanada tooska ah ee bixitaanka, dalka iyo go'doominta ay wada guuleystaan.",
+  "保存待验证草稿": "Keydi qabyo-qoraalka"
 }

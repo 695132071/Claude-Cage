@@ -68,6 +68,7 @@ export function SettingsPanel({
     [probing, setProbing] = useState(false),
     [probeFailed, setProbeFailed] = useState(false),
     [error, setError] = useState(""),
+    [staticDraftOffer, setStaticDraftOffer] = useState(false),
     [jobId, setJobId] = useState(""),
     [submitting, setSubmitting] = useState(false);
   const changed =
@@ -129,8 +130,10 @@ export function SettingsPanel({
       setJobId("");
       if (status.job.error || status.job.canceled) {
         if (status.job.settings_saved) onSaved();
+        setStaticDraftOffer(status.job.recovery === "static-ip-draft-available");
         setError(status.job.error || status.job.message);
       } else {
+        setStaticDraftOffer(false);
         onSaved();
         if (!proxyDirty) onClose();
       }
@@ -158,9 +161,18 @@ export function SettingsPanel({
       setProbing(false);
     }
   };
-  const save = async () => {
+  const save = async ({ saveStaticDraft = false } = {}) => {
     if (busy) return;
-    if (
+    if (saveStaticDraft) {
+      if (
+        !(await onConfirm({
+          title: "离线保存待验证的静态 IP 草稿？",
+          body: "仅保存静态 IP 基准，不会放行外网。待代理恢复并通过实时出口、国家与隔离检查后才允许联网。",
+          confirm: "保存待验证草稿",
+        }))
+      )
+        return;
+    } else if (
       environmentChanged &&
       status.vm_running &&
       !(await onConfirm({
@@ -171,10 +183,12 @@ export function SettingsPanel({
     )
       return;
     setError("");
+    setStaticDraftOffer(false);
     setSubmitting(true);
     try {
       const payload = { ...draft };
       delete payload.browser_home_url;
+      if (saveStaticDraft) payload.save_static_draft = true;
       const result = await api("/settings", payload);
       setJobId(result.id);
     } catch (e) {
@@ -746,6 +760,17 @@ export function SettingsPanel({
                   {tr("手动设置时区和语言")}
                 </button>
               )}
+              {(staticDraftOffer || probeFailed) &&
+                draft.exit_policy?.mode === "static" &&
+                Boolean(draft.exit_policy?.ip?.trim()) && (
+                  <button
+                    className="text-button"
+                    disabled={busy}
+                    onClick={() => save({ saveStaticDraft: true })}
+                  >
+                    {tr("离线保存待验证的静态 IP 草稿")}
+                  </button>
+                )}
             </div>
           )}
         </div>
@@ -768,7 +793,7 @@ export function SettingsPanel({
               <button
                 className="primary"
                 disabled={!changed || busy}
-                onClick={save}
+                onClick={() => save()}
               >
                 {busy ? (
                   <LoaderCircle size={15} className="spin" />

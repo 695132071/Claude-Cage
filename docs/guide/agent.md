@@ -147,7 +147,7 @@ cage agent call settings.get
 
 首次需要换存储位置时，在安装前用 `storage.set`，输入 `directory`、`previous`、`migrate`；后两项分别来自 `storage.get` 的 `directory` 和 `has_environment`。已有环境的迁移会停止任务并保留备份，应先保存工作。资源配置用 `resources.set` 的 `allocation` 对象；修改保存后再以 `{}` 调用应用资源，会重启环境。容器资源由服务器部署管理。
 
-只发送需要修改的设置，先预检再应用；browser_home_url 单独通过 browser.preferences.set 保存，环境设置分开提交；未指定字段会保留，包括出口规则对象中未指定的 IP、国家和城市基准。`null` 不用于清空字段。
+只发送需要修改的设置，先预检再应用；browser_home_url 单独通过 browser.preferences.set 保存，环境设置分开提交；未指定字段会保留，包括出口规则对象中未指定的 IP、国家和城市基准。`null` 不用于清空字段。修改静态 IP 基准遇到实时出口采样超时或代理连接失败时，默认不会保存并明确提示“静态 IP 基准未保存”（作业 `recovery` 为 `static-ip-draft-available`）；若需离线保存待验证的非大陆静态 IP 基准，可显式传入 `save_static_draft: true`，后台仅保存草稿并保持外网关闭，实时出口、国家与隔离检查全部通过前不会放行外网。
 
 ```json
 {"patch":{"auto_timezone":true,"auto_language":true},"dry_run":true}

@@ -57,7 +57,7 @@ func AgentOperations() []AgentOperation {
 	post("account.create", "Create an account only on an empty profile; user chooses the password. Returns a recovery_key once; deliver it privately to the user for secure storage", "/api/account/create", object(map[string]string{"username": "string", "password": "string", "confirm_password": "string", "avatar": "string"}))
 	post("account.unlock", "Unlock using a user-provided password via private input", "/api/account/unlock", object(map[string]string{"password": "string"}))
 	get("settings.get", "Read settings without proxy credentials", "/api/settings")
-	post("settings.patch", "Merge specified fields under the operation lock; dry_run validates without writing", "/api/agent/settings", object(map[string]string{"patch": "object", "dry_run": "boolean"}))
+	post("settings.patch", "Merge specified fields under the operation lock; dry_run validates without writing; save_static_draft saves a pending non-mainland static IP baseline while keeping egress closed if live exit probing fails", "/api/agent/settings", object(map[string]string{"patch": "object", "dry_run": "boolean", "save_static_draft": "boolean"}))
 	// Include the production Settings schema inside the patch field.
 	ops[len(ops)-1].InputSchema["properties"].(map[string]any)["patch"] = from(Settings{})
 	ops[len(ops)-1].InputSchema["properties"].(map[string]any)["patch"].(map[string]any)["properties"].(map[string]any)["exit_policy"] = object(map[string]string{"mode": "string", "scope": "string", "ip": "string", "country_code": "string", "region": "string", "city": "string"})
@@ -326,8 +326,9 @@ func agentRedact(data string) string {
 
 func (s *Server) agentSettings(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Patch  map[string]json.RawMessage `json:"patch"`
-		DryRun bool                       `json:"dry_run"`
+		Patch           map[string]json.RawMessage `json:"patch"`
+		DryRun          bool                       `json:"dry_run"`
+		SaveStaticDraft bool                       `json:"save_static_draft"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -392,7 +393,7 @@ func (s *Server) agentSettings(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		return s.apply(v, true)
+		return s.applyWithOptions(v, true, in.SaveStaticDraft)
 	})
 }
 

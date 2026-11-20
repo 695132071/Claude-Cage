@@ -700,7 +700,15 @@ func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, settingsView(c, p))
 }
 func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile, bool) {
-	var input Settings
+	v, _, ok := s.proposedWithOptions(w, r)
+	return v, ok
+}
+
+func (s *Server) proposedWithOptions(w http.ResponseWriter, r *http.Request) (savedProfile, bool, bool) {
+	var input struct {
+		Settings
+		SaveStaticDraft bool `json:"save_static_draft"`
+	}
 	// Older clients omit preferences introduced after their release.
 	s.mu.Lock()
 	input.MobileRelay = s.preferences.MobileRelay
@@ -720,7 +728,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 		input.DNSBootstrapURLs = current.DNS.BootstrapURLs()
 	}
 	if !readJSON(w, r, &input) {
-		return savedProfile{}, false
+		return savedProfile{}, false, false
 	}
 	// The tools that act on this computer have their own route, open only to
 	// this computer's window; saving settings never changes them.
@@ -728,14 +736,14 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	old, err := loadConfig(s.configPath)
 	if err != nil {
 		requestError(w, err)
-		return savedProfile{}, false
+		return savedProfile{}, false, false
 	}
-	c, p, err := proposedSettings(input, old, s.profile)
+	c, p, err := proposedSettings(input.Settings, old, s.profile)
 	if err != nil {
 		requestError(w, err)
-		return savedProfile{}, false
+		return savedProfile{}, false, false
 	}
-	return savedProfile{c, p}, true
+	return savedProfile{c, p}, input.SaveStaticDraft, true
 }
 func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	v, ok := s.proposed(w, r)
@@ -758,7 +766,7 @@ func (s *Server) probe(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, loc)
 }
 func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
-	v, ok := s.proposed(w, r)
+	v, saveStaticDraft, ok := s.proposedWithOptions(w, r)
 	if !ok {
 		return
 	}
@@ -774,7 +782,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		v.Preferences.BrowserHomeURL = s.preferences.BrowserHomeURL
 		s.mu.Unlock()
-		return s.apply(v, true)
+		return s.applyWithOptions(v, true, saveStaticDraft)
 	})
 }
 func (s *Server) restore(w http.ResponseWriter, r *http.Request) {

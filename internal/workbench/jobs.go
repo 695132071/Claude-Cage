@@ -217,6 +217,10 @@ func (m *jobManager) finishLocked(execution *jobExecution, err error) {
 			m.state.Recovery = projectFailure.Recovery
 			m.state.Workspace = projectFailure.Path
 		}
+		var recoveryFailure *jobRecoveryError
+		if m.state.Recovery == "" && errors.As(err, &recoveryFailure) {
+			m.state.Recovery = recoveryFailure.Recovery
+		}
 		m.state.Message = jobName(m.state.Kind) + "失败"
 		var networkFailure networkCheckError
 		if m.state.Kind == "start" && errors.As(err, &networkFailure) {
