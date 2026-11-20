@@ -1708,21 +1708,49 @@ def launch_mcp_servers(base):
 
 
 # A running terminal keeps using the --mcp-config file it was started with
-# (the CLI can read it again, for example to reconnect a server). Each launch
-# refreshes the time of the file it uses; only files no launch used for this
-# long are removed.
+# (the CLI can read it again, for example to reconnect a server). A file named
+# on the command line of a live process is never removed; of the rest, only
+# those no launch used for this long are. Each launch refreshes the time of the
+# file it uses.
 MCP_LAUNCH_FILE_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def launch_files_in_use():
+    """Real paths of the .json files named on the command line of any live process.
+
+    The CLI receives a runtime alias (a link with a different name) rather
+    than the file itself, so each argument is resolved through its links.
+    """
+    used = set()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            arguments = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        for argument in arguments:
+            for part in argument.split():
+                text = os.fsdecode(part)
+                if text.endswith(".json") and os.sep in text:
+                    used.add(os.path.realpath(text))
+    return used
 
 
 def prune_stale_mcp_launch_files(folder, keep=None, now=None):
     if not folder.is_dir():
         return
     cutoff = (time.time() if now is None else now) - MCP_LAUNCH_FILE_MAX_AGE
+    in_use = None
     for candidate in folder.glob("mcp-*.json"):
         if candidate == keep or linked(candidate):
             continue
         try:
-            if candidate.stat().st_mtime < cutoff:
+            if candidate.stat().st_mtime >= cutoff:
+                continue
+            if in_use is None:
+                in_use = launch_files_in_use()
+            if os.path.realpath(candidate) not in in_use:
                 candidate.unlink(missing_ok=True)
         except OSError:
             pass

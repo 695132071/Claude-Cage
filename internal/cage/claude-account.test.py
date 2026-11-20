@@ -1300,7 +1300,17 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.write(self.home / ".claude.json", {"mcpServers": {}})
         helper.shared_mcp_arguments(first, ["--settings", "x"])
         self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [mcp2])
+        # A terminal running for longer than that, started with the alias path
+        # the CLI receives, still holds on to its file.
+        running = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)", "--mcp-config", flags2[1]])
+        self.addCleanup(running.wait)
+        self.addCleanup(running.kill)
+        time.sleep(0.2)
         os.utime(mcp2, (aged, aged))
+        helper.shared_mcp_arguments(first, ["--settings", "x"])
+        self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [mcp2])
+        running.kill()
+        running.wait()
         helper.shared_mcp_arguments(first, ["--settings", "x"])
         self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [])
         # Aborted replace_json (current != original) leaks zero backups.
