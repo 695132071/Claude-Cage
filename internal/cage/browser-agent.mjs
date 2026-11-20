@@ -1013,11 +1013,17 @@ const server = http.createServer(async (req, res) => {
           });
           // Keep consecutive close/new commands ordered after target destruction.
           closed.catch(() => {});
+          let retry;
           try {
             await cdp("Target.closeTarget", { targetId: id });
+            // Chromium can accept a close while a new window's first
+            // navigation is starting, then keep the page. Ask again.
+            retry = setInterval(() => {
+              if (targets.has(id)) void cdp("Target.closeTarget", { targetId: id }).catch(() => {});
+            }, 750);
             await closed;
             if (wasPrivate) await privateBrowser.prune();
-          } finally { clearTimeout(timer); closingTargets.delete(id); }
+          } finally { clearTimeout(timer); clearInterval(retry); closingTargets.delete(id); }
           break;
         }
         case "/navigate":
