@@ -9,6 +9,7 @@ import { clientKeyboard, isRemoteClient, saveClientKeyboard } from "./client-con
 import { shortcut, usesControl } from "./platform.mjs";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Bell,
   Globe2,
   Clock3,
   FolderOpen,
@@ -26,6 +27,7 @@ import { api } from "./api";
 import "./settings.css";
 import { SafetyMessage } from "./safety-message";
 import { AppearanceSettings } from "./appearance-settings";
+import { NotificationSettings } from "./notification-settings";
 import { ProxySettings } from "./proxy-settings";
 import { ExitPolicyFields } from "./exit-policy";
 import { canonicalExitPolicy } from "./safety-state.mjs";
@@ -43,6 +45,7 @@ const sections = [
   ["archived-sessions", "已归档会话", Archive],
   ["keyboard", "通用", Settings],
   ["appearance", "外观", Palette],
+  ["notifications", "通知", Bell],
   ["mobile", "远程连接", Smartphone],
   ["network", "网络与代理", Globe2],
   ["region", "时区与语言", Clock3],
@@ -265,6 +268,7 @@ export function SettingsPanel({
       <div className="settings-main">
         <div className={section === "archived-sessions" ? "settings-content settings-content--archives" : section === "account" ? "settings-content settings-content--account" : section === "mobile" ? "settings-content settings-content--remote" : "settings-content"} ref={contentRef}>
           {section === "appearance" && <AppearanceSettings />}
+          {section === "notifications" && <NotificationSettings />}
           {section === "about" && <AboutSettings />}
           {section === "archived-sessions" && <ArchivedSessions ready={status.ready && !busy} />}
           {section === "vault" && <PasswordVaultSettings onConfirm={onConfirm} onDirty={setAccountDirty} />}
@@ -774,7 +778,7 @@ export function SettingsPanel({
             </div>
           )}
         </div>
-        {(!["appearance", "browser", "account", "vault", "mobile", "archived-sessions", "project", "about"].includes(section) || changed) && (
+        {(!["appearance", "notifications", "browser", "account", "vault", "mobile", "archived-sessions", "project", "about"].includes(section) || changed) && (
           <footer className="settings-footer">
             {" "}
             <>

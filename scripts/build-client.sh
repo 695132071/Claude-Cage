@@ -45,7 +45,7 @@ if [[ "$platform" == macos ]]; then
   bundle="$stage/result/Cage Client.app"
   mkdir -p "$bundle/Contents/MacOS" "$bundle/Contents/Resources"
   xcrun swiftc ${swift_flags[@]+"${swift_flags[@]}"} -O -target "$(uname -m)-apple-macosx14.0" -parse-as-library \
-    -framework Cocoa -framework WebKit -framework Security -framework LocalAuthentication \
+    -framework Cocoa -framework WebKit -framework Security -framework LocalAuthentication -framework UserNotifications \
     desktop/Cage.swift desktop/InterfaceLanguage.swift desktop/MacKeyboard.swift desktop/NativeInput.swift desktop/Updates.swift desktop/AccountDevice.swift \
     -o "$bundle/Contents/MacOS/Cage"
   node scripts/bundle-cloud-kit.mjs "$bundle/Contents/Resources"

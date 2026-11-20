@@ -649,6 +649,68 @@ class ChannelTests(unittest.TestCase):
         settings = channel.read_json(self.root / connection / "settings.json")
         self.assertEqual(settings["statusLine"]["padding"], 2)
 
+    def test_turn_completion_state_deduplicates_and_suppresses_failures(self):
+        connection = str(uuid.uuid4())
+        state_path = self.root / connection / "state.json"
+        def fire(event_name, **extra):
+            payload = {"hook_event_name": event_name, "session_id": self.session, "cwd": self.project, **extra}
+            with patch.object(channel.sys, "stdin", io.StringIO(json.dumps(payload))):
+                channel.hook(connection)
+
+        # Stray Stop before any prompt does not advance turn_done.
+        fire("Stop")
+        self.assertIsNone(channel.read_json(state_path).get("turn_done"))
+
+        # Turn 1 completes normally; duplicate Stop keeps turn_done at 1.
+        fire("UserPromptSubmit")
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 1)
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 1)
+
+        # Turn 2 ends with StopFailure; subsequent Stop must not advance turn_done.
+        fire("UserPromptSubmit")
+        fire("StopFailure", error="rate_limit")
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 1)
+
+        # Turn 3 canceled via stopped flag; Stop must not advance turn_done.
+        fire("UserPromptSubmit")
+        with channel.state_file(connection) as state:
+            state["stopped"] = True
+            state["busy"] = False
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 1)
+
+        # Turn 4 ends via SessionEnd; no completion advance.
+        fire("UserPromptSubmit")
+        fire("SessionEnd")
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 1)
+
+        # Turn 5 completes normally (continuous second completed turn).
+        fire("UserPromptSubmit")
+        fire("Stop")
+        self.assertEqual(channel.read_json(state_path).get("turn_done"), 2)
+
+    def test_watch_streams_turn_completions_and_ignores_stale_connections(self):
+        source = Path(__file__).with_name("cli_events_watch.py")
+        stale = str(uuid.uuid4())
+        active = str(uuid.uuid4())
+        channel.save(self.root / stale / "state.json", {"cli_id": self.session, "turn_done": 3, "closed": False})
+        channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 1, "closed": False})
+        watcher = subprocess.Popen(
+            [sys.executable, "-I", str(source), json.dumps({"connections": [active], "interval": 0.05, "heartbeat": 1.0})],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env,
+        )
+        self.addCleanup(lambda: (watcher.terminate(), watcher.wait(timeout=5), watcher.stdout.close(), watcher.stderr.close()))
+        first = json.loads(watcher.stdout.readline())
+        self.assertEqual(first["id"], f"{active}:turn:1")
+        self.assertEqual(first["event"], "turn_completed")
+        channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 2, "closed": False})
+        second = json.loads(watcher.stdout.readline())
+        self.assertEqual(second["id"], f"{active}:turn:2")
+
 
 if __name__ == "__main__":
     unittest.main()
