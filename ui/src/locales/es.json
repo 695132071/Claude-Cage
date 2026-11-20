@@ -2470,5 +2470,7 @@
   "未指定": "Sin especificar",
   "只能编辑当前网站的 Cookie": "Solo se pueden editar las cookies del sitio actual",
   "暂不支持编辑分区 Cookie": "Aún no se pueden editar cookies con partición",
-  "请在网站页面中新增 Cookie": "Añada cookies desde una página de un sitio web"
+  "请在网站页面中新增 Cookie": "Añada cookies desde una página de un sitio web",
+  "当前账户模式暂不支持手机访问，请在「设置 → 账户」设置密码或开启「记住登录」后重新连接。": "El modo de cuenta actual aún no permite el acceso desde el teléfono. Configure una contraseña o active «Recordar inicio de sesión» en «Configuración → Cuenta» y vuelva a conectarse.",
+  "当前电脑处于免密码本机工作区或未开启「记住登录」，手机连接后会无法访问。请在「设置 → 账户」设置账户密码或开启「记住登录」。": "Este equipo utiliza un espacio de trabajo local sin contraseña o no tiene activado «Recordar inicio de sesión», por lo que el teléfono no podrá acceder tras conectarse. Configure una contraseña de cuenta o active «Recordar inicio de sesión» en «Configuración → Cuenta»."
 }

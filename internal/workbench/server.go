@@ -570,8 +570,13 @@ func (s *Server) handler() http.Handler {
 		trustedDesktop := s.hasTrustedView(r)
 		phoneRoom := s.pairedPhoneRoom(r)
 		if strings.HasPrefix(r.URL.Path, "/api/") && !accountRoute && !bootstrapRoute && !strings.HasPrefix(r.URL.Path, "/api/diagnostics") && !(r.Method == "GET" && r.URL.Path == "/api/appearance") {
-			epoch, unlocked := s.account.accessFor(trustedDesktop, phoneRoom != nil)
-			if !unlocked {
+			epoch, access := s.account.accessStateFor(trustedDesktop, phoneRoom != nil)
+			if access != accountAccessGranted {
+				if access == accountAccessDesktopOnly {
+					w.Header().Set("X-Cage-Recovery", "desktop-account-mobile-access")
+					http.Error(w, s.account.desktopOnlyMobileMessage(), http.StatusLocked)
+					return
+				}
 				http.Error(w, "Cage 已锁定，请先登录", http.StatusLocked)
 				return
 			}
