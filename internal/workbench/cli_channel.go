@@ -10,7 +10,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -195,9 +194,8 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 		// Session views and discovery run every few seconds for each terminal.
 		// The shared control connection avoids an SSH session and the user's
 		// shell startup per call; a request that was never sent uses its own.
-		var reply guestSessionResult
-		var runErr error
-		reply, sent, runErr = s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
+		reply, usedShared, runErr := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
+		sent = usedShared
 		if sent {
 			result.Write(reply.stdout)
 			stderr.data = reply.stderr
