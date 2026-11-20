@@ -105,7 +105,7 @@ func AgentOperations() []AgentOperation {
 	get("proxy.logs", "Inspect proxy logs", "/api/proxy/logs")
 	post("proxy.delay", "Measure one proxy node", "/api/proxy/delay", object(map[string]string{"node_id": "string"}))
 	add("guest.reselect", "Clear only the same unstarted installation the UI can reselect", "DELETE", "/api/environment/guest-systems", object(map[string]string{"id": "string"}))
-	get("claude-accounts.get", "Read account roster, quotas and scheduling", "/api/claude-accounts")
+	get("claude-accounts.get", "Read account roster, quotas, scheduling and per-account setup notices", "/api/claude-accounts")
 	post("claude-accounts.change", "Apply the same join, cancel, update, scheduling, refresh and removal actions as the UI", "/api/claude-accounts", from(claudeAccountInput{}))
 	get("vault.get", "List metadata; passwords remain hidden exactly as in the UI", "/api/vault")
 	post("vault.change", "Save/delete/unblock; reveal requires the same account_password reauthentication as the UI", "/api/vault", object(map[string]string{"action": "string", "entry": "object", "id": "string", "origin": "string", "account_password": "string"}))
