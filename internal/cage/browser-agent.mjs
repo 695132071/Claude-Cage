@@ -369,6 +369,15 @@ chrome.stdio[4].on("data", (chunk) => {
       uploads.cancelTab(uploadTab);
   }
 });
+// systemd restarts the controller after an unexpected error. Record its kind
+// and source line only: error messages can carry page addresses.
+const fatal = kind => error => {
+  const frame = String(error?.stack || "").split("\n").find(line => line.trimStart().startsWith("at "))?.trim();
+  console.error(`Browser controller ${kind}: ${error?.name || typeof error}${error?.code ? ` ${error.code}` : ""}${frame ? ` ${frame}` : ""}`);
+  process.exit(1);
+};
+process.on("uncaughtException", fatal("uncaught exception"));
+process.on("unhandledRejection", fatal("unhandled rejection"));
 chrome.on("exit", (code, signal) => {
   // Record only how Chromium ended; never page addresses or contents.
   if (!shuttingDown) console.error(`Chromium exited unexpectedly: code=${code} signal=${signal}`);
