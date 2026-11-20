@@ -1,6 +1,7 @@
 package workbench
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -180,14 +181,17 @@ func controllerVMOwners(profile string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
+		if len(bytes.TrimSpace(b)) == 0 || !json.Valid(b) {
+			// Only a crash or power loss can leave an empty or cut-off record
+			// (see cage.Config.RecordRunningAt); it names no live owner.
+			continue
+		}
 		var record struct {
 			PID     int    `json:"pid"`
 			Started string `json:"started"`
 		}
 		if json.Unmarshal(b, &record) != nil || record.PID <= 0 {
-			// Only a crash or power loss can leave an unreadable record (see
-			// cage.Config.RecordRunningAt); it names no live owner.
-			continue
+			return nil, errors.New("环境进程记录无效")
 		}
 		if processExists(record.PID) && cage.ProcessStartMatches(record.PID, record.Started) {
 			owners = append(owners, fmt.Sprintf("%s/%d", filepath.Base(filepath.Dir(path)), record.PID))

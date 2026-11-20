@@ -1,6 +1,7 @@
 package cage
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/json"
@@ -421,18 +422,19 @@ func stoppedStorage(source string) error {
 			var pid int
 			started := ""
 			if name == "cage-running.json" {
-				var record runningProfile
-				if json.Unmarshal(data, &record) != nil || record.PID < 1 {
-					// Records are replaced atomically after fsync, so an unreadable
-					// record only comes from an interrupted write and names no live VM.
+				if len(bytes.TrimSpace(data)) == 0 || !json.Valid(data) {
+					// Records are replaced atomically after fsync, so an empty or
+					// cut-off file only comes from an interrupted write and names no live VM.
 					continue
 				}
+				var record runningProfile
+				err = json.Unmarshal(data, &record)
 				pid, started = record.PID, record.Started
 			} else {
 				pid, err = strconv.Atoi(strings.TrimSpace(string(data)))
-				if err != nil || pid < 1 {
-					return fmt.Errorf("无法核验虚拟机进程记录 %s", name)
-				}
+			}
+			if err != nil || pid < 1 {
+				return fmt.Errorf("无法核验虚拟机进程记录 %s", name)
 			}
 			if profileProcessAlive(pid) && ProcessStartMatches(pid, started) {
 				return fmt.Errorf("请先停止虚拟机 %s，再迁移环境", inst.Name())
