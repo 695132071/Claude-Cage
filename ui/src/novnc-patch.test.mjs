@@ -4,7 +4,7 @@ import { cpSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 // Applies internal/cage/novnc-patch.py to a private copy of the vendored noVNC
 // and drives the patched RFB._handleMouse with the events a host WebView sends.
@@ -18,7 +18,7 @@ function patchedNoVNC() {
   cpSync(new URL("../vendor/novnc", import.meta.url), target, { recursive: true });
   const python = process.env.PYTHON || (process.platform === "win32" ? "python" : "python3");
   try {
-    execFileSync(python, [new URL("../../internal/cage/novnc-patch.py", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), target], { stdio: "pipe" });
+    execFileSync(python, [fileURLToPath(new URL("../../internal/cage/novnc-patch.py", import.meta.url)), target], { stdio: "pipe" });
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
