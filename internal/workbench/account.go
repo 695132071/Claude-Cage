@@ -113,6 +113,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "unlock" || action == "device-unlock" || action == "recovery-reset" {
 		s.refreshShellLoginWatch()
+		s.restartPluginsAfterUnlock()
 	}
 	if action == "lock" || action == "suspend" || action == "recovery-reset" {
 		s.clearBrowserVault(vaultLease)

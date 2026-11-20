@@ -59,6 +59,9 @@ type hostTools struct {
 	// inside the environment still run, for their own pages, but there is
 	// no server, no forward and nothing on this computer is started.
 	serving bool
+	// awaitingUnlock says a plugin was stopped, or not started, because Cage
+	// is locked and the plugin receives secrets; unlocking starts them again.
+	awaitingUnlock bool
 }
 
 // hostCommandsPlugin is the name of the built-in plugin that runs commands.
@@ -149,15 +152,21 @@ func (s *Server) startHostTools(serving bool) error {
 	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), hostbridge.LoadOptions{
 		Taken: []string{"run_command", "command_job"}, Off: off, Version: version.Version,
 		ProjectDir: s.hostActiveProjectDir(),
-		Approve:    approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving})
+		Approve:    approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving, Env: s.pluginSettingsEnv})
 	var problems []string
 	pluginProblems := map[string]string{}
 	missingPrograms := map[string]string{}
+	awaitingUnlock := false
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
 		var missing *hostbridge.MissingProgramError
 		var noProject *hostbridge.MissingProjectDirError
+		var noSettings *hostbridge.MissingSettingsError
 		switch {
+		case errors.As(failure, &noSettings):
+			msg := pluginSettingsMissingMessage(noSettings.Settings)
+			pluginProblems[noSettings.Plugin] = msg
+			problems = append(problems, noSettings.Plugin+"："+msg)
 		case errors.As(failure, &missing):
 			missingPrograms[missing.Plugin] = missing.Program
 			msg := missingProgramMessage(missing.Program)
@@ -168,6 +177,7 @@ func (s *Server) startHostTools(serving bool) error {
 			pluginProblems[noProject.Plugin] = msg
 			problems = append(problems, noProject.Plugin+"："+msg)
 		default:
+			awaitingUnlock = awaitingUnlock || errors.Is(failure, errPluginSecretsLocked)
 			text := failure.Error()
 			problems = append(problems, text)
 			if rest, ok := strings.CutPrefix(text, "plugin "); ok {
@@ -195,7 +205,8 @@ func (s *Server) startHostTools(serving bool) error {
 		}
 	}
 	tools := &hostTools{cancel: cancel, ctx: ctx, done: make(chan struct{}), plugins: external, jobs: jobs,
-		problems: problems, pluginProblems: pluginProblems, missingPrograms: missingPrograms, serving: serving}
+		problems: problems, pluginProblems: pluginProblems, missingPrograms: missingPrograms, serving: serving, awaitingUnlock: awaitingUnlock}
+	s.stopSecretPluginsOnLock(tools)
 	if !serving {
 		// Nothing is served and nothing forwarded; done only marks the end.
 		close(tools.done)
@@ -266,6 +277,57 @@ func (s *Server) releaseHostToolsPort(ctx context.Context) {
 	if err := cmd.Run(); err != nil {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("release error=%v", err))
 	}
+}
+
+// stopSecretPluginsOnLock stops, when Cage locks, the plugins whose programs
+// received secrets, as a secret is readable only while Cage is unlocked.
+// Unlocking again starts them; see restartPluginsAfterUnlock.
+func (s *Server) stopSecretPluginsOnLock(tools *hostTools) {
+	epoch, unlocked := s.account.access()
+	if !unlocked || epoch == nil {
+		return
+	}
+	for _, plugin := range tools.plugins {
+		if !s.pluginUsesSecrets(plugin.Manifest) {
+			continue
+		}
+		name := plugin.Manifest.Name
+		stop := context.AfterFunc(epoch, func() {
+			if tools.ctx.Err() != nil {
+				return
+			}
+			plugin.Withdraw()
+			s.recordProjectPluginProblem(tools, name, errPluginSecretsLocked)
+			s.mu.Lock()
+			tools.awaitingUnlock = true
+			s.mu.Unlock()
+		})
+		context.AfterFunc(tools.ctx, func() { stop() })
+	}
+}
+
+// restartPluginsAfterUnlock starts again, in the background, the plugins
+// that stopped or could not start because Cage was locked.
+func (s *Server) restartPluginsAfterUnlock() {
+	s.mu.Lock()
+	tools := s.hostTools
+	waiting := tools != nil && tools.awaitingUnlock
+	s.mu.Unlock()
+	if !waiting {
+		return
+	}
+	go func() {
+		s.op.Lock()
+		defer s.op.Unlock()
+		s.mu.Lock()
+		current, closing := s.hostTools, s.closing
+		s.mu.Unlock()
+		if current != tools || closing {
+			return
+		}
+		s.closeHostTools()
+		s.ensureHostTools()
+	}()
 }
 
 // refreshHostToolsConfig gives the entry to profiles created while the
