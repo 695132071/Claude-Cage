@@ -29,6 +29,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     private var clipboardGeneration = 0
     private var clipboardCopies: [String: [String]] = [:]
     private var clipboardReaders: [UUID: [String]] = [:]
+    private var clipboardSends: [UUID: Process] = [:]
     private var clipboardPending = Set<String>()
     private var clipboardReleasing = Set<String>()
     private var clipboardCacheLoaded = false
@@ -366,21 +367,37 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             if !referenced { releaseClipboardCache(id) }
         }
     }
-    private func fileCommand(_ arguments: [String], replyLimit: Int = 65536, seconds: TimeInterval = 1800, reply: @escaping (Any?, String?) -> Void) {
+    private func fileCommand(_ arguments: [String], replyLimit: Int = 65536, seconds: TimeInterval = 1800, clipboardReader: UUID? = nil, reply: @escaping (Any?, String?) -> Void) {
         guard let executable = Bundle.main.url(forResource: "cage", withExtension: nil) else { reply(nil,"无法找到文件传递组件"); return }
+        let generation = clipboardGeneration
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process(); process.executableURL = executable
             process.arguments = arguments
             let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
             do {
-                try process.run()
+                if let reader = clipboardReader {
+                    try DispatchQueue.main.sync {
+                        guard generation == self.clipboardGeneration else { throw CageUpdateError("剪贴板文件传递已取消") }
+                        try process.run()
+                        self.clipboardSends[reader] = process
+                    }
+                } else { try process.run() }
                 let timeout = DispatchWorkItem { if process.isRunning { process.terminate() } }
                 DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: timeout)
                 defer { timeout.cancel() }
                 let data = output.fileHandleForReading.readDataToEndOfFile(); process.waitUntilExit()
                 guard data.count <= replyLimit, let result = try JSONSerialization.jsonObject(with: data) as? [String:Any] else { throw CageUpdateError("文件操作未返回有效结果") }
-                DispatchQueue.main.async { reply(process.terminationStatus == 0 ? result : nil, process.terminationStatus == 0 ? nil : result["message"] as? String ?? "文件操作失败") }
-            } catch { CageDiagnostics.record(error.localizedDescription); DispatchQueue.main.async { reply(nil,error.localizedDescription) } }
+                DispatchQueue.main.async {
+                    if let reader = clipboardReader { self.clipboardSends.removeValue(forKey: reader) }
+                    reply(process.terminationStatus == 0 ? result : nil, process.terminationStatus == 0 ? nil : result["message"] as? String ?? "文件操作失败")
+                }
+            } catch {
+                CageDiagnostics.record(error.localizedDescription)
+                DispatchQueue.main.async {
+                    if let reader = clipboardReader { self.clipboardSends.removeValue(forKey: reader) }
+                    reply(nil,clipboardReader != nil && generation != self.clipboardGeneration ? "剪贴板文件传递已取消" : error.localizedDescription)
+                }
+            }
         }
     }
     private func rememberFiles(_ urls: [URL]) throws -> [String: Any] {
@@ -495,7 +512,10 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             replyHandler(true,nil)
         case "clipboardRead": replyHandler(NSPasteboard.general.string(forType:.string) ?? "",nil)
         case "clipboardRevision": watchClipboardCaches(); replyHandler(NSPasteboard.general.changeCount,nil)
-        case "clipboardSyncCancel": clipboardGeneration += 1; replyHandler(true,nil)
+        case "clipboardSyncCancel":
+            clipboardGeneration += 1
+            for process in clipboardSends.values where process.isRunning { process.terminate() }
+            replyHandler(true,nil)
         case "clipboardSyncRelease":
             guard let id = body["files"] as? String, UUID(uuidString: id) != nil else { replyHandler(nil,"剪贴板文件标识无效"); return }
             fileCommand(["clipboard-files", "--json", "--connection", body["connection_id"] as? String ?? "local", "release", id], reply: replyHandler)
@@ -504,9 +524,10 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             let board = NSPasteboard.general
             let revision = board.changeCount
             if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly:true]) as? [URL], !urls.isEmpty {
+                if body["defer_files"] as? Bool == true { replyHandler(["revision":revision,"files_pending":true,"count":urls.count],nil); return }
                 let reader = UUID(), generation = clipboardGeneration
                 clipboardReaders[reader] = urls.map(\.path)
-                fileCommand(["clipboard-files", "--json", "--connection", body["connection_id"] as? String ?? "local", "send"] + urls.map(\.path)) { result, error in
+                fileCommand(["clipboard-files", "--json", "--connection", body["connection_id"] as? String ?? "local", "send"] + urls.map(\.path), clipboardReader: reader) { result, error in
                     defer { self.clipboardReaders.removeValue(forKey: reader); self.collectClipboardCaches() }
                     guard error == nil, var payload = result as? [String:Any] else { replyHandler(nil,error ?? "剪贴板文件传递失败"); return }
                     if generation != self.clipboardGeneration || board.changeCount != revision, let id = payload["files"] as? String {
