@@ -94,3 +94,68 @@ test("accurate button state from Chromium and WebView2 is unchanged", async (t) 
   send("mouseup", 0, 0);
   assert.deepEqual(masks, [1, 5, 1, 0]);
 });
+
+function paste(RFB) {
+  const sent = [], keys = [], queue = [];
+  const rfb = Object.create(RFB.prototype);
+  Object.assign(rfb, {
+    _rfbConnectionState: "connected", _viewOnly: false, _supportsFence: true,
+    _clipboardServerCapabilitiesFormats: { 1: true },
+    _clipboardServerCapabilitiesActions: { [1 << 27]: true, [1 << 28]: true },
+    _cageModifiers: new Map([["ShiftLeft", 0xffe1]]),
+    _cageSendKey: (sym, code, down) => keys.push([sym, down]),
+    _sock: { rQwait: () => false, rQskipBytes() {}, rQshift32: () => queue.shift(), rQshift8: () => queue.shift(), rQshiftStr: () => queue.shift() },
+  });
+  const messages = RFB.messages, saved = {};
+  for (const name of ["clientFence", "extendedClipboardNotify", "extendedClipboardProvide"]) {
+    saved[name] = messages[name];
+    messages[name] = (_sock, ...args) => sent.push([name, ...args]);
+  }
+  return {
+    rfb, sent, keys,
+    restore: () => Object.assign(messages, saved),
+    // The server acknowledges a client fence (without the request flag).
+    fence(payload) { queue.push(1, payload.length, payload); assert.equal(rfb._handleServerFenceMsg(), true); },
+    // An X client in the guest reads the clipboard; Xvnc asks for the text.
+    request() { queue.push(0xfffffffc, (1 << 25) | 1); assert.equal(rfb._handleServerCutText(), true); },
+  };
+}
+
+const ctrlV = [[0xffe1, false], [0xffe3, true], [0x76, true], [0x76, false], [0xffe3, false], [0xffe1, true]];
+
+test("a paste needs no clipboard reader in the guest before Ctrl+V", async (t) => {
+  const RFB = await loadRFB(t);
+  if (!RFB) return;
+  const p = paste(RFB);
+  t.after(p.restore);
+  let done = false;
+  const result = p.rfb._cagePasteText("@").then(() => { done = true; });
+  assert.deepEqual(p.sent.map(([name, , value]) => [name, value]), [["extendedClipboardNotify", undefined], ["clientFence", "cage-paste-1"]]);
+  // Xvnc only asks for the data when an application reads it: paste first.
+  p.fence("cage-paste-1");
+  assert.deepEqual(p.keys, ctrlV);
+  p.request();
+  assert.deepEqual(p.sent.slice(2).map(([name, , value]) => [name, value]), [["extendedClipboardProvide", ["@"]], ["clientFence", "cage-paste-1-keys"]]);
+  p.fence("cage-paste-1-keys");
+  assert.equal(done, false);
+  await result;
+  assert.equal(p.rfb._cagePasteJob, null);
+});
+
+test("an early clipboard reader does not pre-empt the paste keys", async (t) => {
+  const RFB = await loadRFB(t);
+  if (!RFB) return;
+  const p = paste(RFB);
+  t.after(p.restore);
+  const result = p.rfb._cagePasteText("_");
+  // A guest clipboard watcher reads as soon as the owner changes.
+  p.request();
+  assert.deepEqual(p.keys, []);
+  p.fence("cage-paste-1");
+  assert.deepEqual(p.keys, ctrlV);
+  // The application's own read follows Ctrl+V.
+  p.request();
+  assert.deepEqual(p.sent.at(-1).slice(2), ["cage-paste-1-keys"]);
+  p.fence("cage-paste-1-keys");
+  await result;
+});

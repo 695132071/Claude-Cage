@@ -120,9 +120,27 @@ replace_once('    clipboardPasteFrom(text) {', '''    // Cage: serialize the cli
                 if (this._cagePasteJob?.id === id) this._cagePasteJob = null;
                 reject(new Error('Remote application did not accept the paste'));
             }, 4000);
-            this._cagePasteJob = {id, timer, resolve, phase: 'data'};
+            // Xvnc asks for the data only when an X client reads the clipboard,
+            // which is usually the application handling the paste. Once the
+            // server has the announcement, paste; the request that follows is
+            // answered with this text by noVNC.
+            this._cagePasteJob = {id, timer, resolve, phase: 'announce'};
             this.clipboardPasteFrom(text);
+            RFB.messages.clientFence(this._sock, (1 << 31) | 1, id);
         });
+    }
+
+    _cagePasteKeys() {
+        // Punctuation can commit while Shift is still physically held.
+        // Paste with a plain Ctrl+V, then restore the wire modifiers;
+        // queued host key releases will follow in their normal order.
+        const modifiers = [...(this._cageModifiers || [])];
+        for (const [code, sym] of modifiers) this._cageSendKey(sym, code, false);
+        this._cageSendKey(0xffe3, 'ControlLeft', true);
+        this._cageSendKey(0x76, 'KeyV', true);
+        this._cageSendKey(0x76, 'KeyV', false);
+        this._cageSendKey(0xffe3, 'ControlLeft', false);
+        for (const [code, sym] of modifiers) this._cageSendKey(sym, code, true);
     }
 
     clipboardPasteFrom(text) {''')
@@ -176,9 +194,12 @@ replace_once('''    _sendMouse(x, y, mask) {''', '''    _sendMouse(x, y, mask) {
     _cageSendMouse(x, y, mask) {''')
 provide = 'RFB.messages.extendedClipboardProvide(this._sock, [extendedClipboardFormatText], [this._clipboardText]);'
 replace_once(provide, provide + '''
-                        if (this._cagePasteJob?.phase === 'data') {
-                            this._cagePasteJob.phase = 'fence';
-                            RFB.messages.clientFence(this._sock, (1 << 31) | 1, this._cagePasteJob.id);
+                        const cagePaste = this._cagePasteJob;
+                        if (cagePaste?.phase === 'pasted') {
+                            // The application read the paste: confirm the
+                            // server has the data before later input follows.
+                            cagePaste.phase = 'keys';
+                            RFB.messages.clientFence(this._sock, (1 << 31) | 1, cagePaste.id + '-keys');
                         }''')
 replace_once('''        if (!(flags & (1<<31))) {
             return this._fail("Unexpected fence response");
@@ -192,25 +213,21 @@ replace_once('''        if (!(flags & (1<<31))) {
             }
             if (payload.startsWith('cage-input-')) return true;
             const job = this._cagePasteJob;
-            if (job && job.phase === 'fence' && payload === job.id) {
-                // Punctuation can commit while Shift is still physically held.
-                // Paste with a plain Ctrl+V, then restore the wire modifiers;
-                // queued host key releases will follow in their normal order.
-                const modifiers = [...(this._cageModifiers || [])];
-                for (const [code, sym] of modifiers) this._cageSendKey(sym, code, false);
-                this._cageSendKey(0xffe3, 'ControlLeft', true);
-                this._cageSendKey(0x76, 'KeyV', true);
-                this._cageSendKey(0x76, 'KeyV', false);
-                this._cageSendKey(0xffe3, 'ControlLeft', false);
-                for (const [code, sym] of modifiers) this._cageSendKey(sym, code, true);
-                job.phase = 'keys';
-                RFB.messages.clientFence(this._sock, (1 << 31) | 1, job.id + '-keys');
+            if (job && job.phase === 'announce' && payload === job.id) {
+                this._cagePasteKeys();
+                job.phase = 'pasted';
                 return true;
             }
             if (job && job.phase === 'keys' && payload === job.id + '-keys') {
                 clearTimeout(job.timer);
-                this._cagePasteJob = null;
-                job.resolve();
+                // An application may still be inserting the data it received.
+                // Replacing the clipboard at once can lose that paste, so a
+                // following text transfer waits briefly.
+                job.phase = 'settle';
+                setTimeout(() => {
+                    if (this._cagePasteJob === job) this._cagePasteJob = null;
+                    job.resolve();
+                }, 150);
                 return true;
             }
             // A late acknowledgement after a timeout must not disconnect.
