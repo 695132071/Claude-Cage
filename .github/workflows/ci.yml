@@ -50,7 +50,7 @@ jobs:
         run: |
           node scripts/check-repository-files.mjs
           node scripts/check-version.mjs
-          node --test scripts/release-version.test.mjs scripts/release-control.test.mjs scripts/prepare-release-assets.test.mjs scripts/esigner.test.mjs scripts/contribution-invite.test.mjs scripts/issue-system-labels.test.mjs scripts/fetch-build-artifact.test.mjs
+          node --test scripts/release-version.test.mjs scripts/release-control.test.mjs scripts/prepare-release-assets.test.mjs scripts/esigner.test.mjs scripts/contribution-invite.test.mjs scripts/issue-system-labels.test.mjs scripts/fetch-build-artifact.test.mjs scripts/is-main-module.test.mjs scripts/bundle-qemu-sources.test.mjs scripts/agent-bootstrap.test.mjs
           pwsh -NoProfile -File scripts/test-windows-signing.ps1
       - name: Validate workflow syntax
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11 -color
@@ -58,6 +58,7 @@ jobs:
         run: |
           node internal/cage/device-observation.test.mjs
           node internal/cage/browser-audit.test.mjs
+          node --test internal/cage/browser-cookies.test.mjs internal/cage/tailnet-client.test.mjs ui/scripts/cursor-fallback.test.mjs
   browser-popups:
     needs: workflow-checks
     # The Debian guest controller is Linux-only; hosts never run it directly.
