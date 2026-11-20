@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -393,7 +394,10 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 			return e
 		}
 		bound, _ := managedproxy.BoundInterface(filepath.Join(managedproxy.Dir(s.profile), "config.yaml"))
-		if bound != name || !managedproxy.Running(s.operationContext(), s.profile, p) {
+		// DNS settings saved since the core started reach it here: the save
+		// already restarts the environment, so reloading the core now adds no
+		// further outage and its resolvers match guest DNS and the check.
+		if bound != name || proxyDNSOutdated(p, cfg) || !managedproxy.Running(s.operationContext(), s.profile, p) {
 			// Every core start changes the report generation, including recovery.
 			if e = s.activateProxy(p, cfg); e != nil {
 				return e
@@ -537,6 +541,14 @@ func (s *Server) stopEnvironment() (returned error) {
 	}
 	return nil
 }
+
+// proxyDNSOutdated reports whether the core was configured with other DNS
+// endpoints than the saved settings (the environment's DoH list and the node
+// resolvers).
+func proxyDNSOutdated(p managedproxy.Store, cfg cage.Config) bool {
+	return !slices.Equal(p.CoreDNS(), cfg.DNSEndpoints()) || !slices.Equal(p.NodeResolvers(), cfg.BootstrapEndpoints())
+}
+
 type jobRecoveryError struct {
 	Recovery string
 	Err      error

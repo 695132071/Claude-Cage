@@ -332,7 +332,7 @@ export function SettingsPanel({
                   />
                 </label>
                 <p className="field-help">
-                  {tr("经主机网络解析节点服务器域名，下次应用代理时生效。")}
+                  {tr("经主机网络解析节点服务器域名。保存以上任一 DNS 设置后，环境重启时内置核心随之改用新设置，与业务 DNS 和联网检查保持一致。加密 DNS 或备用端点使用域名而非数字 IP 时，该域名会由这里的节点域名解析服务经主机网络解析。")}
                 </p>
                 <label className="toggle-row">
                   <span>

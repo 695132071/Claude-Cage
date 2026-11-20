@@ -68,13 +68,19 @@ func (s Store) NodeResolvers() []string {
 	return BootstrapDNSURLs()
 }
 
+// CoreDNS is the DoH list the core resolves with through the selected route:
+// the guest DNS endpoints copied when the route was applied.
+func (s Store) CoreDNS() []string {
+	if len(s.GuestDNS) == 0 {
+		return []string{"https://1.1.1.1/dns-query"}
+	}
+	return append([]string(nil), s.GuestDNS...)
+}
+
 // coreNameservers are the core's own resolvers, queried through the selected
 // route like guest DNS. They use the same endpoints as guest DNS.
 func (s Store) coreNameservers() []string {
-	list := s.GuestDNS
-	if len(list) == 0 {
-		list = []string{"https://1.1.1.1/dns-query"}
-	}
+	list := s.CoreDNS()
 	out := make([]string, 0, len(list))
 	for _, endpoint := range list {
 		out = append(out, endpoint+"#"+Group)
