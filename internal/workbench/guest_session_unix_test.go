@@ -271,3 +271,69 @@ func TestGuestSessionPassesInputAndCallerOutputLimit(t *testing.T) {
 		t.Fatalf("%d connections opened", starts.Load())
 	}
 }
+
+// A transport that stops answering (the SSH connection half dead) must not
+// make every later call wait for its full timeout: after consecutive
+// timeouts the shared connection is closed and callers use their own SSH.
+func TestGuestSessionDropsStalledTransport(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash is unavailable")
+	}
+	session := &guestSession{}
+	t.Cleanup(session.close)
+	var starts atomic.Int32
+	stalled := func(ctx context.Context) *exec.Cmd {
+		starts.Add(1)
+		// Starts like the server, then never answers.
+		return exec.CommandContext(ctx, "bash", "-c", "echo '"+guestSessionReady+"'; exec sleep 600")
+	}
+	call := func() (bool, error, time.Duration) {
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		started := time.Now()
+		_, sent, err := session.run(ctx, context.Background(), stalled, "true")
+		return sent, err, time.Since(started)
+	}
+	for i := 1; i <= guestSessionTimeouts; i++ {
+		if sent, err, _ := call(); !sent || !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("call %d: sent=%v err=%v", i, sent, err)
+		}
+	}
+	session.mu.Lock()
+	dropped := session.conn == nil
+	session.mu.Unlock()
+	if !dropped {
+		t.Fatal("stalled connection kept after consecutive timeouts")
+	}
+	// The next call is not sent on the shared connection and returns at once,
+	// so the caller falls back to an SSH connection of its own.
+	if sent, err, took := call(); sent || err == nil || took > 100*time.Millisecond {
+		t.Fatalf("after a stall: sent=%v err=%v took=%v", sent, err, took)
+	}
+	if starts.Load() != 1 {
+		t.Fatalf("stalled transport reopened %d times during the hold-off", starts.Load())
+	}
+}
+
+// A reply in between proves the transport alive: a single slow script does
+// not close the shared connection.
+func TestGuestSessionKeepsLiveTransportAfterOneTimeout(t *testing.T) {
+	run, session, starts := localGuestSession(t)
+	for range guestSessionTimeouts + 1 {
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		if _, sent, err := run(ctx, "sleep 5"); !sent || !errors.Is(err, context.DeadlineExceeded) {
+			cancel()
+			t.Fatalf("slow script: sent=%v err=%v", sent, err)
+		}
+		cancel()
+		if reply, _, err := run(context.Background(), "printf ok"); err != nil || string(reply.stdout) != "ok" {
+			t.Fatal(reply, err)
+		}
+	}
+	session.mu.Lock()
+	kept := session.conn != nil
+	session.mu.Unlock()
+	if !kept || starts.Load() != 1 {
+		t.Fatalf("live transport dropped: kept=%v starts=%d", kept, starts.Load())
+	}
+}

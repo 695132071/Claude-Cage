@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -24,6 +25,10 @@ const (
 	guestSessionIdle    = 30 * time.Second
 	guestSessionRetry   = 30 * time.Second
 	guestSessionStartup = 5 * time.Second
+	// guestSessionTimeouts consecutive timed-out requests, with no reply in
+	// between, mark the transport as stalled: the connection is closed and
+	// callers use connections of their own until guestSessionRetry passes.
+	guestSessionTimeouts = 2
 )
 
 // guestSessionOutputMaximum matches OUTPUT_MAXIMUM in guest-session.py.
@@ -55,6 +60,8 @@ type guestSessionConn struct {
 	waiting map[uint64]chan guestSessionReply
 	next    uint64
 	ended   chan struct{}
+	// timeouts counts requests that timed out since the last reply.
+	timeouts atomic.Int32
 }
 
 func (c *guestSessionConn) close() { c.cancel(); _ = c.stdin.Close() }
@@ -92,6 +99,7 @@ func (c *guestSessionConn) receive(output *bufio.Reader, done func()) {
 		if _, err = io.ReadFull(output, data); err != nil {
 			return
 		}
+		c.timeouts.Store(0)
 		c.mu.Lock()
 		waiter := c.waiting[id]
 		delete(c.waiting, id)
@@ -214,14 +222,36 @@ func (g *guestSession) runInput(ctx context.Context, lifetime context.Context, c
 		return reply, true, nil
 	case <-ctx.Done():
 		forget()
-		conn.writing.Lock()
-		_, _ = io.WriteString(conn.stdin, fmt.Sprintf("C %d\n", id))
-		conn.writing.Unlock()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && conn.timeouts.Add(1) >= guestSessionTimeouts {
+			// A half-dead transport would make every later request wait for
+			// its full timeout. Drop it; callers fall back to SSH of their own.
+			g.abandon(conn)
+			return reply, true, ctx.Err()
+		}
+		// The cancel write must not hold up the caller when the transport
+		// stops reading; closing the connection ends a blocked write.
+		go func() {
+			conn.writing.Lock()
+			defer conn.writing.Unlock()
+			_, _ = io.WriteString(conn.stdin, fmt.Sprintf("C %d\n", id))
+		}()
 		return reply, true, ctx.Err()
 	case <-conn.ended:
 		forget()
 		return reply, true, errGuestSessionEnded
 	}
+}
+
+// abandon closes a stalled connection and holds off reopening it, so the
+// callers use connections of their own meanwhile.
+func (g *guestSession) abandon(conn *guestSessionConn) {
+	g.mu.Lock()
+	if g.conn == conn {
+		g.conn = nil
+		g.retryAt = time.Now().Add(guestSessionRetry)
+	}
+	g.mu.Unlock()
+	conn.close()
 }
 
 func (g *guestSession) release(conn *guestSessionConn) {
