@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,7 +50,9 @@ type hostTools struct {
 	pluginProblems  map[string]string
 	missingPrograms map[string]string
 	cancel          context.CancelFunc
-	done     chan struct{}
+	// ctx ends when these tools are closed.
+	ctx  context.Context
+	done chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
 	// serving is false when the tools for Claude are turned off: plugins
@@ -161,7 +164,7 @@ func (s *Server) startHostTools(serving bool) error {
 			pluginProblems[missing.Plugin] = msg
 			problems = append(problems, missing.Plugin+"："+msg)
 		case errors.As(failure, &noProject):
-			msg := "请先打开一个项目文件夹以使用此插件"
+			msg := hostPluginNeedsProject
 			pluginProblems[noProject.Plugin] = msg
 			problems = append(problems, noProject.Plugin+"："+msg)
 		default:
@@ -191,7 +194,7 @@ func (s *Server) startHostTools(serving bool) error {
 			approvals.unasked[plugin.Manifest.Name] = true
 		}
 	}
-	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs,
+	tools := &hostTools{cancel: cancel, ctx: ctx, done: make(chan struct{}), plugins: external, jobs: jobs,
 		problems: problems, pluginProblems: pluginProblems, missingPrograms: missingPrograms, serving: serving}
 	if !serving {
 		// Nothing is served and nothing forwarded; done only marks the end.
@@ -332,14 +335,131 @@ func (s *Server) hostToolDirs() []string {
 	return dirs
 }
 
-// hostActiveProjectDir is the active project folder on this computer, or empty
-// when no project is open.
+// hostPluginNeedsProject is shown for a plugin using ${PROJECT_DIR} while
+// the current project is not a folder shared from this computer.
+const hostPluginNeedsProject = "请先打开一个项目文件夹以使用此插件"
+
+// hostActiveProjectDir is the current project's folder on this computer, or
+// empty when the current project is not a folder shared from here (none
+// open, the environment's own directory, or a remote client's folder). It
+// never stands in another shared folder for the current one.
 func (s *Server) hostActiveProjectDir() string {
-	dirs := s.hostToolDirs()
-	if len(dirs) == 0 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.clientWorkspace != "" {
 		return ""
 	}
-	return dirs[0]
+	if _, shared := s.projectShares[s.preferences.Workspace]; shared {
+		return s.preferences.Workspace
+	}
+	return ""
+}
+
+// hostPluginRestartTimeout bounds restarting the plugins that take the
+// project folder after the current project changes.
+const hostPluginRestartTimeout = 60 * time.Second
+
+// restartProjectPlugins runs again, in the background, only the plugins
+// whose command takes ${PROJECT_DIR}, for the project now current. Other
+// plugins, their calls in progress and project operations are not held up.
+// Restarts for successive switches run one after another, each reading the
+// project current when its plugin starts.
+func (s *Server) restartProjectPlugins() <-chan struct{} {
+	done := make(chan struct{})
+	s.mu.Lock()
+	tools := s.hostTools
+	s.mu.Unlock()
+	var affected []*hostbridge.External
+	if tools != nil {
+		for _, plugin := range tools.plugins {
+			if plugin.UsesProjectDir() {
+				affected = append(affected, plugin)
+			}
+		}
+	}
+	if len(affected) == 0 {
+		close(done)
+		return done
+	}
+	go func() {
+		defer close(done)
+		s.projectPluginRestarts.Lock()
+		defer s.projectPluginRestarts.Unlock()
+		ctx, cancel := context.WithTimeout(tools.ctx, hostPluginRestartTimeout)
+		defer cancel()
+		for _, plugin := range affected {
+			if tools.ctx.Err() != nil {
+				return
+			}
+			var dir func() string
+			if plugin.Manifest.Kind != hostbridge.KindGuest {
+				dir = s.hostActiveProjectDir
+			}
+			err := plugin.Restart(ctx, dir)
+			if err == nil {
+				err = s.checkRestartedToolNames(tools, plugin)
+			}
+			if tools.ctx.Err() != nil {
+				// Closed meanwhile: leave nothing running.
+				plugin.Close()
+				return
+			}
+			s.recordProjectPluginProblem(tools, plugin.Manifest.Name, err)
+		}
+	}()
+	return done
+}
+
+// checkRestartedToolNames keeps a plugin that first started now from
+// offering a tool name another plugin already offers.
+func (s *Server) checkRestartedToolNames(tools *hostTools, restarted *hostbridge.External) error {
+	taken := []string{"run_command", "command_job"}
+	for _, plugin := range tools.plugins {
+		if plugin != restarted {
+			taken = append(taken, plugin.Tools()...)
+		}
+	}
+	for _, tool := range restarted.Tools() {
+		if slices.Contains(taken, tool) {
+			restarted.Withdraw()
+			return fmt.Errorf("plugin %s: tool name %s is already in use", restarted.Manifest.Name, tool)
+		}
+	}
+	return nil
+}
+
+// recordProjectPluginProblem updates what the plugins page says about a
+// restarted plugin.
+func (s *Server) recordProjectPluginProblem(tools *hostTools, name string, err error) {
+	if err != nil {
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin restart error=%v", err))
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	problems := maps.Clone(tools.pluginProblems)
+	if problems == nil {
+		problems = map[string]string{}
+	}
+	var missing *hostbridge.MissingProgramError
+	switch {
+	case err == nil:
+		delete(problems, name)
+	case errors.As(err, new(*hostbridge.MissingProjectDirError)):
+		problems[name] = hostPluginNeedsProject
+	case errors.As(err, &missing):
+		problems[name] = missingProgramMessage(missing.Program)
+	default:
+		problems[name] = err.Error()
+	}
+	tools.pluginProblems = problems
+	// The page's list of problems, without what it said about this plugin.
+	list := slices.DeleteFunc(slices.Clone(tools.problems), func(text string) bool {
+		return strings.HasPrefix(text, name+"：") || strings.HasPrefix(text, "plugin "+name+" ") || strings.HasPrefix(text, "plugin "+name+":")
+	})
+	if message := problems[name]; message != "" {
+		list = append(list, name+"："+message)
+	}
+	tools.problems = list
 }
 
 // guestActiveProjectDir is the active project folder as seen inside the
@@ -372,25 +492,6 @@ func missingProgramMessage(program string) string {
 	default:
 		return fmt.Sprintf("未找到 %s。请先在本机安装该程序并确保终端中可运行，然后点击「重新加载插件」。", program)
 	}
-}
-
-// hostToolsUsesProjectDir reports whether any installed plugin uses
-// ${PROJECT_DIR} in its server command, so switching projects restarts it.
-func (s *Server) hostToolsUsesProjectDir() bool {
-	entries, err := os.ReadDir(s.hostPluginDir())
-	if err != nil {
-		return false
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
-			continue
-		}
-		manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name()))
-		if err == nil && hostbridge.CommandUsesProjectDir(manifest.ServerCommand()) {
-			return true
-		}
-	}
-	return false
 }
 
 // hostToolsToken is this profile's token, created on first use.

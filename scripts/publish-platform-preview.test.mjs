@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { assertPublishableRun, stagePreview, mergeReleaseChecksums } from './publish-platform-preview.mjs';
+import { assertPublishableRun, compareWithMain, stagePreview, mergeReleaseChecksums } from './publish-platform-preview.mjs';
 const version = '0.1.1-alpha';
 const dependencies = { mihomoSource: { file: 'mihomo-v1.19.33-source.tar.gz' }, qemuSource: { file: 'qemu-' + 'a'.repeat(40) + '-source.tar' } };
 const hash = text => createHash('sha256').update(text).digest('hex');
@@ -83,4 +83,16 @@ test('only main CI or main merge queue runs of a commit on main can supply packa
   // A queue entry that was removed before merging is not on main.
   assert.throws(() => assertPublishableRun({ ...base, path: '.github/workflows/pr-checks.yml', event: 'merge_group',
     head_branch: 'gh-readonly-queue/main/pr-1' }, () => ({ status: 'diverged' })), /not part of main/);
+});
+
+test('the comparison with main asks only for its status fields', () => {
+  const sha = 'a'.repeat(40);
+  const calls = [];
+  const result = compareWithMain(sha, (path, args) => { calls.push([path, args]); return { status: 'ahead', behind_by: 0 }; });
+  assert.deepEqual(result, { status: 'ahead', behind_by: 0 });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], `compare/${sha}...main`);
+  const jq = calls[0][1].indexOf('--jq');
+  assert.ok(jq >= 0 && !/commits|files/.test(calls[0][1][jq + 1]), 'the full commit and file lists must not be fetched');
+  assert.throws(() => compareWithMain('main', () => ({})));
 });

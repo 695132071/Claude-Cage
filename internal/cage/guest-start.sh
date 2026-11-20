@@ -33,10 +33,10 @@ FONTCONFIG
 mkdir -p "$HOME/.config/claude-cage"
 chmod 700 "$HOME/.config/claude-cage"
 if ! grep -qE '^password:[[:space:]]*[^[:space:]]+' "$HOME/.config/claude-cage/code-server.yaml" 2>/dev/null; then
-  (umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.code-server.yaml.XXXXXX"); printf 'auth: password\npassword: %s\ncert: false\n' "$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')" > "$tmp"; mv -f "$tmp" "$HOME/.config/claude-cage/code-server.yaml")
+  (umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.code-server.yaml.XXXXXX"); printf 'auth: password\npassword: %s\ncert: false\n' "$(od -An -N24 -tx1 /dev/urandom | tr -d ' \n')" > "$tmp"; sync "$tmp" 2>/dev/null || true; mv -f "$tmp" "$HOME/.config/claude-cage/code-server.yaml"; sync "$HOME/.config/claude-cage" 2>/dev/null || true)
 fi
 if [ ! -s "$HOME/.config/claude-cage/browser-password" ]; then
-  (umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.browser-password.XXXXXX"); od -An -N4 -tx1 /dev/urandom | tr -d ' \n' > "$tmp"; mv -f "$tmp" "$HOME/.config/claude-cage/browser-password")
+  (umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.browser-password.XXXXXX"); od -An -N4 -tx1 /dev/urandom | tr -d ' \n' > "$tmp"; sync "$tmp" 2>/dev/null || true; mv -f "$tmp" "$HOME/.config/claude-cage/browser-password"; sync "$HOME/.config/claude-cage" 2>/dev/null || true)
 fi
 sudo install -d -o cage-browser -g cage-browser -m 0700 /home/cage-browser/.vnc
 cat "$HOME/.config/claude-cage/browser-password" | sudo -u cage-browser sh -c 'umask 077; tigervncpasswd -f > "$HOME/.vnc/passwd"'
@@ -66,6 +66,12 @@ def atomic_write(target, text, mode, gid=None):
         if gid is not None:
             os.chown(name, 0, gid)
         os.replace(name, target)
+        # Flush the rename too, or a power loss can bring the old file back.
+        directory = os.open(target.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except Exception:
         try:
             os.unlink(name)
@@ -99,9 +105,14 @@ import tempfile
 p.parent.mkdir(parents=True, exist_ok=True)
 try:
     loaded = json.loads(p.read_text()) if p.exists() else {}
-    d = loaded if isinstance(loaded, dict) else {}
 except (OSError, ValueError):
-    d = {}
+    loaded = None
+d = loaded if isinstance(loaded, dict) else {}
+if p.exists() and not isinstance(loaded, dict) and p.stat().st_size > 0:
+    # Keep a damaged file beside the new one instead of losing its settings.
+    import time
+    backup = p.with_name("%s.corrupt-%s-%d" % (p.name, time.strftime("%Y%m%d%H%M%S"), os.getpid()))
+    os.replace(p, backup)
 if not isinstance(d.get("intl"), dict):
     d["intl"] = {}
 d["intl"]["accept_languages"] = os.environ["CAGE_LANGUAGE"]
@@ -120,6 +131,11 @@ try:
         f.flush()
         os.fsync(f.fileno())
     os.replace(name, p)
+    directory = os.open(p.parent, os.O_RDONLY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
 except Exception:
     try:
         os.unlink(name)
@@ -140,7 +156,7 @@ if not p.exists():
     shutil.copyfile('/etc/claude-cage/editor-theme.json', p)
 PYEDITOR
 # Systemd owns the editor independently of the SSH session and restarts crashes.
-(umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.editor-workspace.XXXXXX"); printf '%s' "$PWD" > "$tmp"; mv -f "$tmp" "$HOME/.config/claude-cage/editor-workspace")
+(umask 077; tmp=$(mktemp "$HOME/.config/claude-cage/.editor-workspace.XXXXXX"); printf '%s' "$PWD" > "$tmp"; sync "$tmp" 2>/dev/null || true; mv -f "$tmp" "$HOME/.config/claude-cage/editor-workspace"; sync "$HOME/.config/claude-cage" 2>/dev/null || true)
 if ! systemctl is-active --quiet cage-editor.service; then
   sudo /usr/local/bin/cage-editor-migrate
   sudo systemctl start cage-editor.service

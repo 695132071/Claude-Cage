@@ -142,6 +142,9 @@ type Server struct {
 	// decides guestUpdateRequired, so a slower version query cannot
 	// overwrite a newer decision.
 	guestUpdateGeneration uint64
+
+	// projectPluginRestarts runs one project switch's plugin restarts at a time.
+	projectPluginRestarts sync.Mutex
 }
 
 func randomToken() string {

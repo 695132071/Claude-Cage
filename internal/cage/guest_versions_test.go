@@ -709,6 +709,7 @@ func TestGuestStartRecoversFromTruncatedGuestFiles(t *testing.T) {
 	ctrlScript = strings.ReplaceAll(ctrlScript, `Path('/etc/claude-cage/browser-control.json')`, `Path(os.environ["CTRL_PATH"])`)
 	ctrlScript = strings.ReplaceAll(ctrlScript, `Path('/etc/claude-cage/display-scale')`, `Path(os.environ["SCALE_PATH"])`)
 	ctrlScript = strings.ReplaceAll(ctrlScript, "grp.getgrnam('cage-browser').gr_gid", "None")
+	ctrlScript = recordDirectoryFsyncs + ctrlScript + recordDirectoryFsyncsReport
 	for _, tc := range []struct {
 		name      string
 		existing  string
@@ -744,9 +745,15 @@ func TestGuestStartRecoversFromTruncatedGuestFiles(t *testing.T) {
 				"CAGE_USER_HOME="+home,
 				"CTRL_PATH="+ctrlPath,
 				"SCALE_PATH="+scalePath,
+				"FSYNC_DIRS="+etcDir,
 			)
-			if out, err := cmd.CombinedOutput(); err != nil {
+			out, err := cmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("%v %s", err, out)
+			}
+			// display-scale and browser-control.json: each rename is flushed.
+			if got := strings.Count(string(out), "dir-fsync "+etcDir+"\n"); got != 2 {
+				t.Fatalf("directory fsyncs %d, want 2: %s", got, out)
 			}
 			raw, err := os.ReadFile(ctrlPath)
 			if err != nil {
@@ -776,6 +783,7 @@ func TestGuestStartRecoversFromTruncatedGuestFiles(t *testing.T) {
 	prefStart := strings.Index(guestStart, "import json, os\nfrom pathlib import Path\np = Path.home()")
 	prefEnd := strings.Index(guestStart[prefStart:], "\nPYCODE")
 	prefScript := strings.Replace(guestStart[prefStart:prefStart+prefEnd], "Path.home()", `Path(os.environ["FIXTURE"])`, 1)
+	prefScript = recordDirectoryFsyncs + prefScript + recordDirectoryFsyncsReport
 	for name, corrupt := range map[string]string{"empty": "", "truncated": `{"intl":`, "wrong-type": `"bad"`} {
 		t.Run("preferences-"+name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -788,17 +796,56 @@ func TestGuestStartRecoversFromTruncatedGuestFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			cmd := exec.Command("python3", "-c", prefScript)
-			cmd.Env = append(os.Environ(), "FIXTURE="+dir, "CAGE_LANGUAGE=en-US")
-			if out, err := cmd.CombinedOutput(); err != nil {
+			cmd.Env = append(os.Environ(), "FIXTURE="+dir, "CAGE_LANGUAGE=en-US", "FSYNC_DIRS="+prof)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
 				t.Fatalf("%v %s", err, out)
+			}
+			if !strings.Contains(string(out), "dir-fsync "+prof+"\n") {
+				t.Fatalf("the rename was not flushed: %s", out)
 			}
 			raw, err := os.ReadFile(prefs)
 			if err != nil || !json.Valid(raw) {
 				t.Fatalf("preferences not recovered: %q %v", raw, err)
 			}
-			if entries, _ := os.ReadDir(prof); len(entries) != 1 {
-				t.Fatalf("temp files left in profile dir: %v", entries)
+			entries, _ := os.ReadDir(prof)
+			if corrupt == "" {
+				// Nothing worth keeping in an empty file.
+				if len(entries) != 1 {
+					t.Fatalf("temp files left in profile dir: %v", entries)
+				}
+				return
+			}
+			// The damaged file is kept beside the new one, unchanged.
+			if len(entries) != 2 || !strings.HasPrefix(entries[1].Name(), "Preferences.corrupt-") {
+				t.Fatalf("damaged preferences not kept: %v", entries)
+			}
+			if kept, _ := os.ReadFile(filepath.Join(prof, entries[1].Name())); string(kept) != corrupt {
+				t.Fatalf("backup %q, want %q", kept, corrupt)
 			}
 		})
 	}
 }
+
+// recordDirectoryFsyncs wraps os.fsync in a guest-start.sh Python block to
+// note each directory it flushes; recordDirectoryFsyncsReport prints
+// "dir-fsync PATH" once per flush of a directory listed in FSYNC_DIRS.
+const recordDirectoryFsyncs = `import os as _os, stat as _stat
+_fsyncs = []
+_fsync = _os.fsync
+def _record(fd):
+    info = _os.fstat(fd)
+    if _stat.S_ISDIR(info.st_mode):
+        _fsyncs.append((info.st_dev, info.st_ino))
+    return _fsync(fd)
+_os.fsync = _record
+`
+
+const recordDirectoryFsyncsReport = `
+for _path in _os.environ.get("FSYNC_DIRS", "").split(_os.pathsep):
+    if _path:
+        _info = _os.stat(_path)
+        for _flushed in _fsyncs:
+            if _flushed == (_info.st_dev, _info.st_ino):
+                print("dir-fsync " + _path)
+`

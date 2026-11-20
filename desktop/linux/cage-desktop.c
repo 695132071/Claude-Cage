@@ -1522,7 +1522,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     app.media_plugins_isolated = media_plugins_isolate(app.web_cache, media_plugins_system_dirs);
-    app.dmabuf_default_set = media_plugins_disable_dmabuf_default();
+    app.dmabuf_default_set = media_plugins_disable_dmabuf_default("");
     char *hash = g_compute_checksum_for_string(G_CHECKSUM_SHA256, app.profile, -1);
     char *id = g_strdup_printf("app.cage.desktop.p%.24s", hash);
     app.application = gtk_application_new(id, G_APPLICATION_FLAGS_NONE);

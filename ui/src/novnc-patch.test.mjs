@@ -147,15 +147,52 @@ test("an early clipboard reader does not pre-empt the paste keys", async (t) => 
   if (!RFB) return;
   const p = paste(RFB);
   t.after(p.restore);
-  const result = p.rfb._cagePasteText("_");
+  let done = false;
+  const result = p.rfb._cagePasteText("_").then(() => { done = true; });
   // A guest clipboard watcher reads as soon as the owner changes.
   p.request();
   assert.deepEqual(p.keys, []);
+  assert.deepEqual(p.sent.at(-1).slice(0, 1), ["extendedClipboardProvide"]);
   p.fence("cage-paste-1");
   assert.deepEqual(p.keys, ctrlV);
-  // The application's own read follows Ctrl+V.
-  p.request();
+  // Xvnc (SConnection::requestClipboard, vncSelection's cache) now holds the
+  // text and answers the application's read itself: no second request comes.
+  // The keys are confirmed at once instead of waiting for one.
   assert.deepEqual(p.sent.at(-1).slice(2), ["cage-paste-1-keys"]);
+  p.fence("cage-paste-1-keys");
+  assert.equal(done, false);
+  await result;
+  assert.equal(p.rfb._cagePasteJob, null);
+});
+
+test("queued input after an early-read paste is delivered, not dropped", async (t) => {
+  const RFB = await loadRFB(t);
+  if (!RFB) return;
+  const p = paste(RFB);
+  t.after(p.restore);
+  const order = [];
+  const first = p.rfb.cagePasteText("a").then(() => order.push("paste"), e => order.push("fail " + e.message));
+  const enter = p.rfb._cageQueueInput(() => order.push("enter"));
+  await new Promise(resolve => setImmediate(resolve));
+  p.request();
+  p.fence("cage-paste-1");
+  p.fence("cage-paste-1-keys");
+  await first;
+  await enter;
+  assert.deepEqual(order, ["paste", "enter"]);
+});
+
+test("a reader racing the application's read still completes once", async (t) => {
+  const RFB = await loadRFB(t);
+  if (!RFB) return;
+  const p = paste(RFB);
+  t.after(p.restore);
+  const result = p.rfb._cagePasteText("z");
+  p.fence("cage-paste-1");
+  // Both reads arrive after Ctrl+V while Xvnc had no data yet.
+  p.request();
+  p.request();
+  assert.deepEqual(p.sent.filter(([name, , value]) => name === "clientFence" && value === "cage-paste-1-keys").length, 1);
   p.fence("cage-paste-1-keys");
   await result;
 });

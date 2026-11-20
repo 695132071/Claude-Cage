@@ -30,11 +30,33 @@ type runProjects struct {
 	Groups   []projectGroup `json:"project_groups"`
 }
 
+// RunDirectoryError says why the caller's directory cannot be used. Error is
+// the full explanation for a run that must stay there (cage run --here);
+// Reason is a one-line summary for a run that falls back to the environment
+// directory instead.
+type RunDirectoryError struct {
+	Reason   string
+	Unshared bool
+	message  string
+}
+
+func (e *RunDirectoryError) Error() string { return e.message }
+
+func runDirectoryError(reason string, unshared bool, format string, args ...any) error {
+	return &RunDirectoryError{Reason: reason, Unshared: unshared, message: fmt.Sprintf(format, args...)}
+}
+
+// firstLine keeps a nested error short enough for a one-line notice.
+func firstLine(err error) string {
+	line, _, _ := strings.Cut(strings.TrimSpace(err.Error()), "\n")
+	return line
+}
+
 // RunDirectory maps the caller's host directory to the directory in the
 // environment where `cage run` runs, connecting the share it lies in. A
 // directory outside every shared project is shared only after confirm says
-// yes, through the same request as the project dialog; otherwise nothing
-// runs. The environment's own directory needs no share.
+// yes, through the same request as the project dialog. Every other outcome
+// is a *RunDirectoryError. The environment's own directory needs no share.
 func RunDirectory(ctx context.Context, configPath, hostDir string, confirm RunDirectoryConfirm) (string, error) {
 	return runDirectory(ctx, filepath.Dir(configPath), hostDir, agentShareClient{configPath}, confirm)
 }
@@ -45,39 +67,40 @@ func runDirectory(ctx context.Context, profile, hostDir string, client runShareC
 		dir, err = paths.Resolve(dir)
 	}
 	if err != nil {
-		return "", fmt.Errorf("无法读取当前目录：%w", err)
+		return "", runDirectoryError("无法读取当前目录", false, "无法读取当前目录：%v", err)
 	}
 	if env, err := paths.Resolve(cage.EnvironmentDir(profile)); err == nil && cage.StorageContains(env, dir) {
 		return guestPath(dir), nil
 	}
 	state, err := client.projects(ctx)
 	if err != nil {
-		return "", fmt.Errorf("无法确认当前目录是否已共享：%w\n请先打开 Cage 并等待环境就绪，或用 --workdir 指定环境中的目录。", err)
+		return "", runDirectoryError("无法确认当前目录是否已共享（Cage 未打开或控制服务不可用："+firstLine(err)+"）", false,
+			"无法确认当前目录是否已共享：%v\n请先打开 Cage 并等待环境就绪，或用 --workdir 指定环境中的目录。", err)
 	}
 	if !state.Ready {
-		return "", errors.New("Cage 环境尚未就绪，命令没有运行。请在 Cage 中完成启动后重试。")
+		return "", runDirectoryError("Cage 环境尚未就绪，无法确认当前目录是否已共享", false, "Cage 环境尚未就绪，命令没有运行。请在 Cage 中完成启动后重试。")
 	}
 	root, workspace := sharedRoot(state, dir)
 	if root == "" {
-		// Not shared: ask, or say how to share. Never fall back to another directory.
-		instructions := "在 Cage 的“项目”中添加该文件夹，或在终端中直接运行 cage run 并确认共享；也可以用 --workdir 指定环境中的目录。"
+		// Not shared: ask, or say how to share.
+		instructions := "在 Cage 的“项目”中添加该文件夹，或在终端中运行 cage run --here 并确认共享；也可以用 --workdir 指定环境中的目录。"
 		if confirm == nil {
-			return "", fmt.Errorf("当前目录尚未共享给 Cage，命令没有运行：%s\n%s", dir, instructions)
+			return "", runDirectoryError("当前目录未共享给 Cage", true, "当前目录尚未共享给 Cage，命令没有运行：%s\n%s", dir, instructions)
 		}
 		yes, err := confirm(dir)
 		if err != nil {
-			return "", fmt.Errorf("未能确认是否共享当前目录，命令没有运行：%w", err)
+			return "", runDirectoryError("未能确认是否共享当前目录", true, "未能确认是否共享当前目录，命令没有运行：%v", err)
 		}
 		if !yes {
-			return "", fmt.Errorf("已取消共享，命令没有运行：%s", dir)
+			return "", runDirectoryError("已取消共享当前目录", true, "已取消共享，命令没有运行：%s", dir)
 		}
 		if err := client.save(ctx, dir); err != nil {
-			return "", fmt.Errorf("共享当前目录失败，命令没有运行：%w", err)
+			return "", runDirectoryError("共享当前目录失败："+firstLine(err), true, "共享当前目录失败，命令没有运行：%v", err)
 		}
 		return guestPath(dir), nil
 	}
 	if err := client.open(ctx, workspace); err != nil {
-		return "", fmt.Errorf("无法连接当前目录所在的项目，命令没有运行：%w", err)
+		return "", runDirectoryError("无法连接当前目录所在的项目："+firstLine(err), false, "无法连接当前目录所在的项目，命令没有运行：%v", err)
 	}
 	return guestPath(root) + guestRemainder(root, dir), nil
 }

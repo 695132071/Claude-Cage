@@ -139,6 +139,12 @@ func (s *Server) hostPluginDir() string { return filepath.Join(s.profile, "plugi
 func (s *Server) hostToolsView() hostToolsView {
 	s.mu.Lock()
 	enabled, tools, off := s.preferences.HostTools, s.hostTools, hostPluginsOff(s.preferences)
+	var pluginProblems, missingPrograms map[string]string
+	var problems []string
+	if tools != nil {
+		// Replaced, not changed, when a plugin restarts for a new project.
+		pluginProblems, missingPrograms, problems = tools.pluginProblems, tools.missingPrograms, tools.problems
+	}
 	s.mu.Unlock()
 	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil && tools.serving,
 		Directory: s.hostPluginDir(), Folders: s.hostToolDirs()}
@@ -146,14 +152,13 @@ func (s *Server) hostToolsView() hostToolsView {
 		view.Folders = []string{}
 	}
 	loaded := map[string][]hostbridge.ToolInfo{}
-	pluginProblems := map[string]string{}
-	missingPrograms := map[string]string{}
 	if tools != nil {
-		view.Problems = tools.problems
-		pluginProblems = tools.pluginProblems
-		missingPrograms = tools.missingPrograms
+		view.Problems = problems
 		for _, plugin := range tools.plugins {
-			loaded[plugin.Manifest.Name] = plugin.ToolList()
+			// One waiting for a project folder is kept, not running.
+			if plugin.Running() {
+				loaded[plugin.Manifest.Name] = plugin.ToolList()
+			}
 		}
 	}
 	view.Plugins = []hostPluginView{{Name: hostCommandsPlugin, BuiltIn: true, Supported: true, Enabled: !slices.Contains(off, hostCommandsPlugin),

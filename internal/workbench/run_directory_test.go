@@ -20,12 +20,13 @@ type fakeRunShares struct {
 	opened  []string
 	saved   []string
 	saveErr error
+	openErr error
 }
 
 func (f *fakeRunShares) projects(context.Context) (runProjects, error) { return f.state, f.err }
 func (f *fakeRunShares) open(_ context.Context, workspace string) error {
 	f.opened = append(f.opened, workspace)
-	return nil
+	return f.openErr
 }
 func (f *fakeRunShares) save(_ context.Context, folder string) error {
 	f.saved = append(f.saved, folder)
@@ -184,5 +185,39 @@ func TestRunDirectoryReadsTheStatusTheWorkbenchServes(t *testing.T) {
 	}
 	if !state.Ready || !slices.Contains(state.Projects, project) {
 		t.Fatalf("status as read by cage run: %+v", state)
+	}
+}
+
+// cage run falls back to the environment directory on each of these; it
+// needs a short reason and whether sharing the folder would help.
+func TestRunDirectoryFailuresCarryAShortReason(t *testing.T) {
+	profile, base := runDirectoryFixture(t)
+	demo, sibling := filepath.Join(base, "demo"), filepath.Join(base, "demo-two")
+	ctx := context.Background()
+	ready := runProjects{Ready: true, Projects: []string{demo}}
+	for _, tc := range []struct {
+		name     string
+		dir      string
+		shares   *fakeRunShares
+		confirm  RunDirectoryConfirm
+		unshared bool
+		reason   string
+	}{
+		{"unshared", sibling, &fakeRunShares{state: ready}, nil, true, "未共享"},
+		{"declined", sibling, &fakeRunShares{state: ready}, func(string) (bool, error) { return false, nil }, true, "取消"},
+		{"share refused", sibling, &fakeRunShares{state: ready, saveErr: errors.New("请选择具体项目\n详情")}, func(string) (bool, error) { return true, nil }, true, "请选择具体项目"},
+		{"service unavailable", demo, &fakeRunShares{err: errors.New("dial unix: connection refused")}, nil, false, "connection refused"},
+		{"not ready", demo, &fakeRunShares{state: runProjects{Projects: []string{demo}}}, nil, false, "尚未就绪"},
+		{"project busy", demo, &fakeRunShares{state: ready, openErr: errors.New("另一个项目操作正在进行")}, nil, false, "另一个项目操作正在进行"},
+		{"unreadable", filepath.Join(base, "missing"), &fakeRunShares{state: ready}, nil, false, "无法读取当前目录"},
+	} {
+		_, err := runDirectory(ctx, profile, tc.dir, tc.shares, tc.confirm)
+		var failure *RunDirectoryError
+		if !errors.As(err, &failure) {
+			t.Fatalf("%s: %T %v is not a RunDirectoryError", tc.name, err, err)
+		}
+		if failure.Unshared != tc.unshared || !strings.Contains(failure.Reason, tc.reason) || strings.Contains(failure.Reason, "\n") {
+			t.Fatalf("%s: reason %q unshared %v", tc.name, failure.Reason, failure.Unshared)
+		}
 	}
 }

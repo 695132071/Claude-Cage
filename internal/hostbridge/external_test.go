@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,6 +48,15 @@ func servePlugin(kind string) {
 		}
 		return nil, output{Text: in.Text + in.Text}, nil
 	})
+	if kind == "project" {
+		where := &mcp.Tool{Name: "where_am_i", Description: "Report the folder and process."}
+		mcp.AddTool(server, where, func(_ context.Context, _ *mcp.CallToolRequest, in input) (*mcp.CallToolResult, output, error) {
+			if in.Text == "slow" {
+				time.Sleep(700 * time.Millisecond)
+			}
+			return nil, output{Text: fmt.Sprintf("%s|%d", strings.Join(os.Args[1:], " "), os.Getpid())}, nil
+		})
+	}
 	if kind == "audiences" {
 		// One tool for the page alone, one for the model alone.
 		for name, audience := range map[string]string{"page_action": "app", "model_action": "model"} {
@@ -402,5 +412,114 @@ func TestMissingProgramErrorAndMissingProjectDir(t *testing.T) {
 	var noProj *MissingProjectDirError
 	if !errors.As(failures[0], &noProj) || noProj.Plugin != "needs-project" {
 		t.Fatalf("expected MissingProjectDirError, got %T: %v", failures[0], failures[0])
+	}
+}
+
+// writeProjectPlugin makes a plugin whose program reports the folder it was
+// given for ${PROJECT_DIR}, and its process.
+func writeProjectPlugin(t *testing.T, root, name string, args ...string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the plugin program is a shell script")
+	}
+	dir := filepath.Join(root, name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := "#!/bin/sh\nTEST_PLUGIN=project exec " + os.Args[0] + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(dir, "run.sh"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest, _ := json.Marshal(Manifest{Name: name, Version: "1.0.0", Description: "d", Permissions: []string{}, Command: append([]string{"run.sh"}, args...)})
+	if err := os.WriteFile(filepath.Join(dir, ManifestFile), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return dir
+}
+
+func whereAmI(t *testing.T, ctx context.Context, plugin *External, text string) (string, error) {
+	t.Helper()
+	result, err := plugin.call(ctx, "where_am_i", json.RawMessage(`{"text":"`+text+`"}`), false)
+	if err != nil {
+		return "", err
+	}
+	if result.IsError {
+		return "", fmt.Errorf("tool error: %+v", result.Content)
+	}
+	var out struct{ Text string }
+	data, _ := json.Marshal(result.StructuredContent)
+	_ = json.Unmarshal(data, &out)
+	return out.Text, nil
+}
+
+func TestRestartRunsThePluginForTheNewProject(t *testing.T) {
+	root := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	writeProjectPlugin(t, root, "scoped", "--root", "${PROJECT_DIR}")
+	writeProjectPlugin(t, root, "plain", "--fixed")
+
+	// No project open: the scoped plugin is reported and kept, not running.
+	plugins, failures := LoadPlugins(ctx, root, LoadOptions{})
+	defer func() {
+		for _, plugin := range plugins {
+			plugin.Close()
+		}
+	}()
+	if len(plugins) != 2 || len(failures) != 1 {
+		t.Fatalf("plugins %d failures %v", len(plugins), failures)
+	}
+	if _, ok := errors.AsType[*MissingProjectDirError](failures[0]); !ok {
+		t.Fatalf("failure %v", failures[0])
+	}
+	byName := map[string]*External{}
+	for _, plugin := range plugins {
+		byName[plugin.Manifest.Name] = plugin
+	}
+	scoped, plain := byName["scoped"], byName["plain"]
+	if scoped.Running() || len(scoped.Tools()) != 0 || !scoped.UsesProjectDir() || !plain.Running() || plain.UsesProjectDir() {
+		t.Fatalf("scoped running=%v tools=%v plain running=%v", scoped.Running(), scoped.Tools(), plain.Running())
+	}
+
+	// A project opens: the waiting plugin starts with it.
+	if err := scoped.Restart(ctx, func() string { return "/p/one" }); err != nil {
+		t.Fatal(err)
+	}
+	first, err := whereAmI(t, ctx, scoped, "")
+	if err != nil || !strings.HasPrefix(first, "--root /p/one|") {
+		t.Fatalf("first project: %q %v", first, err)
+	}
+	plainBefore, _ := whereAmI(t, ctx, plain, "")
+
+	// Switching projects restarts it with the new folder while a call to
+	// another plugin carries on.
+	slow := make(chan error, 1)
+	go func() {
+		_, err := whereAmI(t, ctx, plain, "slow")
+		slow <- err
+	}()
+	time.Sleep(100 * time.Millisecond)
+	if err := scoped.Restart(ctx, func() string { return "/p/two" }); err != nil {
+		t.Fatal(err)
+	}
+	second, err := whereAmI(t, ctx, scoped, "")
+	if err != nil || !strings.HasPrefix(second, "--root /p/two|") || second == first {
+		t.Fatalf("second project: %q %v", second, err)
+	}
+	if err := <-slow; err != nil {
+		t.Fatalf("other plugin's call was interrupted: %v", err)
+	}
+	if plainAfter, _ := whereAmI(t, ctx, plain, ""); plainAfter != plainBefore {
+		t.Fatalf("plugin without the placeholder restarted: %q -> %q", plainBefore, plainAfter)
+	}
+
+	// No shared project: it stops and offers nothing rather than running
+	// somewhere else.
+	err = scoped.Restart(ctx, func() string { return "" })
+	if _, ok := errors.AsType[*MissingProjectDirError](err); !ok {
+		t.Fatalf("restart without a project: %v", err)
+	}
+	if scoped.Running() || len(scoped.Tools()) != 0 {
+		t.Fatalf("still running=%v tools=%v", scoped.Running(), scoped.Tools())
 	}
 }

@@ -32,3 +32,22 @@ func TestTakeWorkdirOnlyReadsRunOptions(t *testing.T) {
 		t.Fatal("SplitRun missed a VM option")
 	}
 }
+
+func TestTakeRunFlagOnlyReadsRunOptions(t *testing.T) {
+	for _, tc := range []struct {
+		args  []string
+		given bool
+		rest  []string
+	}{
+		{[]string{"--here", "pwd"}, true, []string{"pwd"}},
+		{[]string{"--tty", "--workdir", "/p", "--here", "claude"}, true, []string{"--tty", "--workdir", "/p", "claude"}},
+		{[]string{"--rm", "--here", "--", "ls", "--here"}, true, []string{"--rm", "--", "ls", "--here"}},
+		{[]string{"pwd", "--here"}, false, []string{"pwd", "--here"}},
+		{[]string{"--workdir=/x", "ls"}, false, []string{"--workdir=/x", "ls"}},
+	} {
+		given, rest, err := TakeRunFlag(tc.args, "--here")
+		if err != nil || given != tc.given || !slices.Equal(rest, tc.rest) {
+			t.Errorf("TakeRunFlag(%q) = %v, %q, %v", tc.args, given, rest, err)
+		}
+	}
+}
