@@ -65,6 +65,23 @@ func TestAgentAuthenticationAndLockedAccount(t *testing.T) {
 	}
 }
 
+// A profile without an account asks for account.create, not account.unlock.
+func TestAgentMissingAccountAsksForCreate(t *testing.T) {
+	s := agentTestController(t)
+	s.account.lock()
+	s.account.mu.Lock()
+	s.account.record = nil
+	s.account.mu.Unlock()
+	_, err := AgentCall(context.Background(), s.configPath, "settings.get", nil)
+	var ae *AgentError
+	if !errors.As(err, &ae) || ae.Code != "account_missing" || ae.NextAction != "account.create" || ae.HTTPStatus != 423 {
+		t.Fatalf("missing account: %#v", err)
+	}
+	if w := request(s, "GET", "/api/settings", "", "", true); w.Code != 423 || w.Header().Get("X-Cage-Recovery") != accountMissingRecovery {
+		t.Fatalf("missing account response: %d %q", w.Code, w.Header().Get("X-Cage-Recovery"))
+	}
+}
+
 func TestAgentSettingsPatchPreservesOmittedFields(t *testing.T) {
 	s := agentTestController(t)
 	s.preferences.ClaudeTerminalCommand = "claude --verbose"

@@ -12,6 +12,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	"image/png"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -208,6 +209,23 @@ func (a *localAccount) accessStateFor(desktop, pairedPhone bool) (context.Contex
 		return a.epoch, accountAccessDesktopOnly
 	}
 	return a.epoch, accountAccessLocked
+}
+
+func (a *localAccount) exists() bool {
+	if a == nil {
+		return false
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.record != nil
+}
+
+// markMissingAccount lets a client tell a first run from a locked account:
+// both answer 423, but only an existing account can be unlocked.
+func (a *localAccount) markMissingAccount(w http.ResponseWriter) {
+	if !a.exists() {
+		w.Header().Set("X-Cage-Recovery", accountMissingRecovery)
+	}
 }
 
 func (a *localAccount) desktopOnlyMobileMessage() string {
