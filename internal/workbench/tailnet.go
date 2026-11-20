@@ -143,7 +143,7 @@ func (s *Server) tailnet(w http.ResponseWriter, r *http.Request) {
 		if !readJSON(w, r, &input) {
 			return
 		}
-		s.launch(w, "tailscale-install", s.installTailnetNow)
+		s.launchRequest(w, r, "tailscale-install", s.installTailnetNow)
 		return
 	}
 	switch action {

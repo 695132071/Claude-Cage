@@ -68,9 +68,9 @@ func AgentOperations() []AgentOperation {
 		post("proxy."+action, "Proxy operation; import creates a source, refresh updates an existing source (a local source needs new content and keeps node IDs by name), edit-node changes server/server_port of a local node only. Read state before retrying. select/route applies the route", "/api/proxy/"+action, proxy)
 	}
 	get("guest.options", "Whether the environment is new, and any installation an earlier version left unfinished", "/api/environment/guest-systems")
-	get("initialization.status", "Read initial setup state", "/api/environment/initialization")
+	get("initialization.status", "Read initial setup state; desktop_active indicates desktop first-run onboarding is active", "/api/environment/initialization")
 	post("initialization.set", "action: begin, install or complete; complete requires verified readiness", "/api/environment/initialization", object(map[string]string{"action": "string"}))
-	post("environment.start", "Start or resume installation. Omit guest_system for an existing environment; use guest.options for supported choices", "/api/start", from(guestInstallRequest{}))
+	post("environment.start", "Start or resume installation. Omit guest_system for an existing environment; returns state_conflict while desktop first-run onboarding is active", "/api/start", from(guestInstallRequest{}))
 	post("environment.stop", "Stop the environment and active terminals; preserves persistent data", "/api/stop", object(nil))
 	get("environment.versions", "Read installed component and tool versions", "/api/environment/versions")
 	post("environment.update", "Update guest components; may restart guest services", "/api/environment/update", object(nil))
@@ -387,7 +387,7 @@ func (s *Server) agentSettings(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, settingsView(v.Config, v.Preferences))
 		return
 	}
-	s.launch(w, "settings", func() error {
+	s.launchRequest(w, r, "settings", func() error {
 		v, err := propose()
 		if err != nil {
 			return err

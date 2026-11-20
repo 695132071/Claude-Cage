@@ -160,7 +160,7 @@ cage agent call settings.patch --input /private/path/settings-apply.json --wait 
 cage agent call environment.start --input /private/path/guest-choice.json --wait 30m
 ```
 
-已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。请求中断时先核对安装状态再决定下一步。
+已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。如果桌面端窗口正处于首次引导（`initialization.status` 返回 `desktop_active: true`），通过 Agent 调用 `environment.start` 会直接返回 `state_conflict`，避免与桌面引导并发冲突；可在桌面端完成引导或关闭引导窗口后再继续。请求中断时先核对安装状态再决定下一步。
 
 需要用户完成的步骤出现时，报告具体需要做的事和恢复查询命令。不要用无限重试掩盖等待用户操作。安装进度在作业的 `setup_progress` 中；`prepared`、安装完成、运行和联网分别检查。
 
@@ -202,7 +202,7 @@ cage agent job 012345abcdef
 cage agent job 012345abcdef --wait 30m
 ```
 
-`--wait` 为有限等待，范围为 0 到 24 小时；不指定时立即返回。等待或客户端断开不会自动取消作业。后台只保留最近一个作业和被它替换的上一个作业，更早的记录会丢失，重启也可能失去记录。仍在运行的作业被停止替换时，原作业返回 `job_canceled`，`superseded_by` 给出替换它的作业 id，可据此查询停止作业的结果。`job_not_found`、`outcome_unknown` 或连接中断后，先读 `status` 和相应配置，核对副作用；不要把其他任务成功当成原任务成功。`job_canceled` 单独表示取消，不能视为完成。
+`--wait` 为有限等待，范围为 0 到 24 小时；不指定时立即返回。等待或客户端断开不会自动取消作业。每个作业会通过 `initiator` 记录发起方（`agent`、`desktop` 或 `setup`）。后台只保留最近一个作业和被它替换的上一个作业，更早的记录会丢失，重启也可能失去记录。仍在运行的作业被停止或取消时，原作业返回 `job_canceled`，`canceled_by` 给出取消来源（`agent`、`desktop` 或 `setup`），`superseded_by` 给出替换它的作业 id，可据此查询停止作业的结果并决定是否重试。`job_not_found`、`outcome_unknown` 或连接中断后，先读 `status` 和相应配置，核对副作用；不要把其他任务成功当成原任务成功。`job_canceled` 单独表示取消，不能视为完成。
 
 命名 call 的输入必须是单个 JSON 对象，最大 12 MiB；request 支持原始二进制文件流。未知命令和字段会被拒绝。能力清单的 `input_schema` 描述允许字段；当前平台、系统状态和字段组合仍由后台验证。错误说明经过脱敏，正常业务结果保持接口原值。用户可以查看的密码、Cookie、配对码等，在同样的再次验证和权限检查通过后也可由 Agent 读取，应通过私有管道处理，避免默认记录或回显。
 

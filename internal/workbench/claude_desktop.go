@@ -78,7 +78,7 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请先启动 Cage 环境", 409)
 		return
 	}
-	s.launch(w, "claude-desktop-"+action, func() error {
+	s.launchRequest(w, r, "claude-desktop-"+action, func() error {
 		s.desktopStatus.invalidate()
 		defer s.desktopStatus.invalidate()
 		switch action {

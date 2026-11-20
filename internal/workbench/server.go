@@ -86,6 +86,7 @@ type Server struct {
 	mu                                               sync.Mutex
 	preferences                                      Preferences
 	jobs                                             jobManager
+	desktopOnboardingUntil                           time.Time
 	ready                                            bool
 	location                                         *Location
 	exitProbeError                                   string
@@ -638,6 +639,9 @@ func requestError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
+	if requestInitiator(r) == jobInitiatorSetup {
+		s.touchDesktopOnboarding()
+	}
 	projects, err := s.projectPaths()
 	if err != nil {
 		requestError(w, errors.New("无法读取项目列表，请检查项目配置"))
@@ -761,7 +765,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	if err == nil && old == v.Config && previous.AutoTimezone == v.Preferences.AutoTimezone && previous.AutoLanguage == v.Preferences.AutoLanguage && previous.Workspace != v.Preferences.Workspace {
 		kind = "project"
 	}
-	s.launch(w, kind, func() error {
+	s.launchRequest(w, r, kind, func() error {
 		s.mu.Lock()
 		v.Preferences.BrowserHomeURL = s.preferences.BrowserHomeURL
 		s.mu.Unlock()
@@ -779,7 +783,7 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 		requestError(w, errors.New("没有可恢复的配置"))
 		return
 	}
-	s.launch(w, "restore", func() error {
+	s.launchRequest(w, r, "restore", func() error {
 		if err := s.apply(v, false); err != nil {
 			return err
 		}
@@ -787,6 +791,10 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
+	if requestInitiator(r) == jobInitiatorAgent && s.desktopOnboardingActive() {
+		http.Error(w, "桌面端正在进行首次引导，请先在 Cage 窗口完成或关闭引导后再启动环境", http.StatusConflict)
+		return
+	}
 	var input guestInstallRequest
 	if r.ContentLength != 0 && !readJSON(w, r, &input) {
 		return
@@ -832,7 +840,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "当前环境无法启动所选客户机系统，请保留原环境并重新检查安装选择", http.StatusConflict)
 		return
 	}
-	s.launch(w, "start", func() error {
+	s.launchRequest(w, r, "start", func() error {
 		if err := s.prepareGuestProfile(input.GuestProfile); err != nil {
 			return err
 		}
@@ -843,20 +851,21 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	})
 }
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
-	s.requestStop(w, false)
+	s.requestStop(w, r, false)
 }
 
-func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
+func (s *Server) requestStop(w http.ResponseWriter, r *http.Request, logout bool) {
 	if err := s.requireStorageReady(); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
+	initiator := requestInitiator(r)
 	for _, name := range []string{cage.InstanceName(s.profile, s.environmentDir()), "base-building"} {
 		if owner := cage.InstanceJobID(filepath.Join(s.profile, "state"), name); owner != "" {
 			_ = cage.RequestJobStop(s.profile, owner)
 		}
 	}
-	jobID := s.jobs.cancelRunning()
+	jobID := s.jobs.cancelRunningBy(initiator)
 	if jobID != "" {
 		_ = cage.RequestJobStop(s.profile, jobID)
 	}
@@ -865,7 +874,7 @@ func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
 	if logout {
 		kind = "logout"
 	}
-	s.launch(w, kind, s.stopEnvironment)
+	s.launchFrom(w, initiator, kind, s.stopEnvironment)
 }
 
 func (s *Server) cookieName() string { u, _ := url.Parse(s.origin); return cookieName + "_" + u.Port() }

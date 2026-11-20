@@ -219,7 +219,7 @@ func (s *Server) publishReport(report cage.SafetyReport) {
 }
 
 func (s *Server) safetyCheck(w http.ResponseWriter, r *http.Request) {
-	s.launch(w, "safety", s.runSafetyCheck)
+	s.launchRequest(w, r, "safety", s.runSafetyCheck)
 }
 
 func (s *Server) pauseNetwork(w http.ResponseWriter, r *http.Request) {

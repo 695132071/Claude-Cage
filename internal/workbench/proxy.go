@@ -129,7 +129,7 @@ func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	pauseVersion := s.safety.pauseVersion
 	s.mu.Unlock()
-	s.launch(w, "proxy", func() error { return s.changeProxy(action, input, &pauseVersion) })
+	s.launchRequest(w, r, "proxy", func() error { return s.changeProxy(action, input, &pauseVersion) })
 }
 func (s *Server) subscriptionClient(host bool) (*http.Client, error) {
 	cfg, err := loadConfig(s.configPath)

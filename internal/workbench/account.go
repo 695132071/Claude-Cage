@@ -104,7 +104,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 	case "device-unlock":
 		err = s.account.unlockDevice(input.Kind, input.Credential)
 	case "logout":
-		s.requestStop(w, true)
+		s.requestStop(w, r, true)
 		return
 	}
 	if err != nil {

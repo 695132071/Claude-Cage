@@ -153,10 +153,10 @@ func (s *Server) noteGuestUpdateRequired(generation uint64) {
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
-	s.launch(w, "environment-update", s.synchronizeEnvironment)
+	s.launchRequest(w, r, "environment-update", s.synchronizeEnvironment)
 }
 func (s *Server) updateEnvironmentTools(w http.ResponseWriter, r *http.Request) {
-	s.launch(w, "environment-tools", s.upgradeEnvironmentTools)
+	s.launchRequest(w, r, "environment-tools", s.upgradeEnvironmentTools)
 }
 
 func (s *Server) synchronizeEnvironment() error {
