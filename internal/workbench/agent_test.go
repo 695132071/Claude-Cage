@@ -245,3 +245,16 @@ func TestAgentNativeDiagnosticExport(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentTrustedLoginOmitsRejectedCreate(t *testing.T) {
+	for _, op := range AgentOperations() {
+		if op.Name != "client.trusted-login" {
+			continue
+		}
+		if strings.Contains(strings.ReplaceAll(op.Description, "account.create", ""), "create") || !strings.Contains(op.Description, "account.create") {
+			t.Fatalf("trusted-login advertises an action the launcher rejects: %q", op.Description)
+		}
+		return
+	}
+	t.Fatal("client.trusted-login is not listed")
+}
