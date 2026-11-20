@@ -26,6 +26,9 @@ const (
 	guestSessionStartup = 5 * time.Second
 )
 
+// guestSessionOutputMaximum matches OUTPUT_MAXIMUM in guest-session.py.
+const guestSessionOutputMaximum = (4 << 20) + 256
+
 var errGuestSessionEnded = errors.New("guest control session ended")
 
 type guestSessionReply struct {
@@ -82,7 +85,7 @@ func (c *guestSessionConn) receive(output *bufio.Reader, done func()) {
 		code, codeErr := strconv.Atoi(fields[2])
 		outSize, outErr := strconv.Atoi(fields[3])
 		errSize, errErr := strconv.Atoi(fields[4])
-		if idErr != nil || codeErr != nil || outErr != nil || errErr != nil || outSize < 0 || outSize > 1<<20 || errSize < 0 || errSize > 1<<16 {
+		if idErr != nil || codeErr != nil || outErr != nil || errErr != nil || outSize < 0 || outSize > guestSessionOutputMaximum || errSize < 0 || errSize > 1<<16 {
 			return
 		}
 		data := make([]byte, outSize+errSize)
@@ -155,6 +158,22 @@ func openGuestSession(parent context.Context, command func(context.Context) *exe
 // run sends one script. sent reports whether the guest may have started it:
 // when false, the caller can safely use a connection of its own instead.
 func (g *guestSession) run(ctx context.Context, lifetime context.Context, command func(context.Context) *exec.Cmd, script string) (reply guestSessionReply, sent bool, err error) {
+	return g.runInput(ctx, lifetime, command, script, nil, 0)
+}
+
+// runInput also passes standard input; a positive limit replaces the
+// default 64 KiB output bound (the guest stops a script that exceeds it).
+func (g *guestSession) runInput(ctx context.Context, lifetime context.Context, command func(context.Context) *exec.Cmd, script string, input []byte, limit int) (reply guestSessionReply, sent bool, err error) {
+	header := ""
+	if input != nil || limit > 0 {
+		if limit <= 0 {
+			limit = (64 << 10) + 256
+		}
+		if limit > guestSessionOutputMaximum || len(input) > 1<<20 {
+			return reply, false, errors.New("guest control request exceeded its limit")
+		}
+		header = fmt.Sprintf(" %d %d", len(input), limit)
+	}
 	g.mu.Lock()
 	conn := g.conn
 	if conn == nil || !conn.alive() {
@@ -182,7 +201,7 @@ func (g *guestSession) run(ctx context.Context, lifetime context.Context, comman
 	defer g.release(conn)
 	forget := func() { conn.mu.Lock(); delete(conn.waiting, id); conn.mu.Unlock() }
 	conn.writing.Lock()
-	_, err = io.WriteString(conn.stdin, fmt.Sprintf("R %d %d\n%s", id, len(script), script))
+	_, err = io.WriteString(conn.stdin, fmt.Sprintf("R %d %d%s\n%s%s", id, len(script), header, script, input))
 	conn.writing.Unlock()
 	if err != nil {
 		// A partial request never runs: the server needs its full length.

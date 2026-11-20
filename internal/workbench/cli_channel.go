@@ -131,15 +131,39 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	if err != nil {
 		return err
 	}
-	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+cliChannelCommand(mode, "-")))
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
-	cmd.Stdin = strings.NewReader(string(data))
-	var stderr fileControlStderr
-	cmd.Stderr = &stderr
-	cmd.WaitDelay = 2 * time.Second
+	// Profile output goes to stderr; the login shell keeps the user's PATH.
+	script := "exec 3>&1 1>&2; exec /bin/bash -lc " + shellescape.Quote("exec 1>&3 3>&-; exec "+cliChannelCommand(mode, "-"))
 	var result bytes.Buffer
-	cmd.Stdout = &boundedStatusWriter{buffer: &result, remaining: 4 << 20}
-	err = cmd.Run()
+	var stderr fileControlStderr
+	exit := -1
+	transportLost := false
+	// Session views and discovery run every few seconds for each terminal.
+	// The shared control connection avoids an SSH session and the user's
+	// shell startup per call; a request that was never sent uses its own.
+	reply, sent, err := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
+	if sent {
+		result.Write(reply.stdout)
+		stderr.data = reply.stderr
+		if err == nil {
+			exit = reply.code
+			if reply.code != 0 || len(reply.stdout) > 4<<20 {
+				err = fmt.Errorf("exit status %d", reply.code)
+			}
+		} else {
+			transportLost = errors.Is(err, errGuestSessionEnded)
+		}
+	} else {
+		cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec /bin/bash -c "+shellescape.Quote(script))
+		cmd.Stdin = bytes.NewReader(data)
+		cmd.Stderr = &stderr
+		cmd.WaitDelay = 2 * time.Second
+		cmd.Stdout = &boundedStatusWriter{buffer: &result, remaining: 4 << 20}
+		err = cmd.Run()
+		if cmd.ProcessState != nil {
+			exit = cmd.ProcessState.ExitCode()
+			transportLost = exit == 255
+		}
+	}
 	if err != nil || json.Unmarshal(result.Bytes(), output) != nil {
 		failure := "guest_response"
 		message := "电脑未能读取会话状态，聊天记录已保留。"
@@ -147,17 +171,13 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 			failure, message = "timeout", "电脑读取运行环境超时，暂时无法获取会话状态。"
 		} else if err != nil {
 			failure = "guest_command"
-			if cmd.ProcessState != nil && cmd.ProcessState.ExitCode() == 255 {
+			if transportLost {
 				failure, message = "ssh_connection", "电脑暂时无法连接运行环境，聊天记录已保留。"
 			}
 		}
-		exit := -1
-		if cmd.ProcessState != nil {
-			exit = cmd.ProcessState.ExitCode()
-		}
 		// Record transport and protocol evidence without terminal output,
 		// prompts, account paths or raw SSH/Python error messages.
-		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), result.Len(), len(stderr.data)))
+		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d shared=%t", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), result.Len(), len(stderr.data), sent))
 		return errors.New(message)
 	}
 	return nil

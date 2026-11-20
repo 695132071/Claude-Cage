@@ -241,3 +241,33 @@ func TestGuestSessionToleratesLoginShellOutputAndRejectsOtherServers(t *testing.
 		t.Fatal("startup was not bounded")
 	}
 }
+
+func TestGuestSessionPassesInputAndCallerOutputLimit(t *testing.T) {
+	_, session, starts := localGuestSession(t)
+	command := func(ctx context.Context) *exec.Cmd {
+		starts.Add(1)
+		return exec.CommandContext(ctx, "python3", "-I", "-u", "-c", guestSessionServer)
+	}
+	ctx := context.Background()
+	input := []byte(strings.Repeat("输入", 150000) + "\x00end")
+	reply, sent, err := session.runInput(ctx, ctx, command, "cat; printf '|%s' \"$0\"", input, 4<<20)
+	if err != nil || !sent || reply.code != 0 || string(reply.stdout) != string(input)+"|/bin/bash" {
+		t.Fatalf("stdin did not round-trip: len=%d code=%d sent=%v err=%v", len(reply.stdout), reply.code, sent, err)
+	}
+	// A larger caller limit is still enforced by the guest.
+	reply, _, err = session.runInput(ctx, ctx, command, "head -c 3000000 /dev/zero", []byte{}, 1<<20)
+	if err != nil || len(reply.stdout) != 1<<20 || reply.code == 0 {
+		t.Fatalf("limit not enforced: stdout=%d code=%d err=%v", len(reply.stdout), reply.code, err)
+	}
+	// Scripts without input keep an empty stdin on the same connection.
+	reply, _, err = session.run(ctx, ctx, command, "cat; printf done")
+	if err != nil || string(reply.stdout) != "done" {
+		t.Fatalf("plain request changed: %+v %v", reply, err)
+	}
+	if _, sent, err = session.runInput(ctx, ctx, command, "true", make([]byte, (1<<20)+1), 0); sent || err == nil {
+		t.Fatal("oversized input was sent")
+	}
+	if starts.Load() != 1 {
+		t.Fatalf("%d connections opened", starts.Load())
+	}
+}
