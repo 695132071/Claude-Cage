@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/sylvinus/agent-vm/internal/durable"
@@ -143,6 +144,19 @@ func TestTruncatedRunningAndGateRecordsAllowRecovery(t *testing.T) {
 		if err := stoppedStorage(dir); err != nil {
 			t.Fatalf("unreadable cage-running.json %q blocked storage check: %v", content, err)
 		}
+	}
+	// A complete record with an impossible PID is not an interrupted write:
+	// it is refused, so a damaged record never lets storage move under a VM.
+	for _, content := range []string{`{"pid":0}`, `{"pid":-4,"started":"x"}`, `{}`, `{"pid":"12"}`, `[]`} {
+		if err := os.WriteFile(filepath.Join(instance, "cage-running.json"), []byte(content), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := stoppedStorage(dir); err == nil || !strings.Contains(err.Error(), "无法核验虚拟机进程记录") {
+			t.Fatalf("valid JSON %q with no usable PID: %v", content, err)
+		}
+	}
+	if err := os.Remove(filepath.Join(instance, "cage-running.json")); err != nil {
+		t.Fatal(err)
 	}
 	// Truncated cage-gate.json left by a crash is replaced cleanly on next start.
 	gatePath := filepath.Join(instance, gateRecordName)
