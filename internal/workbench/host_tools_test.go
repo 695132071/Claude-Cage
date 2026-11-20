@@ -304,3 +304,61 @@ func TestInstallFromMarketReplacesAndRestores(t *testing.T) {
 		t.Fatal("installed a plugin the list does not have")
 	}
 }
+
+func TestMissingProgramMessageAndProjectPlaceholderHelpers(t *testing.T) {
+	for program, want := range map[string]string{
+		"uv":      "https://docs.astral.sh/uv/",
+		"uvx":     "https://docs.astral.sh/uv/",
+		"npx":     "https://nodejs.org/",
+		"node":    "https://nodejs.org/",
+		"python3": "https://www.python.org/",
+		"custom":  "custom",
+	} {
+		msg := missingProgramMessage(program)
+		if !strings.Contains(msg, want) {
+			t.Errorf("missingProgramMessage(%q) = %q, want %q", program, msg, want)
+		}
+	}
+
+	s := &Server{
+		profile:       t.TempDir(),
+		preferences:   Preferences{HostTools: true, Workspace: "/p/main"},
+		projectShares: map[string]*projectShare{"/p/main": {}, "/p/other": {}},
+		hostTools: &hostTools{
+			serving:         true,
+			pluginProblems:  map[string]string{"blender": missingProgramMessage("uv")},
+			missingPrograms: map[string]string{"blender": "uv"},
+		},
+	}
+	if got := s.hostActiveProjectDir(); got != "/p/main" {
+		t.Fatalf("hostActiveProjectDir = %q, want /p/main", got)
+	}
+	if got := s.guestActiveProjectDir(); got == "" {
+		t.Fatal("guestActiveProjectDir returned empty")
+	}
+	blenderDir := filepath.Join(s.hostPluginDir(), "blender")
+	if err := os.MkdirAll(blenderDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(blenderDir, hostbridge.ManifestFile), []byte(
+		`{"name":"blender","version":"0.1.0","description":"Blender","permissions":["files"],"command":["uv","run","--with","blender-mcp==1.3.1","python","server.py","--root","${PROJECT_DIR}"]}`,
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !s.hostToolsUsesProjectDir() {
+		t.Fatal("hostToolsUsesProjectDir = false, want true")
+	}
+	view := s.hostToolsView()
+	found := false
+	for _, p := range view.Plugins {
+		if p.Name == "blender" {
+			found = true
+			if p.MissingProgram != "uv" || !strings.Contains(p.Problem, "https://docs.astral.sh/uv/") {
+				t.Fatalf("blender plugin view: %+v", p)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("blender not found in hostToolsView")
+	}
+}

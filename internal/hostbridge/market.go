@@ -60,9 +60,16 @@ type MarketEntry struct {
 	Bytes   int64  `json:"bytes"`
 	// Icon is the address of the plugin's picture, if it has one.
 	Icon string `json:"icon,omitempty"`
+	// Runtime names the runtime program the plugin uses (such as python3, node,
+	// npx, uv or powershell), when the list includes it. Only shown, never acted on.
+	Runtime string `json:"runtime,omitempty"`
 	// Source names the open-source project the plugin is built on, when it
 	// is. It is only shown, never acted on.
 	Source *Source `json:"source,omitempty"`
+	// AllPlatforms collects the union of declared platforms across all target
+	// entries of the same plugin in the market list, for display. Empty means
+	// all platforms (darwin, linux, windows).
+	AllPlatforms []string `json:"-"`
 }
 
 // Source is the project a plugin packages or builds on.
@@ -114,7 +121,30 @@ func (e MarketEntry) EngineSatisfied(version string) bool {
 	return Manifest{Engines: e.Engines}.EngineSatisfied(version)
 }
 
-var marketTarget = regexp.MustCompile(`^(darwin|linux|win32)-(x64|arm64)$`)
+var (
+	marketTarget  = regexp.MustCompile(`^(darwin|linux|win32)-(x64|arm64)$`)
+	marketRuntime = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)
+)
+
+func mergePlatforms(existing, added []string, allKnown bool) ([]string, bool) {
+	order := []string{"darwin", "windows", "linux"}
+	if allKnown || len(added) == 0 {
+		return slices.Clone(order), true
+	}
+	merged := slices.Clone(existing)
+	for _, p := range added {
+		if !slices.Contains(merged, p) {
+			merged = append(merged, p)
+		}
+	}
+	var ordered []string
+	for _, p := range order {
+		if slices.Contains(merged, p) {
+			ordered = append(ordered, p)
+		}
+	}
+	return ordered, len(ordered) == len(order)
+}
 
 const (
 	marketIndexLimit   = 1 << 20
@@ -142,6 +172,7 @@ func (m Market) Fetch(ctx context.Context, client *http.Client) ([]MarketEntry, 
 	}
 	var entries []MarketEntry
 	seen := map[string]int{}
+	allPlats := map[string]bool{}
 	for _, entry := range index.Plugins {
 		if entry.Kind == "" {
 			entry.Kind = KindHost
@@ -152,13 +183,20 @@ func (m Market) Fetch(ctx context.Context, client *http.Client) ([]MarketEntry, 
 			continue
 		}
 		if at, listed := seen[entry.Name]; listed {
+			merged, anyAll := mergePlatforms(entries[at].AllPlatforms, entry.Platforms, allPlats[entry.Name])
+			allPlats[entry.Name] = anyAll
 			if !entries[at].Supported() && entry.Supported() {
 				entries[at] = m.shown(entry)
 			}
+			entries[at].AllPlatforms = merged
 			continue
 		}
+		shown := m.shown(entry)
+		merged, anyAll := mergePlatforms(nil, entry.Platforms, entry.Kind == KindGuest)
+		allPlats[entry.Name] = anyAll
+		shown.AllPlatforms = merged
 		seen[entry.Name] = len(entries)
-		entries = append(entries, m.shown(entry))
+		entries = append(entries, shown)
 	}
 	return entries, nil
 }
@@ -171,6 +209,9 @@ func (m Market) shown(entry MarketEntry) MarketEntry {
 	// A source that is not well formed is not shown; the plugin still is.
 	if entry.Source != nil && !entry.Source.valid() {
 		entry.Source = nil
+	}
+	if entry.Runtime != "" && !marketRuntime.MatchString(entry.Runtime) {
+		entry.Runtime = ""
 	}
 	// A picture from anywhere else is not shown; the plugin still is.
 	if rest := strings.TrimPrefix(entry.Icon, m.IconPrefix+entry.Name+"/"); m.IconPrefix == "" || rest == entry.Icon || !validIcon(rest) || strings.ContainsAny(rest, "?#%") {

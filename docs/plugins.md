@@ -26,11 +26,11 @@
 
 - 卸载或更新时，原来的插件目录不会被删除，而是移到配置目录的 `plugins-removed/` 下。
 - 每个插件可以单独停用，包括内置的命令插件。停用的插件不启动，工具不再提供给 Claude，页面也不再显示；文件保留在原处。
-- 主机插件的程序启动时使用与终端相同的 `PATH`，清单里可以直接写 `python3`、`node`、`npx`、`uvx` 等命令；从桌面打开应用时也按终端的 `PATH` 查找这些命令。
+- 主机插件的程序启动时使用与终端相同的 `PATH`，清单里可以直接写 `python3`、`node`、`npx`、`uvx` 等命令；从桌面打开应用时也按终端的 `PATH` 查找这些命令。本机缺少 `uv`、`uvx`、`npx`、`node` 或 `python3` 等运行环境时，插件详情页会提示缺少的程序名称与安装入口，安装后点击「重新加载插件」即可生效。
 - 环境内插件的文件在启动时同步到环境里的 `~/.local/share/plugins/<插件名>/`，程序在那里运行。清单 `plugin.json` 不会同步过去。
 - 插件市场按分类展示插件，分类由插件在清单的 `categories` 里声明。
-- 基于开源项目的插件，详情页的「上游项目」列出项目名、版本、许可证和项目地址。这些信息来自市场索引的 `source` 字段，只用于展示。
-- 市场里有些插件在第一次启动时由 `npx` 或 `uvx` 从 npm、PyPI 获取上游程序的固定版本，因此需要先安装 Node.js 或 [uv](https://docs.astral.sh/uv/)；插件页和各插件的说明会写明。
+- 基于开源项目的插件，详情页的「上游项目」列出项目名、版本、许可证和项目地址；「信息」栏还会显示市场索引声明的运行环境（`runtime`）与支持的系统。这些信息来自市场索引，只用于展示。
+- 市场里部分主机插件（如 `blender`）在第一次启动时由 `uv` 或 `npx` 获取上游程序的固定版本，因此需要先在本机安装 [uv](https://docs.astral.sh/uv/) 或 Node.js；文档与办公类等环境内插件直接复用环境内的 Python 3 或 Node.js，按锁定哈希校验依赖，无需在本机安装额外运行环境。
 
 ### 授权
 
@@ -126,7 +126,7 @@ my-plugin/
 | 字段 | 说明 |
 | --- | --- |
 | `id` | 小写字母、数字和连字符，插件内唯一，不超过 40 个字符 |
-| `command` | 程序和参数。带路径的程序从插件目录算起；不带路径的，插件目录里有同名文件时用这个文件，否则按 `PATH` 查找 |
+| `command` | 程序和参数。带路径的程序从插件目录算起；不带路径的，插件目录里有同名文件时用这个文件，否则按 `PATH` 查找。参数中可使用 `${PROJECT_DIR}` 占位符，启动时替换为当前打开的项目目录（主机插件为本机路径，环境内插件为环境内挂载路径；可执行文件名本身不替换；切换项目时自动重新加载） |
 
 目前每个插件最多一个 MCP 服务。写了多个服务的插件会列出并显示原因，但不启动。
 
@@ -280,7 +280,7 @@ MCP 服务可以脱离 Cage 单独测试：它只是一个读标准输入、写�
 
 市场的规则、打包方法和收录要求见 [cage-plugins](https://github.com/Lee-xeo/cage-plugins)。应用安装市场里的插件时还会检查：压缩包解压后不超过 100 MiB、不超过 2000 个文件；索引里写的权限必须与插件清单完全一致。
 
-索引条目可以带 `source`，说明插件基于的开源项目：`project`（项目名，如 `microsoft/playwright-mcp`）、`version`、`license`（SPDX 表达式，如 `MIT`）、`url`（https 地址）。格式不对时应用不显示它，插件照常列出。它由市场的打包脚本从插件目录的 `source.json` 生成，不写进 `plugin.json`：较早的应用读取清单时不接受未知字段。
+索引条目可以带 `source`（说明上游开源项目：`project`、`version`、`license`、`url`）与 `runtime`（运行环境标识，如 `python3`、`node`、`npx`、`uv`、`powershell`）。格式不对时应用不显示它们，插件照常列出。它们由市场的打包脚本生成，不写进 `plugin.json`：较早的应用读取清单时不接受未知字段。
 
 ### 尚未提供
 
@@ -296,7 +296,7 @@ MCP 服务可以脱离 Cage 单独测试：它只是一个读标准输入、写�
 - [`desktop-control`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/desktop-control)：主机插件，查看屏幕并使用键鼠，声明了 `screen` 和 `input` 权限。
 - [`system-status`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/system-status)：环境内插件，一个页面加一个工具。
 - [`browser`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/browser)：环境内插件，用环境里的 Chromium 浏览网页，基于 microsoft/playwright-mcp。
-- [`excel-workbooks`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/excel-workbooks)、[`word-documents`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/word-documents)、[`powerpoint-slides`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/powerpoint-slides)：主机插件，读写 Office 文件，不需要安装 Office，基于开源 MCP 服务并以 `uvx` 固定版本启动。
+- [`excel-workbooks`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/excel-workbooks)、[`word-documents`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/word-documents)、[`powerpoint-slides`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/powerpoint-slides)：环境内插件，读写 Office 文件，不需要安装 Office 或本机 `uv`，通过 `launcher.py` 按 `pylock.json` SHA-256 锁定校验启动。
 - [`blender`](https://github.com/Lee-xeo/cage-plugins/tree/main/plugins/blender)：主机插件，操作正在运行的 Blender，基于 ahujasid/blender-mcp。
 
 向市场提交插件的方法见 [cage-plugins](https://github.com/Lee-xeo/cage-plugins)。

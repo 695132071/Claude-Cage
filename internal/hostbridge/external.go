@@ -141,13 +141,98 @@ func (e *RefusedError) Unwrap() error { return e.Reason }
 // ErrNotForPage is a page asking for a tool its plugin does not offer pages.
 var ErrNotForPage = errors.New("the tool is not offered to pages")
 
+// ProjectDirPlaceholder is replaced in plugin command arguments with the active
+// project directory (the host path for host plugins, the guest workspace path
+// for guest plugins).
+const ProjectDirPlaceholder = "${PROJECT_DIR}"
+
+// ErrNoProjectDir is returned when a plugin's command uses ProjectDirPlaceholder
+// but no project folder is currently open.
+var ErrNoProjectDir = errors.New("no project folder is open")
+
+// MissingProgramError reports that a host plugin's runtime program (such as uv,
+// uvx, npx, node or python3) could not be found on PATH.
+type MissingProgramError struct {
+	Plugin  string
+	Program string
+	Err     error
+}
+
+func (e *MissingProgramError) Error() string {
+	hint := programInstallHint(e.Program)
+	if hint != "" {
+		return fmt.Sprintf("plugin %s: %s was not found on PATH (%s)", e.Plugin, e.Program, hint)
+	}
+	return fmt.Sprintf("plugin %s: %s was not found on PATH", e.Plugin, e.Program)
+}
+
+func (e *MissingProgramError) Unwrap() error { return e.Err }
+
+func programInstallHint(program string) string {
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(program), ".exe"))
+	switch base {
+	case "uv", "uvx":
+		return "install uv from https://docs.astral.sh/uv/ and reload plugins"
+	case "npx", "node", "npm":
+		return "install Node.js from https://nodejs.org/ and reload plugins"
+	case "python3", "python":
+		return "install Python 3 from https://www.python.org/ and reload plugins"
+	default:
+		return ""
+	}
+}
+
+// MissingProjectDirError reports that a plugin needs an open project folder to
+// expand ProjectDirPlaceholder.
+type MissingProjectDirError struct {
+	Plugin string
+}
+
+func (e *MissingProjectDirError) Error() string {
+	return fmt.Sprintf("plugin %s requires an open project folder (%s)", e.Plugin, ProjectDirPlaceholder)
+}
+
+func (e *MissingProjectDirError) Unwrap() error { return ErrNoProjectDir }
+
+// CommandUsesProjectDir reports whether any argument in command references
+// ProjectDirPlaceholder.
+func CommandUsesProjectDir(command []string) bool {
+	for _, arg := range command[min(1, len(command)):] {
+		if strings.Contains(arg, ProjectDirPlaceholder) {
+			return true
+		}
+	}
+	return false
+}
+
+// ExpandCommand returns a copy of command with ProjectDirPlaceholder in
+// arguments (never the executable name itself) replaced by projectDir.
+func ExpandCommand(command []string, projectDir string) ([]string, error) {
+	if len(command) == 0 {
+		return nil, nil
+	}
+	out := slices.Clone(command)
+	for i := 1; i < len(out); i++ {
+		if !strings.Contains(out[i], ProjectDirPlaceholder) {
+			continue
+		}
+		if strings.TrimSpace(projectDir) == "" {
+			return nil, ErrNoProjectDir
+		}
+		out[i] = strings.ReplaceAll(out[i], ProjectDirPlaceholder, projectDir)
+	}
+	return out, nil
+}
+
 // External is a plugin run as a child program. Its tools are offered under
 // their own names once they pass CheckWording; every call first goes
 // through Approve, if set.
 type External struct {
 	Manifest Manifest
 	Dir      string
-	Approve  func(context.Context, ToolRequest) error
+	// ProjectDir is substituted for ${PROJECT_DIR} in host plugin arguments.
+	ProjectDir string
+	Approve    func(context.Context, ToolRequest) error
 	// Spawn, if set, makes the command that runs the plugin's program
 	// somewhere other than this computer; Dir is then only where its files
 	// are kept here.
@@ -175,15 +260,29 @@ func (e *External) startLocked(ctx context.Context) error {
 		return fmt.Errorf("plugin %s has no MCP server", e.Manifest.Name)
 	}
 	var cmd *exec.Cmd
+	bareProgram := ""
 	if e.Spawn != nil {
 		var err error
 		if cmd, err = e.Spawn(ctx); err != nil {
+			if errors.Is(err, ErrNoProjectDir) {
+				return &MissingProjectDirError{Plugin: e.Manifest.Name}
+			}
 			return fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
 		}
 	} else {
-		program := command[0]
-		if !filepath.IsAbs(program) && (filepath.Base(program) != program || fileExists(filepath.Join(e.Dir, program))) {
+		expanded, err := ExpandCommand(command, e.ProjectDir)
+		if err != nil {
+			if errors.Is(err, ErrNoProjectDir) {
+				return &MissingProjectDirError{Plugin: e.Manifest.Name}
+			}
+			return fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
+		}
+		program := expanded[0]
+		localFile := !filepath.IsAbs(program) && (filepath.Base(program) != program || fileExists(filepath.Join(e.Dir, program)))
+		if localFile {
 			program = filepath.Join(e.Dir, program)
+		} else if filepath.Base(program) == program {
+			bareProgram = program
 		}
 		env := userEnv()
 		// A bare name is found on the PATH the program is given, which may
@@ -192,7 +291,7 @@ func (e *External) startLocked(ctx context.Context) error {
 			program = lookProgram(program, env)
 		}
 		// The program outlives the call that starts it.
-		cmd = exec.Command(program, command[1:]...)
+		cmd = exec.Command(program, expanded[1:]...)
 		cmd.Dir = e.Dir
 		cmd.Env = env
 		hideWindow(cmd)
@@ -202,6 +301,9 @@ func (e *External) startLocked(ctx context.Context) error {
 	defer cancel()
 	session, err := client.Connect(connect, &mcp.CommandTransport{Command: cmd, TerminateDuration: 2 * time.Second}, nil)
 	if err != nil {
+		if bareProgram != "" && (errors.Is(err, exec.ErrNotFound) || errors.Is(err, os.ErrNotExist)) {
+			return &MissingProgramError{Plugin: e.Manifest.Name, Program: bareProgram, Err: err}
+		}
 		return fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
 	}
 	listed, err := session.ListTools(connect, nil)
@@ -412,7 +514,10 @@ type LoadOptions struct {
 	Off []string
 	// Version is this application's, for the plugins' engines ranges.
 	Version string
-	Approve func(context.Context, ToolRequest) error
+	// ProjectDir is the active project folder on this computer, substituted for
+	// ${PROJECT_DIR} in host plugin arguments.
+	ProjectDir string
+	Approve    func(context.Context, ToolRequest) error
 	// Guest makes the command that runs a guest plugin's server, given its
 	// manifest and where its files are here. Nil where there is nowhere to
 	// run one.
@@ -464,7 +569,7 @@ func LoadPlugins(ctx context.Context, dir string, options LoadOptions) ([]*Exter
 		if options.GuestOnly && manifest.Kind != KindGuest {
 			continue
 		}
-		plugin := &External{Manifest: manifest, Dir: path, Approve: approve}
+		plugin := &External{Manifest: manifest, Dir: path, ProjectDir: options.ProjectDir, Approve: approve}
 		if manifest.Kind == KindGuest {
 			plugin.Spawn = func(ctx context.Context) (*exec.Cmd, error) { return options.Guest(ctx, manifest, path) }
 		}

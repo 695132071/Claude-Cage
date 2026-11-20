@@ -45,8 +45,10 @@ type hostTools struct {
 	plugins []*hostbridge.External
 	jobs    *hostbridge.Jobs
 	// problems are the reasons plugins were left out, for the user to read.
-	problems []string
-	cancel   context.CancelFunc
+	problems        []string
+	pluginProblems  map[string]string
+	missingPrograms map[string]string
+	cancel          context.CancelFunc
 	done     chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
@@ -143,11 +145,34 @@ func (s *Server) startHostTools(serving bool) error {
 	s.mu.Unlock()
 	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), hostbridge.LoadOptions{
 		Taken: []string{"run_command", "command_job"}, Off: off, Version: version.Version,
-		Approve: approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving})
+		ProjectDir: s.hostActiveProjectDir(),
+		Approve:    approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving})
 	var problems []string
+	pluginProblems := map[string]string{}
+	missingPrograms := map[string]string{}
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
-		problems = append(problems, failure.Error())
+		var missing *hostbridge.MissingProgramError
+		var noProject *hostbridge.MissingProjectDirError
+		switch {
+		case errors.As(failure, &missing):
+			missingPrograms[missing.Plugin] = missing.Program
+			msg := missingProgramMessage(missing.Program)
+			pluginProblems[missing.Plugin] = msg
+			problems = append(problems, missing.Plugin+"："+msg)
+		case errors.As(failure, &noProject):
+			msg := "请先打开一个项目文件夹以使用此插件"
+			pluginProblems[noProject.Plugin] = msg
+			problems = append(problems, noProject.Plugin+"："+msg)
+		default:
+			text := failure.Error()
+			problems = append(problems, text)
+			if rest, ok := strings.CutPrefix(text, "plugin "); ok {
+				if name, detail, found := strings.Cut(rest, ": "); found {
+					pluginProblems[name] = detail
+				}
+			}
+		}
 	}
 	var plugins []hostbridge.Plugin
 	if !slices.Contains(off, hostCommandsPlugin) {
@@ -166,7 +191,8 @@ func (s *Server) startHostTools(serving bool) error {
 			approvals.unasked[plugin.Manifest.Name] = true
 		}
 	}
-	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems, serving: serving}
+	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs,
+		problems: problems, pluginProblems: pluginProblems, missingPrograms: missingPrograms, serving: serving}
 	if !serving {
 		// Nothing is served and nothing forwarded; done only marks the end.
 		close(tools.done)
@@ -304,6 +330,67 @@ func (s *Server) hostToolDirs() []string {
 		dirs = append([]string{s.preferences.Workspace}, dirs...)
 	}
 	return dirs
+}
+
+// hostActiveProjectDir is the active project folder on this computer, or empty
+// when no project is open.
+func (s *Server) hostActiveProjectDir() string {
+	dirs := s.hostToolDirs()
+	if len(dirs) == 0 {
+		return ""
+	}
+	return dirs[0]
+}
+
+// guestActiveProjectDir is the active project folder as seen inside the
+// environment, or empty when no project is open.
+func (s *Server) guestActiveProjectDir() string {
+	s.mu.Lock()
+	clientWorkspace := s.clientWorkspace
+	s.mu.Unlock()
+	if clientWorkspace != "" {
+		return clientWorkspace
+	}
+	hostDir := s.hostActiveProjectDir()
+	if hostDir == "" {
+		return ""
+	}
+	return guestPath(hostDir)
+}
+
+// missingProgramMessage explains what runtime is missing on this computer and
+// how to install it, across macOS, Windows and Linux.
+func missingProgramMessage(program string) string {
+	base := strings.ToLower(strings.TrimSuffix(filepath.Base(program), ".exe"))
+	switch base {
+	case "uv", "uvx":
+		return fmt.Sprintf("未找到 %s。请先在本机安装 uv（https://docs.astral.sh/uv/）并确保终端中可运行，然后点击「重新加载插件」。", program)
+	case "npx", "node", "npm":
+		return fmt.Sprintf("未找到 %s。请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行，然后点击「重新加载插件」。", program)
+	case "python3", "python":
+		return fmt.Sprintf("未找到 %s。请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行，然后点击「重新加载插件」。", program)
+	default:
+		return fmt.Sprintf("未找到 %s。请先在本机安装该程序并确保终端中可运行，然后点击「重新加载插件」。", program)
+	}
+}
+
+// hostToolsUsesProjectDir reports whether any installed plugin uses
+// ${PROJECT_DIR} in its server command, so switching projects restarts it.
+func (s *Server) hostToolsUsesProjectDir() bool {
+	entries, err := os.ReadDir(s.hostPluginDir())
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+			continue
+		}
+		manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name()))
+		if err == nil && hostbridge.CommandUsesProjectDir(manifest.ServerCommand()) {
+			return true
+		}
+	}
+	return false
 }
 
 // hostToolsToken is this profile's token, created on first use.

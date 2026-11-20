@@ -321,3 +321,86 @@ func TestCatalogPluginInstallsAndLoads(t *testing.T) {
 		t.Fatalf("call: %v %+v", err, result)
 	}
 }
+
+func TestExpandCommandProjectDir(t *testing.T) {
+	if !CommandUsesProjectDir([]string{"python3", "launcher.py", "--allow-dir", ProjectDirPlaceholder}) {
+		t.Fatal("expected CommandUsesProjectDir to detect placeholder")
+	}
+	if CommandUsesProjectDir([]string{ProjectDirPlaceholder, "arg"}) {
+		t.Fatal("executable name must not count as project dir placeholder")
+	}
+	cmd, err := ExpandCommand([]string{"python3", "launcher.py", "--allow-dir", ProjectDirPlaceholder, "--root=" + ProjectDirPlaceholder}, "/work/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"python3", "launcher.py", "--allow-dir", "/work/app", "--root=/work/app"}
+	if !slices.Equal(cmd, want) {
+		t.Fatalf("expanded %v, want %v", cmd, want)
+	}
+	// Never replace command[0].
+	cmd0, err := ExpandCommand([]string{ProjectDirPlaceholder, "arg"}, "/work/app")
+	if err != nil || cmd0[0] != ProjectDirPlaceholder {
+		t.Fatalf("executable was altered: %v %v", cmd0, err)
+	}
+	// Missing project dir fails when placeholder is used, succeeds otherwise.
+	if _, err := ExpandCommand([]string{"python3", "launcher.py", ProjectDirPlaceholder}, ""); !errors.Is(err, ErrNoProjectDir) {
+		t.Fatalf("expected ErrNoProjectDir, got %v", err)
+	}
+	plain, err := ExpandCommand([]string{"python3", "server.py"}, "")
+	if err != nil || !slices.Equal(plain, []string{"python3", "server.py"}) {
+		t.Fatalf("plain command failed: %v %v", plain, err)
+	}
+}
+
+func TestMissingProgramErrorAndMissingProjectDir(t *testing.T) {
+	dir := t.TempDir()
+	missingBin := "cage-nonexistent-runtime-xyz"
+	pluginDir := filepath.Join(dir, "missing-rt")
+	if err := os.MkdirAll(pluginDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, ManifestFile), []byte(
+		`{"name":"missing-rt","version":"0.1.0","description":"Needs missing runtime","permissions":[],"command":["`+missingBin+`","run"]}`,
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plugins, failures := LoadPlugins(context.Background(), dir, LoadOptions{})
+	if len(plugins) != 0 || len(failures) != 1 {
+		t.Fatalf("plugins %d failures %v", len(plugins), failures)
+	}
+	var missing *MissingProgramError
+	if !errors.As(failures[0], &missing) || missing.Plugin != "missing-rt" || missing.Program != missingBin {
+		t.Fatalf("expected MissingProgramError, got %T: %v", failures[0], failures[0])
+	}
+	for program, want := range map[string]string{
+		"uv":      "https://docs.astral.sh/uv/",
+		"uvx":     "https://docs.astral.sh/uv/",
+		"npx":     "https://nodejs.org/",
+		"node":    "https://nodejs.org/",
+		"python3": "https://www.python.org/",
+	} {
+		msg := (&MissingProgramError{Plugin: "p", Program: program}).Error()
+		if !strings.Contains(msg, want) {
+			t.Errorf("%s hint %q missing %q", program, msg, want)
+		}
+	}
+
+	// Plugin requiring ${PROJECT_DIR} fails cleanly when no project is open.
+	projDir := filepath.Join(dir, "needs-project")
+	if err := os.MkdirAll(projDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(projDir, ManifestFile), []byte(
+		`{"name":"needs-project","version":"0.1.0","description":"Scoped to project","permissions":["files"],"command":["python3","server.py","--allow-dir","${PROJECT_DIR}"]}`,
+	), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, failures = LoadPlugins(context.Background(), dir, LoadOptions{Off: []string{"missing-rt"}})
+	if len(failures) != 1 {
+		t.Fatalf("expected 1 failure, got %v", failures)
+	}
+	var noProj *MissingProjectDirError
+	if !errors.As(failures[0], &noProj) || noProj.Plugin != "needs-project" {
+		t.Fatalf("expected MissingProjectDirError, got %T: %v", failures[0], failures[0])
+	}
+}

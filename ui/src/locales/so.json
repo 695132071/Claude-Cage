@@ -2424,5 +2424,12 @@
   "停止任务已结束，但环境仍显示在运行，无法确认已安全停止。可以重试停止，或仅退出桌面应用。": "Hawshii joojinta way dhammaatay, laakiin deegaanku wali wuxuu u muuqdaa mid shaqaynaya, lamana xaqiijin karo in si ammaan ah loo joojiyay. Isku day joojinta mar kale ama xir barnaamijka desktop-ka oo keliya.",
   "后台未报告本次停止任务的结果，无法确认环境已停止。可以重试停止，或仅退出桌面应用。": "Adeegga gadaashu ma soo sheegin natiijada joojintan, lamana xaqiijin karo in deegaanku joogsaday. Isku day joojinta mar kale ama xir barnaamijka desktop-ka oo keliya.",
   "停止请求未返回任务编号，请重试。": "Codsiga joojintu ma soo celin lambar hawleed. Mar kale isku day.",
-  "当前 Windows 程序未签名或签名无法验证，请从官方发布页下载安装包，退出 Cage 后安装到原位置；配置、凭据、项目和虚拟机磁盘会保留。": "Barnaamijka Windows ee hadda ma saxeexna ama saxeexiisa lama xaqiijin karo. Ka soo deji rakibaha bogga rasmiga ah ee sii-deynta, xir Cage kadibna ku rakib isla goobtii; habaynta, aqoonsiyada, mashaariicda iyo saxanadaha mashiinka farsamada waa la ilaalinayaa."
+  "当前 Windows 程序未签名或签名无法验证，请从官方发布页下载安装包，退出 Cage 后安装到原位置；配置、凭据、项目和虚拟机磁盘会保留。": "Barnaamijka Windows ee hadda ma saxeexna ama saxeexiisa lama xaqiijin karo. Ka soo deji rakibaha bogga rasmiga ah ee sii-deynta, xir Cage kadibna ku rakib isla goobtii; habaynta, aqoonsiyada, mashaariicda iyo saxanadaha mashiinka farsamada waa la ilaalinayaa.",
+  "运行环境": "Deegaanka socodsiinta",
+  "支持系统": "Nidaamyada la taageero",
+  "需要本机安装 {0}": "Waxay u baahan tahay in {0} lagu rakibo kombiyuutarkan",
+  "请先在本机安装 uv（https://docs.astral.sh/uv/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib uv (https://docs.astral.sh/uv/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
+  "请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Node.js (https://nodejs.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
+  "请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Python 3 (https://www.python.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
+  "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Marka hore ku rakib {0} kombiyuutarkan oo hubi inuu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\"."
 }

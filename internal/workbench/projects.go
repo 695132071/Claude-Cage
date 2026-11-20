@@ -111,6 +111,10 @@ func (s *Server) openProject(w http.ResponseWriter, r *http.Request) {
 		s.preferences.Workspace = workspace
 		s.mu.Unlock()
 	}
+	if input.Activate && s.hostToolsUsesProjectDir() {
+		s.closeHostTools()
+		s.ensureHostTools()
+	}
 	jsonReply(w, map[string]string{"workspace": workspace})
 }
 
