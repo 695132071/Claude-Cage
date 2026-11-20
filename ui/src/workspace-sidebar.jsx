@@ -24,7 +24,7 @@ import logo from "./logo.png";
 import claudeLogo from "./claude-logo.svg";
 import { dropAfter, moveItem, projectName } from "./workspace-state.mjs";
 import { WorkspaceTabs } from "./workspace-tabs";
-import { projectSessionRows, sessionKey } from "./session-order.mjs";
+import { projectSessionRows, sessionKey, unassignedTerminalTabs } from "./session-order.mjs";
 import { AccountMenu } from "./account";
 import { useSSHNavigation } from "./remote-hosts";
 import { useTranslation } from "./interface-language.mjs";
@@ -138,6 +138,8 @@ export function WorkspaceSidebar({
   }, [active, activeWorkspace]);
   if (ssh?.expanded) return null;
   const healthy = ready && network.mode === "open";
+  // Terminals whose project was removed still count toward the host limit and must stay closable.
+  const otherTerminals = projectSessionRows(unassignedTerminalTabs(tabs, projects, projectGroups), [], saved, undefined, sessionBaseline.current);
   const mainSidebar = (
     <aside className="workspace-sidebar" aria-label={tr("项目与终端")} inert={plugins?.open}>
       <div className="sidebar-top">
@@ -401,6 +403,24 @@ export function WorkspaceSidebar({
             </section>
           );
         })}
+        {!!otherTerminals.length && (
+          <section className="sidebar-project sidebar-other-terminals" aria-label={tr("其他终端")}>
+            <div className="sidebar-section-heading"><span>{tr("其他终端")}</span></div>
+            <WorkspaceTabs
+              tabs={otherTerminals}
+              saved={saved}
+              active={home || desktopOpen ? "" : active}
+              label={tr("其他终端")}
+              busy={busy}
+              ready={ready}
+              onSelect={onSelect}
+              onClose={onClose}
+              onRename={onRename}
+              onPin={onPin}
+              splitDrag={splitDrag}
+            />
+          </section>
+        )}
         {!projects.length && (
           <p className="sidebar-empty">{tr("打开本地文件夹开始工作")}</p>
         )}
