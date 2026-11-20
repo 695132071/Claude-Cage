@@ -809,31 +809,45 @@ func (s *Server) executeLimaRebuild(ctx context.Context, nextProfile *guestprofi
 	baseBuiltDst := filepath.Join(archiveDir, "base-built-by")
 	profileDst := filepath.Join(archiveDir, "guest-profile.json")
 
+	// existed records what was really present before any change. Rollback only
+	// deletes a source path it replaced or that did not exist before; a path
+	// whose archive move failed is still the user's original and must stay.
+	exists := func(path string) bool {
+		_, err := os.Lstat(path)
+		return err == nil
+	}
+	hadInst, hadBase, hadVer, hadBuilt, hadProf := exists(instSrc), exists(baseSrc), exists(baseVerSrc), exists(baseBuiltSrc), exists(profileSrc)
+	restoreOne := func(moved bool, dst, src string) bool {
+		if !moved {
+			return true
+		}
+		return os.Rename(dst, src) == nil
+	}
 	rollback := func() {
 		s.setMessage("新机构建未完成，正在自动回滚原环境…")
 		_ = s.hookStopEnv()
-		_ = os.RemoveAll(instSrc)
-		_ = os.RemoveAll(baseSrc)
+		removeNew := func(had, moved bool, path string, remove func(string) error) {
+			if !had || moved {
+				_ = remove(path)
+			}
+		}
+		removeNew(hadInst, manifest.HasInstance, instSrc, os.RemoveAll)
+		removeNew(hadBase, manifest.HasBaseTemplate, baseSrc, os.RemoveAll)
 		_ = os.RemoveAll(filepath.Join(limaHome, "base-building"))
-		_ = os.Remove(baseVerSrc)
-		_ = os.Remove(baseBuiltSrc)
-		_ = os.Remove(profileSrc)
-		if manifest.HasInstance {
-			_ = os.Rename(instDst, instSrc)
+		removeNew(hadVer, manifest.HasBaseVersion, baseVerSrc, os.Remove)
+		removeNew(hadBuilt, manifest.HasBaseBuiltBy, baseBuiltSrc, os.Remove)
+		removeNew(hadProf, manifest.HasGuestProfile, profileSrc, os.Remove)
+		ok := restoreOne(manifest.HasInstance, instDst, instSrc)
+		ok = restoreOne(manifest.HasBaseTemplate, baseDst, baseSrc) && ok
+		ok = restoreOne(manifest.HasBaseVersion, baseVerDst, baseVerSrc) && ok
+		ok = restoreOne(manifest.HasBaseBuiltBy, baseBuiltDst, baseBuiltSrc) && ok
+		ok = restoreOne(manifest.HasGuestProfile, profileDst, profileSrc) && ok
+		if ok {
+			_ = os.RemoveAll(archiveDir)
+		} else {
+			// Never delete the archive when any piece could not be put back.
+			diagnostics.Log("error", "device-reset", "rollback incomplete; archive kept for manual recovery")
 		}
-		if manifest.HasBaseTemplate {
-			_ = os.Rename(baseDst, baseSrc)
-		}
-		if manifest.HasBaseVersion {
-			_ = os.Rename(baseVerDst, baseVerSrc)
-		}
-		if manifest.HasBaseBuiltBy {
-			_ = os.Rename(baseBuiltDst, baseBuiltSrc)
-		}
-		if manifest.HasGuestProfile {
-			_ = os.Rename(profileDst, profileSrc)
-		}
-		_ = os.RemoveAll(archiveDir)
 	}
 
 	var err error
@@ -922,17 +936,27 @@ func (s *Server) executeContainerRebuild(ctx context.Context, nextProfile *guest
 	profileSrc := filepath.Join(s.profile, guestprofile.Filename)
 	profileDst := filepath.Join(archiveDir, "guest-profile.json")
 	archivedContainer := false
+	_, statErr := os.Lstat(profileSrc)
+	hadProfile := statErr == nil
 
 	rollback := func() {
 		s.setMessage("新容器重建未完成，正在自动回滚原容器…")
 		_ = s.hookStopEnv()
+		ok := true
 		if archivedContainer {
-			_ = env.RestoreArchive(ctx, manifest.ID)
+			ok = env.RestoreArchive(ctx, manifest.ID) == nil
 		}
 		if manifest.HasGuestProfile {
-			_ = os.Rename(profileDst, profileSrc)
+			ok = os.Rename(profileDst, profileSrc) == nil && ok
+		} else if !hadProfile {
+			_ = os.Remove(profileSrc)
 		}
-		_ = os.RemoveAll(archiveDir)
+		if ok {
+			_ = os.RemoveAll(archiveDir)
+		} else {
+			// Keep the archive directory when anything could not be put back.
+			diagnostics.Log("error", "device-reset", "container rollback incomplete; archive kept for manual recovery")
+		}
 	}
 
 	if manifest.HasGuestProfile, err = moveIfExists(profileSrc, profileDst); err != nil {
@@ -1068,22 +1092,68 @@ func (s *Server) restoreDeviceArchive(archiveID string) error {
 		return fmt.Errorf("停止当前环境失败：%w", err)
 	}
 
+	// The environment being replaced is never discarded: it is kept as a new
+	// ready archive so the rollback itself can be undone.
+	swapID, err := randomArchiveID()
+	if err != nil {
+		return err
+	}
+	swapDir := filepath.Join(s.deviceResetArchivesRoot(), swapID)
+
 	if manifest.RuntimeKind == "container" {
 		env, err := containerenv.Load(s.profile)
 		if err != nil {
 			return err
 		}
-		if err := env.RestoreArchive(ctx, manifest.ContainerArchiveID); err != nil {
+		if err := host.EnsurePrivateDir(swapDir); err != nil {
 			return err
 		}
+		swap := deviceResetArchive{ID: swapID, State: "staging", CreatedAt: time.Now().Unix(), RuntimeKind: "container", ContainerArchiveID: swapID}
+		if cur, _ := env.CurrentIdentity(ctx); cur != nil {
+			swap.PreviousHostname = cur.Hostname
+		}
 		profileSrc := filepath.Join(s.profile, guestprofile.Filename)
+		var movedProfile bool
+		if movedProfile, err = moveIfExists(profileSrc, filepath.Join(swapDir, "guest-profile.json")); err != nil {
+			_ = os.Remove(swapDir + "/guest-profile.json")
+			_ = os.Remove(swapDir)
+			return err
+		}
+		swap.HasGuestProfile = movedProfile
+		undoSwap := func(archivedCurrent bool) {
+			if archivedCurrent {
+				if env.RestoreArchive(ctx, swapID) != nil {
+					return
+				}
+			}
+			if movedProfile && os.Rename(filepath.Join(swapDir, "guest-profile.json"), profileSrc) != nil {
+				return
+			}
+			_ = os.Remove(swapDir)
+		}
+		archivedCurrent := false
+		if cur, _ := env.CurrentIdentity(ctx); cur != nil {
+			if _, err := env.ArchiveCurrent(ctx, swapID); err != nil {
+				undoSwap(false)
+				return err
+			}
+			archivedCurrent = true
+		}
+		if err := env.RestoreArchive(ctx, manifest.ContainerArchiveID); err != nil {
+			undoSwap(archivedCurrent)
+			return err
+		}
 		if manifest.HasGuestProfile {
-			_ = os.Remove(profileSrc)
 			if err := os.Rename(filepath.Join(archiveDir, "guest-profile.json"), profileSrc); err != nil {
 				return err
 			}
+		}
+		if archivedCurrent {
+			swap.State = "ready"
+			_ = writePrivate(filepath.Join(swapDir, "manifest.json"), swap)
 		} else {
-			_ = os.Remove(profileSrc)
+			_ = os.Remove(swapDir + "/guest-profile.json")
+			_ = os.Remove(swapDir)
 		}
 		_ = os.RemoveAll(archiveDir)
 		s.setMessage("正在启动恢复后的容器环境…")
@@ -1097,8 +1167,7 @@ func (s *Server) restoreDeviceArchive(archiveID string) error {
 	}
 	stateDir := filepath.Join(s.profile, "state")
 
-	swapDir, err := os.MkdirTemp(s.deviceResetArchivesRoot(), ".restore-swap-*")
-	if err != nil {
+	if err := host.EnsurePrivateDir(swapDir); err != nil {
 		return err
 	}
 	instSrc := filepath.Join(limaHome, instName)
@@ -1107,68 +1176,82 @@ func (s *Server) restoreDeviceArchive(archiveID string) error {
 	baseBuiltSrc := filepath.Join(stateDir, ".agent-vm-base-built-by")
 	profileSrc := filepath.Join(s.profile, guestprofile.Filename)
 
-	movedCurInst, _ := moveIfExists(instSrc, filepath.Join(swapDir, "lima-instance"))
-	movedCurBase, _ := moveIfExists(baseSrc, filepath.Join(swapDir, "lima-base"))
-	movedCurVer, _ := moveIfExists(baseVerSrc, filepath.Join(swapDir, "base-version"))
-	movedCurBuilt, _ := moveIfExists(baseBuiltSrc, filepath.Join(swapDir, "base-built-by"))
-	movedCurProf, _ := moveIfExists(profileSrc, filepath.Join(swapDir, "guest-profile.json"))
+	swap := deviceResetArchive{ID: swapID, State: "staging", CreatedAt: time.Now().Unix(), RuntimeKind: manifest.RuntimeKind, InstanceName: instName}
+	if cur, _ := guestprofile.Load(s.profile); cur != nil {
+		swap.PreviousProfile = cur
+		swap.PreviousHostname = cur.Hostname
+		swap.PreviousUsername = cur.Username
+	}
+	type pair struct {
+		src, dst string
+		moved    *bool
+	}
+	curPairs := []pair{
+		{instSrc, filepath.Join(swapDir, "lima-instance"), &swap.HasInstance},
+		{baseSrc, filepath.Join(swapDir, "lima-base"), &swap.HasBaseTemplate},
+		{baseVerSrc, filepath.Join(swapDir, "base-version"), &swap.HasBaseVersion},
+		{baseBuiltSrc, filepath.Join(swapDir, "base-built-by"), &swap.HasBaseBuiltBy},
+		{profileSrc, filepath.Join(swapDir, "guest-profile.json"), &swap.HasGuestProfile},
+	}
+	archPairs := []pair{
+		{filepath.Join(archiveDir, "lima-instance"), instSrc, &manifest.HasInstance},
+		{filepath.Join(archiveDir, "lima-base"), baseSrc, &manifest.HasBaseTemplate},
+		{filepath.Join(archiveDir, "base-version"), baseVerSrc, &manifest.HasBaseVersion},
+		{filepath.Join(archiveDir, "base-built-by"), baseBuiltSrc, &manifest.HasBaseBuiltBy},
+		{filepath.Join(archiveDir, "guest-profile.json"), profileSrc, &manifest.HasGuestProfile},
+	}
+	// Persist the intent first so an interrupted swap leaves a self-describing
+	// staging directory instead of unexplained files.
+	_ = writePrivate(filepath.Join(swapDir, "manifest.json"), swap)
 
+	// undo puts every moved piece back. Nothing is deleted: the only removals
+	// are of the (empty) swap directory after all pieces returned.
+	var restoredFromArchive []pair
 	undo := func() {
-		_ = os.RemoveAll(instSrc)
-		_ = os.RemoveAll(baseSrc)
-		_ = os.Remove(baseVerSrc)
-		_ = os.Remove(baseBuiltSrc)
-		_ = os.Remove(profileSrc)
-		if movedCurInst {
-			_ = os.Rename(filepath.Join(swapDir, "lima-instance"), instSrc)
+		for i := len(restoredFromArchive) - 1; i >= 0; i-- {
+			p := restoredFromArchive[i]
+			_ = os.Rename(p.dst, p.src)
 		}
-		if movedCurBase {
-			_ = os.Rename(filepath.Join(swapDir, "lima-base"), baseSrc)
+		ok := true
+		for _, p := range curPairs {
+			if *p.moved && os.Rename(p.dst, p.src) != nil {
+				ok = false
+			}
 		}
-		if movedCurVer {
-			_ = os.Rename(filepath.Join(swapDir, "base-version"), baseVerSrc)
-		}
-		if movedCurBuilt {
-			_ = os.Rename(filepath.Join(swapDir, "base-built-by"), baseBuiltSrc)
-		}
-		if movedCurProf {
-			_ = os.Rename(filepath.Join(swapDir, "guest-profile.json"), profileSrc)
-		}
-		_ = os.RemoveAll(swapDir)
-	}
-
-	if manifest.HasInstance {
-		if err := os.Rename(filepath.Join(archiveDir, "lima-instance"), instSrc); err != nil {
-			undo()
-			return fmt.Errorf("恢复旧工作实例失败：%w", err)
-		}
-	}
-	if manifest.HasBaseTemplate {
-		if err := os.Rename(filepath.Join(archiveDir, "lima-base"), baseSrc); err != nil {
-			undo()
-			return fmt.Errorf("恢复旧基础模板失败：%w", err)
-		}
-	}
-	if manifest.HasBaseVersion {
-		if err := os.Rename(filepath.Join(archiveDir, "base-version"), baseVerSrc); err != nil {
-			undo()
-			return err
-		}
-	}
-	if manifest.HasBaseBuiltBy {
-		if err := os.Rename(filepath.Join(archiveDir, "base-built-by"), baseBuiltSrc); err != nil {
-			undo()
-			return err
-		}
-	}
-	if manifest.HasGuestProfile {
-		if err := os.Rename(filepath.Join(archiveDir, "guest-profile.json"), profileSrc); err != nil {
-			undo()
-			return err
+		if ok {
+			_ = os.Remove(filepath.Join(swapDir, "manifest.json"))
+			_ = os.Remove(swapDir)
 		}
 	}
 
-	_ = os.RemoveAll(swapDir)
+	for _, p := range curPairs {
+		moved, err := moveIfExists(p.src, p.dst)
+		if err != nil {
+			undo()
+			return fmt.Errorf("暂存当前环境失败，未做任何改动：%w", err)
+		}
+		*p.moved = moved
+	}
+	for _, p := range archPairs {
+		if !*p.moved {
+			continue
+		}
+		if err := os.Rename(p.src, p.dst); err != nil {
+			undo()
+			return fmt.Errorf("恢复旧环境失败，已还原当前环境：%w", err)
+		}
+		restoredFromArchive = append(restoredFromArchive, p)
+	}
+
+	// Keep the replaced environment as a normal rollback target.
+	if swap.HasInstance || swap.HasBaseTemplate || swap.HasGuestProfile {
+		swap.State = "ready"
+		swap.Bytes = s.measureDirBytes(swapDir)
+		_ = writePrivate(filepath.Join(swapDir, "manifest.json"), swap)
+	} else {
+		_ = os.Remove(filepath.Join(swapDir, "manifest.json"))
+		_ = os.Remove(swapDir)
+	}
 	_ = os.RemoveAll(archiveDir)
 	s.setMessage("正在启动恢复后的旧环境…")
 	return s.hookStartEnv(false)

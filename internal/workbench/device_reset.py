@@ -330,6 +330,23 @@ class DeviceResetter:
             if self.live_system and shutil.which("ssh-keygen"):
                 subprocess.run(["ssh-keygen", "-A"], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    def _write_manifest(self, batch_dir, previous_hostname, item_ids, entries):
+        manifest = {
+            "version": 1,
+            "created_at": int(time.time()),
+            "previous_hostname": previous_hostname,
+            "item_ids": list(item_ids),
+            "entries": list(entries),
+        }
+        manifest_path = batch_dir / "manifest.json"
+        tmp = batch_dir / "manifest.json.tmp"
+        tmp.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            os.chmod(tmp, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp, manifest_path)
+
     def reset(self, request: dict):
         selected = request.get("items") or []
         if not isinstance(selected, list) or any(not isinstance(i, str) or i not in TARGET_IDS for i in selected):
@@ -399,6 +416,11 @@ class DeviceResetter:
                             "uid": st.st_uid,
                             "gid": st.st_gid,
                         })
+                        # Persist after every move so an interrupted reset (kill,
+                        # power loss) still leaves a restorable batch.
+                        if item_id not in moved_item_ids:
+                            moved_item_ids.append(item_id)
+                        self._write_manifest(batch_dir, previous_hostname, moved_item_ids, manifest_entries)
                     item_changed = True
                 except OSError as exc:
                     item_error = f"清理未完成：{exc.strerror or exc}"
@@ -413,19 +435,7 @@ class DeviceResetter:
 
         if batch_dir is not None:
             if manifest_entries:
-                manifest = {
-                    "version": 1,
-                    "created_at": int(time.time()),
-                    "previous_hostname": previous_hostname,
-                    "item_ids": moved_item_ids,
-                    "entries": manifest_entries,
-                }
-                manifest_path = batch_dir / "manifest.json"
-                manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
-                try:
-                    os.chmod(manifest_path, 0o600)
-                except OSError:
-                    pass
+                self._write_manifest(batch_dir, previous_hostname, moved_item_ids, manifest_entries)
             else:
                 shutil.rmtree(batch_dir, ignore_errors=True)
                 batch_id = ""

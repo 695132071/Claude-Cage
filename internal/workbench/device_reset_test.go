@@ -265,8 +265,13 @@ func TestDeviceResetRebuildRecoverableRestoreAndDelete(t *testing.T) {
 	if err != nil || restoredProfile == nil || restoredProfile.Hostname != "OLD-BOX1" || restoredProfile.Username != "olduser1" {
 		t.Fatalf("old profile not restored: %+v, %v", restoredProfile, err)
 	}
-	if len(s.listDeviceResetArchives()) != 0 {
-		t.Fatalf("archive should be consumed after restore")
+	// The replaced new environment must be kept as a rollback target, never discarded.
+	left := s.listDeviceResetArchives()
+	if len(left) != 1 || left[0].ID == archiveID || left[0].PreviousHostname != "NEW-CUSTOM1" || !left[0].HasInstance {
+		t.Fatalf("restore must archive the replaced environment, got %+v", left)
+	}
+	if data, err := os.ReadFile(filepath.Join(s.deviceResetArchivesRoot(), left[0].ID, "lima-instance", "marker.txt")); err != nil || string(data) != "new-disk" {
+		t.Fatalf("replaced instance data lost: %q %v", data, err)
 	}
 }
 
