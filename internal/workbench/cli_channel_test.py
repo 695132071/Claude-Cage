@@ -107,6 +107,30 @@ class ChannelTests(unittest.TestCase):
         self.assertFalse(Path(result["transcript"]).exists())
         self.assertTrue(path.exists())
 
+    def test_account_switch_accepts_project_worktrees_and_refuses_other_projects(self):
+        completed=type("Result",(),{"returncode":0,"stdout":"[]"})()
+        for cwd,accepted in ((self.project+"/.claude/worktrees/agent-live",True),(self.project+"/src",True),
+                             (self.project+"-other",False),(str(self.home/"elsewhere"),False)):
+            session,connection,switch_id,target=[str(uuid.uuid4()) for _ in range(4)]
+            path=self.history(session,cwd,[{"type":"user","message":{"content":"start"}},{"type":"assistant","message":{"content":"continued in worktree"}}])
+            request={"cli_id":session,"config":str(self.home/".claude"),"connection":connection,"workspace":self.project,"target_cli_id":target,"switch_id":switch_id}
+            channel.save(self.root/connection/"state.json",{"cli_id":session,"config":request["config"],"workspace":self.project,"busy":False})
+            # The idle source CLI reports the worktree it last worked in.
+            live=[{"pid":4242,"sessionId":session,"cwd":cwd,"status":"idle","kind":"interactive"}]
+            with patch.object(channel,"active_sessions",return_value=live),patch.object(channel.subprocess,"run",return_value=completed), \
+                    patch.object(channel,"terminate_cli") as terminate:
+                if accepted:
+                    self.assertEqual(Path(channel.prepare_account_switch(request)["transcript"]).read_bytes(),path.read_bytes())
+                    terminate.assert_called_once_with(4242)
+                else:
+                    with self.assertRaisesRegex(ValueError,"尚未安全停止"): channel.prepare_account_switch(request)
+                    terminate.assert_not_called()
+            # Without a live process the frozen history is checked on its own.
+            with patch.object(channel,"active_sessions",return_value=[]),patch.object(channel.subprocess,"run",return_value=completed):
+                if not accepted:
+                    with self.assertRaisesRegex(ValueError,"历史项目"): channel.prepare_account_switch(request)
+                    self.assertFalse((self.root.parent/"cli-account-switches"/switch_id/"history.jsonl").exists())
+
     def test_account_switch_refuses_busy_and_unresolved_tools(self):
         path=self.history(self.session,self.project,[{"type":"assistant","message":{"content":[{"type":"tool_use","id":"uncertain","name":"Bash","input":{}}]}}])
         connection,switch_id,target=[str(uuid.uuid4()) for _ in range(3)]
@@ -227,6 +251,42 @@ class ChannelTests(unittest.TestCase):
         with patch.object(channel, "active_sessions", side_effect=[[row], [{**row, "status":"busy"}]]), patch.object(channel.os, "kill") as kill:
             self.assertTrue(channel.handoff_session(request)["running"])
             kill.assert_not_called()
+
+    def test_handoff_accepts_a_session_in_a_project_worktree(self):
+        request = {"cli_id":self.session, "config":str(self.home / ".claude"), "workspace":self.project}
+        for cwd, accepted in ((self.project + "/.claude/worktrees/agent", True), (self.project + "-other", False)):
+            row = {"sessionId":self.session, "pid":1234, "cwd":cwd, "status":"idle", "kind":"interactive"}
+            with patch.object(channel, "active_sessions", return_value=[row]), patch.object(channel, "live", return_value=False), patch.object(channel.os, "kill") as kill:
+                if accepted:
+                    self.assertFalse(channel.handoff_session(request)["running"])
+                    kill.assert_called_once_with(1234, channel.signal.SIGTERM)
+                else:
+                    with self.assertRaisesRegex(ValueError, "项目已变化"):
+                        channel.handoff_session(request)
+                    kill.assert_not_called()
+
+    def test_account_switch_carries_rewind_backups_to_the_target_account(self):
+        self.history(self.session, self.project, [{"type":"user","message":{"content":"edit"}}])
+        backups = self.home / ".claude/file-history" / self.session
+        backups.mkdir(parents=True)
+        (backups / "abc@v1").write_text("before edit")
+        connection, switch_id, target = [str(uuid.uuid4()) for _ in range(3)]
+        request = {"cli_id":self.session,"config":str(self.home / ".claude"),"connection":connection,"workspace":self.project,"target_cli_id":target,"switch_id":switch_id}
+        channel.save(self.root/connection/"state.json",{"cli_id":self.session,"config":request["config"],"workspace":self.project,"busy":False})
+        completed = type("Result",(),{"returncode":0,"stdout":"[]"})()
+        with patch.object(channel,"active_sessions",return_value=[]),patch.object(channel.subprocess,"run",return_value=completed):
+            transcript = channel.prepare_account_switch(request)["transcript"]
+        (backups / "abc@v1").write_text("changed after the freeze")
+        target_config = self.home / "target-config"
+        target_config.mkdir()
+        with patch.dict(os.environ, {"CLAUDE_CONFIG_DIR": str(target_config)}), patch.object(channel, "migrate_cage_policy"), \
+                patch.object(channel, "active_session", return_value=False), patch.object(channel.os, "execvpe") as execute:
+            channel.launch({"id": switch_id, "prefix": ["claude"], "session_id": target, "resume_transcript": transcript, "switch_id": switch_id})
+        arguments = execute.call_args.args[1]
+        self.assertIn("--fork-session", arguments)
+        self.assertEqual((target_config / "file-history" / self.session / "abc@v1").read_text(), "before edit")
+        self.assertTrue(channel.cancel_account_switch(request)["ok"])
+        self.assertEqual((target_config / "file-history" / self.session / "abc@v1").read_text(), "before edit")
 
     def test_handoff_waiting_task_requires_fresh_approval(self):
         request = {"cli_id":self.session, "config":str(self.home / ".claude"), "workspace":self.project}
