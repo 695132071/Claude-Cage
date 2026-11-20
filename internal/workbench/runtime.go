@@ -168,12 +168,12 @@ func (s *Server) attach() error {
 	credentials, manifest, err := parseGuestConnection(b)
 	s.mu.Lock()
 	s.guestManifest = manifest
-	s.guestUpdateRequired = errors.Is(err, errGuestUpdateRequired)
-	s.guestUpdateError = ""
+	message := ""
 	if err != nil {
 		s.ready = false
-		s.guestUpdateError = err.Error()
+		message = err.Error()
 	}
+	s.setGuestUpdateLocked(errors.Is(err, errGuestUpdateRequired), message)
 	s.mu.Unlock()
 	if err != nil {
 		if errors.Is(err, errGuestUpdateRequired) {
@@ -510,8 +510,7 @@ func (s *Server) stopEnvironment() (returned error) {
 	s.ready = false
 	s.credentials = guestCredentials{}
 	s.guestManifest = nil
-	s.guestUpdateRequired = false
-	s.guestUpdateError = ""
+	s.setGuestUpdateLocked(false, "")
 	s.safety.Error = ""
 	s.mu.Unlock()
 	s.terminals.closeAll()

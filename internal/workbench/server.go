@@ -129,6 +129,11 @@ type Server struct {
 	closeOnce               sync.Once
 	closeErr                error
 	controlPublished        bool
+
+	// guestUpdateGeneration changes whenever an attach, update or stop
+	// decides guestUpdateRequired, so a slower version query cannot
+	// overwrite a newer decision.
+	guestUpdateGeneration uint64
 }
 
 func randomToken() string {

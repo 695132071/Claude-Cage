@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -217,5 +218,56 @@ func TestEnvironmentVersionRoutesRequireHostSession(t *testing.T) {
 	w := request(s, "GET", "/api/environment/versions", s.origin, "", true)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"status":"stopped"`) {
 		t.Fatal(w.Code, w.Body.String())
+	}
+}
+
+func TestVersionQueryPublishesUpdateOnlyWithoutNewerDecision(t *testing.T) {
+	s := testServer(t)
+	status := func() (bool, string) {
+		var v struct {
+			Required bool   `json:"environment_update_required"`
+			Error    string `json:"environment_update_error"`
+		}
+		w := request(s, "GET", "/api/status", s.origin, "", true)
+		if err := json.Unmarshal(w.Body.Bytes(), &v); err != nil {
+			t.Fatal(w.Code, err)
+		}
+		return v.Required, v.Error
+	}
+	begin := func() uint64 {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return s.guestUpdateGeneration
+	}
+
+	// A query that found a stale manifest is published to status.
+	s.noteGuestUpdateRequired(begin())
+	if required, message := status(); !required || message != errGuestUpdateRequired.Error() {
+		t.Fatalf("stale manifest not published: %v %q", required, message)
+	}
+
+	// An attach after the query began (here: update finished) wins.
+	s.mu.Lock()
+	s.setGuestUpdateLocked(false, "")
+	s.mu.Unlock()
+	stale := begin()
+	s.mu.Lock()
+	s.setGuestUpdateLocked(true, "环境组件更新尚未完成，请等待结果；失败时可以重试。")
+	s.setGuestUpdateLocked(false, "")
+	s.mu.Unlock()
+	s.noteGuestUpdateRequired(stale)
+	if required, _ := status(); required {
+		t.Fatal("a query started before the update overwrote its result")
+	}
+
+	// Never while a maintenance job runs.
+	release := make(chan struct{})
+	if _, err := s.jobs.submit(&sync.Mutex{}, "environment-update", 0, nil, nil, func() error { <-release; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	s.noteGuestUpdateRequired(begin())
+	close(release)
+	if required, _ := status(); required {
+		t.Fatal("a query during maintenance published its result")
 	}
 }

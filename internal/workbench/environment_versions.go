@@ -77,6 +77,9 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 		tools[name] = toolVersion{Required: required}
 	}
 	var detail string
+	s.mu.Lock()
+	generation := s.guestUpdateGeneration
+	s.mu.Unlock()
 	if running {
 		data, err := s.guest(ctx, guestVersionSnapshot)
 		var snapshot struct {
@@ -92,6 +95,7 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 			components.Status = "current"
 			if components.UpdateRequired {
 				components.Status = "update_required"
+				s.noteGuestUpdateRequired(generation)
 			}
 			for name, current := range snapshot.Tools {
 				entry := tools[name]
@@ -127,6 +131,27 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, map[string]any{"vm_running": running, "busy": busy, "components": components, "controller": identity, "tools": tools, "tools_update_allowed": allowed && components.Status == "current" && !busy, "error": detail})
 }
 
+// setGuestUpdateLocked records whether the guest components must be updated.
+// Callers hold s.mu.
+func (s *Server) setGuestUpdateLocked(required bool, message string) {
+	s.guestUpdateRequired = required
+	s.guestUpdateError = message
+	s.guestUpdateGeneration++
+}
+
+// noteGuestUpdateRequired publishes a stale or missing manifest found by an
+// explicit version query, so status and the home page offer the update. It
+// only applies while no attach, update or stop has decided since the query
+// began and no maintenance job runs; it never clears a known requirement.
+func (s *Server) noteGuestUpdateRequired(generation uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.guestUpdateGeneration != generation || s.guestUpdateRequired || s.closing || s.jobs.snapshot().Running {
+		return
+	}
+	s.setGuestUpdateLocked(true, errGuestUpdateRequired.Error())
+}
+
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
 	s.launch(w, "environment-update", s.synchronizeEnvironment)
 }
@@ -148,8 +173,7 @@ func (s *Server) synchronizeEnvironment() error {
 	}
 	s.mu.Lock()
 	s.ready = false
-	s.guestUpdateRequired = true
-	s.guestUpdateError = "环境组件更新尚未完成，请等待结果；失败时可以重试。"
+	s.setGuestUpdateLocked(true, "环境组件更新尚未完成，请等待结果；失败时可以重试。")
 	s.mu.Unlock()
 	s.setMessage("正在重启浏览器与编辑器组件，工作台终端保持运行…")
 	if err := s.runCage("up"); err != nil {
