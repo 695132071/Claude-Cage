@@ -118,6 +118,8 @@ for (const relative of guideFiles) {
 for (const code of codes) {
   const html = fs.readFileSync(path.join(dist, code === 'zh' ? '' : code, 'index.html'), 'utf8');
   assert.ok(html.includes('href="/docs/"'), `${code}: homepage needs a guide entry`);
+  assert.ok(html.includes('id="philosophy"'), `${code}: homepage needs the design philosophy section`);
+  assert.ok(html.includes('href="/docs/plugins/"'), `${code}: homepage needs a plugin guide entry`);
 }
 console.log(`Verified ${guideFiles.length} user guide pages, local links, anchors, search and homepage entries.`);
 
