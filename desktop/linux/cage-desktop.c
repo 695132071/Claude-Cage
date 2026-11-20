@@ -255,6 +255,17 @@ static void action(const char *name) {
     g_free(code);
     g_free(quoted);
 }
+static void publish_focus(void) {
+    if (!app.window) return;
+    gboolean focused = gtk_widget_get_visible(app.window) && gtk_window_is_active(GTK_WINDOW(app.window));
+    script(focused ?
+        "window.cageWindowFocused=true;window.dispatchEvent(new Event('cage-window-focus'));" :
+        "window.cageWindowFocused=false;window.dispatchEvent(new Event('cage-window-focus'));");
+}
+static void focus_changed(GObject *object, GParamSpec *spec, gpointer data) {
+    (void)object; (void)spec; (void)data;
+    publish_focus();
+}
 static void publish_visibility(void) {
     GdkWindow *window = gtk_widget_get_window(app.window);
     gboolean visible = gtk_widget_get_visible(app.window) && window &&
@@ -262,6 +273,7 @@ static void publish_visibility(void) {
     script(visible ?
         "window.cageWindowVisible=true;window.dispatchEvent(new Event('cage-window-visibility'));" :
         "window.cageWindowVisible=false;window.dispatchEvent(new Event('cage-window-visibility'));" );
+    publish_focus();
 }
 static gboolean visibility_changed(GtkWidget *widget, GdkEvent *event, gpointer data) {
     (void)widget; (void)event; (void)data;
@@ -1128,6 +1140,32 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
             g_free(path);
         }
         g_object_unref(theme_parser);
+    } else if (!strcmp(name, "notificationStatus") || !strcmp(name, "requestNotificationPermission")) {
+        reply_json(reply, context, "{\"supported\":true,\"permission\":\"authorized\",\"canOpenSettings\":false}");
+    } else if (!strcmp(name, "openNotificationSettings")) {
+        reply_json(reply, context, "false");
+    } else if (!strcmp(name, "showNotification")) {
+        const char *title = text_member(request, "title");
+        const char *body = text_member(request, "body");
+        const char *notif_id = text_member(request, "id");
+        const char *terminal_id = text_member(request, "terminal_id");
+        const char *connection_id = text_member(request, "connection_id");
+        gboolean valid_terminal = !*terminal_id || (strlen(terminal_id) == 16 && strspn(terminal_id, "0123456789abcdef") == 16);
+        if (!*title || strlen(title) > 600) reply_error(reply, "通知标题无效。");
+        else if (strlen(body) > 1500) reply_error(reply, "通知内容过长。");
+        else if (!valid_terminal) reply_error(reply, "通知目标终端无效。");
+        else if (strlen(connection_id) > 128) reply_error(reply, "通知连接标识无效。");
+        else {
+            GNotification *notification = g_notification_new(title);
+            if (*body) g_notification_set_body(notification, body);
+            char *target = g_strdup_printf("%s\n%s", terminal_id, connection_id);
+            g_notification_set_default_action_and_target(notification, "app.open-notification", "s", target);
+            g_free(target);
+            const char *tag = (*notif_id && strlen(notif_id) <= 128) ? notif_id : "cage-turn";
+            g_application_send_notification(G_APPLICATION(app.application), tag, notification);
+            g_object_unref(notification);
+            reply_json(reply, context, "{\"delivered\":true,\"permission\":\"authorized\"}");
+        }
     } else if (!strcmp(name, "refreshLanguage")) {
         const char *args[] = {"interface-language", "--json", NULL};
         backend_arguments_limited(args, 4, 64 * 1024, language_refreshed, pending_reply(reply, context));
@@ -1307,6 +1345,28 @@ static void update_menu(void) {
     g_menu_append_submenu(app.menu, ui_text("帮助"), G_MENU_MODEL(help));
     g_object_unref(file); g_object_unref(settings); g_object_unref(help);
 }
+static void open_notification_action(GSimpleAction *action_obj, GVariant *parameter, gpointer data) {
+    (void)action_obj; (void)data;
+    if (app.window) {
+        gtk_widget_show(app.window);
+        gtk_window_deiconify(GTK_WINDOW(app.window));
+        gtk_window_present(GTK_WINDOW(app.window));
+        publish_visibility();
+    }
+    const char *raw = parameter ? g_variant_get_string(parameter, NULL) : "";
+    if (!raw || !*raw) return;
+    const char *sep = strchr(raw, '\n');
+    char *terminal_id = sep ? g_strndup(raw, (gsize)(sep - raw)) : g_strdup(raw);
+    const char *connection_id = sep ? sep + 1 : "";
+    if (*terminal_id) {
+        char *q_term = quote(terminal_id);
+        char *q_conn = quote(connection_id);
+        char *code = g_strdup_printf("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:{terminal_id:%s,connection_id:%s}}));", q_term, q_conn);
+        script(code);
+        g_free(code); g_free(q_conn); g_free(q_term);
+    }
+    g_free(terminal_id);
+}
 static void create_window(void) {
     app.window = gtk_application_window_new(app.application);
     gtk_window_set_title(GTK_WINDOW(app.window), "Cage");
@@ -1317,6 +1377,7 @@ static void create_window(void) {
     g_signal_connect(app.window, "window-state-event", G_CALLBACK(visibility_changed), NULL);
     g_signal_connect(app.window, "map-event", G_CALLBACK(visibility_changed), NULL);
     g_signal_connect(app.window, "unmap-event", G_CALLBACK(visibility_changed), NULL);
+    g_signal_connect(app.window, "notify::is-active", G_CALLBACK(focus_changed), NULL);
     g_object_get(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", &app.initial_dark, NULL);
     GtkWidget *layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(app.window), layout);
@@ -1329,6 +1390,10 @@ static void create_window(void) {
         g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(simple));
         g_object_unref(simple);
     }
+    GSimpleAction *open_notif = g_simple_action_new("open-notification", G_VARIANT_TYPE_STRING);
+    g_signal_connect(open_notif, "activate", G_CALLBACK(open_notification_action), NULL);
+    g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(open_notif));
+    g_object_unref(open_notif);
     const char *quit_accels[] = {"<Primary>q", NULL};
     gtk_application_set_accels_for_action(app.application, "app.quit", quit_accels);
     update_menu();
