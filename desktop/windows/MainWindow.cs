@@ -586,17 +586,17 @@ internal sealed class MainWindow : Form
                     result = new { supported = true, permission = "authorized", canOpenSettings = true }; break;
                 case "showNotification":
                 {
-                    var title = request.Text("title");
-                    var body = request.Text("body");
+                    var notifTitle = request.Text("title");
+                    var notifBody = request.Text("body");
                     var terminalID = request.Text("terminal_id");
                     var connectionID = request.Text("connection_id");
-                    if (title.Length is 0 or > 200) throw new InvalidDataException("通知标题无效");
-                    if (body.Length > 500) throw new InvalidDataException("通知内容过长");
+                    if (notifTitle.Length is 0 or > 200) throw new InvalidDataException("通知标题无效");
+                    if (notifBody.Length > 500) throw new InvalidDataException("通知内容过长");
                     if (terminalID.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(terminalID, "^[a-f0-9]{16}$"))
                         throw new InvalidDataException("通知目标终端无效");
                     if (connectionID.Length > 128) throw new InvalidDataException("通知连接标识无效");
                     pendingNotification = (terminalID, connectionID);
-                    tray.ShowBalloonTip(5000, title, body.Length > 0 ? body : title, ToolTipIcon.None);
+                    tray.ShowBalloonTip(5000, notifTitle, notifBody.Length > 0 ? notifBody : notifTitle, ToolTipIcon.None);
                     result = new { delivered = true, permission = "authorized" };
                     break;
                 }
