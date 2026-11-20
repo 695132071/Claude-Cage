@@ -351,8 +351,16 @@ func (c Config) StartScript() string {
 
 func (c Config) SetupScript() string { return c.GuestProfile.Linux(GuestSetup) }
 
+// clearAccountComment empties the work account's comment field. Environments
+// created by earlier versions copied the host account's full name into it.
+// Only the comment changes; the account, its groups and home stay as they are.
+const clearAccountComment = `account_name=$(id -un)
+if [ -n "$(getent passwd "$account_name" | cut -d: -f5)" ]; then sudo usermod -c '' "$account_name" || echo 'The account comment could not be cleared.' >&2; fi
+unset account_name
+`
+
 func componentStartScript() string {
-	return APTBootstrapScript + "\n" + claudeAccountScript() + browserServices() + "\nsudo tee /etc/claude-cage/editor-theme.json >/dev/null <<'CAGE_EDITOR_THEME'\n" + editorTheme + "\nCAGE_EDITOR_THEME\nif systemctl is-active --quiet cage-editor.service; then sudo systemctl stop cage-editor.service; fi\n" + guestStart
+	return clearAccountComment + APTBootstrapScript + "\n" + claudeAccountScript() + browserServices() + "\nsudo tee /etc/claude-cage/editor-theme.json >/dev/null <<'CAGE_EDITOR_THEME'\n" + editorTheme + "\nCAGE_EDITOR_THEME\nif systemctl is-active --quiet cage-editor.service; then sudo systemctl stop cage-editor.service; fi\n" + guestStart
 }
 
 func markGuestStart(body string) string {

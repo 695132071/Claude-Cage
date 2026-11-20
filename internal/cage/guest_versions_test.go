@@ -543,3 +543,36 @@ printf 206
 		t.Fatal("partial left after success")
 	}
 }
+
+func TestStartClearsInheritedAccountComment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the start script runs in the Linux guest")
+	}
+	for _, test := range []struct{ comment, want string }{{"Host Person,,,", "usermod -c  worker\n"}, {"", ""}} {
+		dir := t.TempDir()
+		log := filepath.Join(dir, "calls")
+		// Stand-ins observe the account change without touching this machine's accounts.
+		for name, body := range map[string]string{
+			"id":     "#!/bin/sh\n[ \"$1\" = -un ] && echo worker\n",
+			"getent": fmt.Sprintf("#!/bin/sh\n[ \"$1 $2\" = 'passwd worker' ] && echo 'worker:x:1000:1000:%s:/home/worker:/bin/bash'\n", test.comment),
+			"sudo":   fmt.Sprintf("#!/bin/sh\n[ \"$1\" = usermod ] || exit 91\necho \"$*\" >> %q\n", log),
+		} {
+			if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		cmd := exec.Command("bash", "-c", "set -euo pipefail\n"+clearAccountComment+"printf continued")
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
+		out, err := cmd.CombinedOutput()
+		if err != nil || string(out) != "continued" {
+			t.Fatalf("%q: %v %s", test.comment, err, out)
+		}
+		calls, _ := os.ReadFile(log)
+		if string(calls) != test.want {
+			t.Fatalf("comment %q made calls %q", test.comment, calls)
+		}
+	}
+	if !strings.HasPrefix(componentStartScript(), clearAccountComment) {
+		t.Fatal("component start does not clear the account comment")
+	}
+}
