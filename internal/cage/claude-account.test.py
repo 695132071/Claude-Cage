@@ -989,13 +989,89 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
     def test_status_line_keeps_the_users_command_and_quota_reading(self):
         self.write(self.common / "settings.json", {"statusLine": {"type": "command", "command": "cat > /dev/null; printf mine", "padding": 1}})
         first, config = self.profile(FIRST)
-        self.assertFalse(helper.has_status_line(first))
-        self.assertEqual(helper.status_line("cage-line")["padding"], 1)
-        shown = subprocess.run([sys.executable, str(source), "statusline", FIRST], env=self.env, cwd=self.home,
-                               input=json.dumps({"session_id": "s"}), text=True, capture_output=True)
-        self.assertEqual(shown.stdout, "mine")
-        self.write(config / "settings.json", {"statusLine": {"type": "command", "command": "own"}})
-        self.assertTrue(helper.has_status_line(first))
+        with patch.object(helper.Path, "cwd", return_value=self.home):
+            self.assertFalse(helper.has_status_line(first))
+            self.assertEqual(helper.status_line("cage-line")["padding"], 1)
+            shown = subprocess.run([sys.executable, str(source), "statusline", FIRST], env=self.env, cwd=self.home,
+                                   input=json.dumps({"session_id": "s"}), text=True, capture_output=True)
+            self.assertEqual(shown.stdout, "mine")
+            self.write(config / "settings.json", {"statusLine": {"type": "command", "command": "own"}})
+            self.assertTrue(helper.has_status_line(first))
+
+    def test_active_shared_plugin_clears_stale_orphaned_marker_while_uninstall_keeps_it(self):
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        first, _ = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.share(FIRST)
+        self.share(SECOND)
+        marker = self.common / "plugins/cache/team/lint/1.0.0/.orphaned_at"
+        marker.write_text("1700000000000")
+        # Still installed in shared registry: stale .orphaned_at is cleared so
+        # the official CLI's cache sweep cannot delete an active shared plugin.
+        self.share(FIRST)
+        self.assertFalse(marker.exists())
+        # Once uninstalled, removal synchronizes and .orphaned_at stays for CLI cleanup.
+        self.write(other / "plugins/installed_plugins.json", {"version": 2, "plugins": {}})
+        marker.write_text("1700000000000")
+        self.share(SECOND)
+        self.assertTrue(marker.exists())
+        self.assertNotIn("lint@team", self.read(self.common / "plugins/installed_plugins.json")["plugins"])
+
+    def test_backups_prune_by_count_and_age_without_deleting_sole_migration_backup(self):
+        backups = self.home / ".local/share/cage/claude-shared/backups" / FIRST
+        backups.mkdir(parents=True)
+        now = 1_800_000_000.0
+        old = now - (helper.BACKUP_MAX_AGE + 10 * 86400)
+        recent = now - 3600
+        # Count pruning: 25 recent timestamped backups -> keep newest 20.
+        prefix = backups / "settings.json"
+        for i in range(25):
+            entry = backups / f"settings.json-{1_700_000_000_000_000_000 + i}"
+            entry.write_text(f"v{i}")
+            os.utime(entry, (recent + i, recent + i))
+        unrelated = backups / "settings.json.keep"
+        unrelated.write_text("untouched")
+        helper.prune_backup_series(prefix, now=now)
+        kept = sorted(p.name for p in backups.glob("settings.json-*"))
+        self.assertEqual(len(kept), helper.BACKUP_MAX_COUNT)
+        self.assertEqual(kept[0], f"settings.json-{1_700_000_000_000_000_000 + 5}")
+        self.assertEqual(kept[-1], f"settings.json-{1_700_000_000_000_000_000 + 24}")
+        self.assertTrue(unrelated.exists())
+        # Age pruning: old replaced backups are removed, recent one stays.
+        aged_prefix = backups / "claude.json"
+        for i in range(3):
+            entry = backups / f"claude.json-{1_700_000_000_000_000_100 + i}"
+            entry.write_text(f"old{i}")
+            os.utime(entry, (old + i, old + i))
+        fresh = backups / f"claude.json-{1_700_000_000_000_000_200}"
+        fresh.write_text("fresh")
+        os.utime(fresh, (recent, recent))
+        helper.prune_backup_series(aged_prefix, now=now)
+        self.assertEqual([p.name for p in backups.glob("claude.json-*")], [fresh.name])
+        # Sole unreplaced migration backup (directory, > 30 days old): NEVER deleted.
+        sole_dir = backups / "projects/demo/memory"
+        sole_dir.mkdir(parents=True)
+        (sole_dir / "MEMORY.md").write_text("original note")
+        os.utime(sole_dir, (old, old))
+        helper.prune_backup_series(sole_dir, now=now)
+        self.assertTrue((sole_dir / "MEMORY.md").is_file())
+        # Sole timestamped backup (> 30 days old): NEVER deleted.
+        os.utime(fresh, (old, old))
+        helper.prune_backup_series(aged_prefix, now=now)
+        self.assertTrue(fresh.exists())
+        # Two old backups (> 30 days old): older is pruned, newest single copy remains.
+        newer_old = backups / f"claude.json-{1_700_000_000_000_000_300}"
+        newer_old.write_text("newer-old")
+        os.utime(newer_old, (old + 60, old + 60))
+        helper.prune_backup_series(aged_prefix, now=now)
+        self.assertEqual([p.name for p in backups.glob("claude.json-*")], [newer_old.name])
+        # Outside backups root: ignored.
+        outside = self.home / "outside-settings.json-1700000000000000001"
+        outside2 = self.home / "outside-settings.json-1700000000000000002"
+        outside.write_text("a"); outside2.write_text("b")
+        os.utime(outside, (old, old)); os.utime(outside2, (old + 10, old + 10))
+        helper.prune_backup_series(self.home / "outside-settings.json", now=now)
+        self.assertTrue(outside.exists() and outside2.exists())
 
 
 def numpy_base36(value):
