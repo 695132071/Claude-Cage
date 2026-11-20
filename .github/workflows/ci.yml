@@ -100,7 +100,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch') && '["windows-2025", "windows-2022"]' || '["windows-2025"]') }}
+        os: ${{ fromJSON((github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group') && '["windows-2025", "windows-2022"]' || '["windows-2025"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
@@ -138,7 +138,7 @@ jobs:
       ref: ${{ github.sha }}
       release: false
       artifact_name: cage-windows-amd64-test
-      all_windows_versions: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' }}
+      all_windows_versions: ${{ github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' }}
   linux:
     needs: workflow-checks
     uses: ./.github/workflows/linux-build.yml
