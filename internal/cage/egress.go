@@ -34,9 +34,9 @@ type Egress struct {
 	// single transient failure does not leave every later query on a backup.
 	dnsPreferred    atomic.Int32
 	dnsPrimaryRetry atomic.Int64
-	client       *http.Client
-	public       netguard.Policy
-	connect      proxy.ContextDialer
+	client          *http.Client
+	public          netguard.Policy
+	connect         proxy.ContextDialer
 }
 
 // The SOCKS handshake runs on our socket so TCP half-close remains available
