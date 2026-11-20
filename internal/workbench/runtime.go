@@ -168,7 +168,7 @@ func (s *Server) attach() error {
 	credentials, manifest, err := parseGuestConnection(b)
 	s.mu.Lock()
 	s.guestManifest = manifest
-	s.guestUpdateRequired = errors.Is(err, errGuestUpdateRequired)
+	s.guestUpdateRequired = guestComponentsUnavailable(err)
 	s.guestUpdateError = ""
 	if err != nil {
 		s.ready = false
@@ -176,7 +176,9 @@ func (s *Server) attach() error {
 	}
 	s.mu.Unlock()
 	if err != nil {
-		if errors.Is(err, errGuestUpdateRequired) {
+		if errors.Is(err, errGuestRecoveryRequired) {
+			_ = s.closeProxyGate("环境组件清单缺失或上次更新中断，外网保持关闭")
+		} else if errors.Is(err, errGuestUpdateRequired) {
 			_ = s.closeProxyGate("环境组件需要更新，外网保持关闭")
 		}
 		return err
@@ -396,7 +398,7 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 	}
 
 	attachErr := s.attach()
-	if errors.Is(attachErr, errGuestUpdateRequired) {
+	if guestComponentsUnavailable(attachErr) {
 		return s.synchronizeEnvironment()
 	}
 	if attachErr == nil {

@@ -15,8 +15,13 @@ import (
 )
 
 var errGuestUpdateRequired = errors.New("环境组件需要更新，请先保存浏览器和编辑器中的修改。工作台终端与磁盘保留，编辑器内终端可能结束。")
+var errGuestRecoveryRequired = errors.New("环境组件清单缺失或上次更新中断，请重新启动环境以重建组件清单；恢复期间外网保持关闭。")
 
-const guestConnectionSnapshot = `sudo cat /etc/claude-cage/browser-control.json; printf '\n'; cat "$HOME/.config/claude-cage/browser-password"; printf '\n'; if sudo test -f /etc/claude-cage/components.json; then sudo cat /etc/claude-cage/components.json; else printf 'null'; fi`
+const guestConnectionSnapshot = `sudo cat /etc/claude-cage/browser-control.json; printf '\n'; cat "$HOME/.config/claude-cage/browser-password"; printf '\n'; if sudo test -e /etc/claude-cage/components.updating; then printf '{"updating":true}'; elif sudo test -f /etc/claude-cage/components.json; then sudo cat /etc/claude-cage/components.json; else printf 'null'; fi; if sudo test -e /etc/claude-cage/components.updating; then printf '\nupdating'; fi`
+
+func guestComponentsUnavailable(err error) bool {
+	return errors.Is(err, errGuestUpdateRequired) || errors.Is(err, errGuestRecoveryRequired)
+}
 
 func parseGuestConnection(data []byte) (guestCredentials, *cage.GuestManifest, error) {
 	lines := strings.SplitN(strings.TrimSpace(string(data)), "\n", 3)
@@ -26,7 +31,18 @@ func parseGuestConnection(data []byte) (guestCredentials, *cage.GuestManifest, e
 	}
 	credentials.VNCPassword = strings.TrimSpace(lines[1])
 	var manifest *cage.GuestManifest
-	if json.Unmarshal([]byte(lines[2]), &manifest) != nil || manifest == nil || !manifest.Current() {
+	// A marker created while the manifest was being read also invalidates it.
+	manifestData, _, updating := strings.Cut(lines[2], "\nupdating")
+	if json.Unmarshal([]byte(manifestData), &manifest) != nil || manifest == nil {
+		return credentials, nil, errGuestRecoveryRequired
+	}
+	if updating {
+		manifest.Updating = true
+	}
+	if manifest.Updating {
+		return credentials, manifest, errGuestRecoveryRequired
+	}
+	if !manifest.Current() {
 		return credentials, manifest, errGuestUpdateRequired
 	}
 	return credentials, manifest, nil
@@ -49,6 +65,9 @@ from pathlib import Path
 p=Path('/etc/claude-cage/components.json')
 try: manifest=json.loads(p.read_text())
 except (OSError,ValueError): manifest=None
+if p.with_suffix('.updating').exists():
+ manifest=manifest if isinstance(manifest,dict) else {}
+ manifest['updating']=True
 versions={}
 env={**os.environ,'DISABLE_AUTOUPDATER':'1','PATH':str(Path.home()/'.local/bin')+':'+os.environ.get('PATH','')}
 code_server_version=re.compile(r'^v?[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?(?:\s|$)')
@@ -92,6 +111,10 @@ func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
 			components.Status = "current"
 			if components.UpdateRequired {
 				components.Status = "update_required"
+				if snapshot.Manifest == nil || snapshot.Manifest.Updating {
+					components.Status = "recovery_required"
+					detail = errGuestRecoveryRequired.Error()
+				}
 			}
 			for name, current := range snapshot.Tools {
 				entry := tools[name]
@@ -138,7 +161,14 @@ func (s *Server) synchronizeEnvironment() error {
 	if !s.vmRunning() {
 		return errors.New("请先启动 Cage 环境。")
 	}
-	if err := s.closeProxyGate("正在更新环境组件，外网暂时关闭"); err != nil {
+	s.mu.Lock()
+	recovering := s.guestManifest == nil || s.guestManifest.Updating
+	s.mu.Unlock()
+	message := "正在更新环境组件，外网暂时关闭"
+	if recovering {
+		message = "组件清单缺失或更新中断，正在恢复环境组件，外网保持关闭"
+	}
+	if err := s.closeProxyGate(message); err != nil {
 		return err
 	}
 	// Publish the new guest-only binary before runCage restarts its controller;
@@ -149,9 +179,12 @@ func (s *Server) synchronizeEnvironment() error {
 	s.mu.Lock()
 	s.ready = false
 	s.guestUpdateRequired = true
-	s.guestUpdateError = "环境组件更新尚未完成，请等待结果；失败时可以重试。"
+	s.guestUpdateError = message + "；失败时可以重试。"
 	s.mu.Unlock()
 	s.setMessage("正在重启浏览器与编辑器组件，工作台终端保持运行…")
+	if recovering {
+		s.setMessage("正在恢复环境组件并重建清单，工作台终端保持运行…")
+	}
 	if err := s.runCage("up"); err != nil {
 		return err
 	}
@@ -181,7 +214,10 @@ func (s *Server) upgradeEnvironmentTools() error {
 	if !allowed {
 		return errors.New("工作台正在退出，请稍后重试工具更新。")
 	}
-	if manifest == nil || !manifest.Current() {
+	if manifest == nil || manifest.Updating {
+		return errGuestRecoveryRequired
+	}
+	if !manifest.Current() {
 		return errGuestUpdateRequired
 	}
 	monitorContext, stopMonitor := context.WithCancel(s.operationContext())
