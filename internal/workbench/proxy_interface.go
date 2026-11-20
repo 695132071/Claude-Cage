@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/sylvinus/agent-vm/internal/containerenv"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 	"github.com/sylvinus/agent-vm/internal/usererror"
@@ -25,8 +26,15 @@ func (s *Server) observeProxyInterface(ctx context.Context) proxyInterfaceObserv
 	if job.Running {
 		return proxyInterfaceObservation{}
 	}
+	// While a local VM is stopped no guest traffic uses the proxy, and the
+	// start path checks and rebinds the interface itself; skip reading the host
+	// route (three processes per tick on macOS). A container's state query
+	// would itself run engine commands, so containers keep observing.
+	if !containerenv.Configured(s.profile) && !s.vmRunning() {
+		return proxyInterfaceObservation{}
+	}
 	cfg, err := loadConfig(s.configPath)
-	if err != nil || cfg.RequireManagedProxy(s.profile) != nil {
+	if err != nil || s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) != nil {
 		return proxyInterfaceObservation{}
 	}
 	name, err := physicalProxyInterface(ctx)
@@ -41,7 +49,7 @@ func (s *Server) applyProxyInterfaceObservation(observed proxyInterfaceObservati
 		return
 	}
 	cfg, err := loadConfig(s.configPath)
-	if err != nil || cfg.Fingerprint() != observed.configuration || cfg.RequireManagedProxy(s.profile) != nil {
+	if err != nil || cfg.Fingerprint() != observed.configuration || s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) != nil {
 		return
 	}
 	if observed.err != nil {

@@ -71,3 +71,33 @@ func TestAppliedCheckMatchesAppliedForEveryStoreState(t *testing.T) {
 	_ = os.Remove(filepath.Join(Dir(profile), "sources.json"))
 	same("removed store", endpoint, "applied")
 }
+
+func TestStoreReaderLoadMatchesLoad(t *testing.T) {
+	profile := t.TempDir()
+	var reader StoreReader
+	if p, err := reader.Load(profile); err != nil || p.Version != 1 || len(p.Auth) != 48 {
+		t.Fatalf("missing store: %+v %v", p, err)
+	}
+	p, _ := Load(profile)
+	if err := p.Import("qa", "", []byte(`proxies: [{name: qa, type: socks5, server: 127.0.0.1, port: 1080}]`), "qa", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Save(profile); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		got, err := reader.Load(profile)
+		if err != nil || got.Auth != p.Auth || got.Count() != 1 {
+			t.Fatalf("load %d: %+v %v", i, got, err)
+		}
+	}
+	p.Selected = p.Sources[0].Nodes[0].ID
+	_ = p.Save(profile)
+	if got, _ := reader.Load(profile); got.Selected != p.Selected {
+		t.Fatal("changed store returned the previous parse")
+	}
+	_ = os.WriteFile(filepath.Join(Dir(profile), "sources.json"), []byte("{"), 0600)
+	if _, err := reader.Load(profile); err == nil {
+		t.Fatal("corrupt store accepted")
+	}
+}

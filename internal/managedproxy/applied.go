@@ -3,6 +3,7 @@ package managedproxy
 import (
 	"crypto/sha256"
 	"errors"
+	"sync"
 )
 
 // Applied is the single source of truth for the private endpoint used by Cage.
@@ -31,36 +32,76 @@ func appliedStore(b []byte, missing bool, endpoint, revision string) (Store, err
 	return p, nil
 }
 
-// AppliedCheck answers Applied's error for a caller that repeats the check
-// every second. It still reads the store each time, so any change to its bytes
+// StoreReader answers Load and Applied for callers that repeat them every few
+// seconds. It still reads the store on every call, so any change to its bytes
 // (an in-place rewrite that keeps the modification time, a replacement or a
-// removal) is decided on the same call; only identical bytes for the same
-// endpoint and revision reuse the previous decision instead of reparsing.
-// The decision depends on nothing else. Not safe for concurrent use.
-type AppliedCheck struct {
-	valid              bool
-	sum                [sha256.Size]byte
-	missing            bool
-	endpoint, revision string
-	err                error
+// removal) is decided on that call; only identical bytes reuse the parsed
+// store and earlier Applied decisions. A missing store is never cached: Load
+// gives it a fresh random credential. The returned Store is shared and must
+// not be modified. Safe for concurrent use.
+type StoreReader struct {
+	mu      sync.Mutex
+	valid   bool
+	profile string
+	sum     [sha256.Size]byte
+	store   Store
+	err     error
+	applied map[[2]string]error
 }
 
-func (c *AppliedCheck) Check(profile, endpoint, revision string) error {
-	b, missing, err := readStore(profile)
-	if err != nil {
-		c.valid = false
-		return err
+// read refreshes the cached parse unless the bytes are unchanged.
+func (r *StoreReader) read(profile string) (b []byte, missing bool, err error) {
+	b, missing, err = readStore(profile)
+	if err != nil || missing {
+		r.valid = false
+		return b, missing, err
 	}
 	sum := sha256.Sum256(b)
-	if c.valid && c.sum == sum && c.missing == missing && c.endpoint == endpoint && c.revision == revision {
-		return c.err
+	if !r.valid || r.profile != profile || r.sum != sum {
+		r.store, r.err = parseStore(b, false)
+		r.valid, r.profile, r.sum, r.applied = true, profile, sum, map[[2]string]error{}
 	}
-	_, err = appliedStore(b, missing, endpoint, revision)
+	return b, false, nil
+}
+
+func (r *StoreReader) Load(profile string) (Store, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, missing, err := r.read(profile)
+	if err != nil {
+		return Store{}, err
+	}
 	if missing {
-		// A missing store gets a fresh random credential; never reuse it.
-		c.valid = false
+		return parseStore(b, true)
+	}
+	return r.store, r.err
+}
+
+func (r *StoreReader) Applied(profile, endpoint, revision string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	b, missing, err := r.read(profile)
+	if err != nil {
 		return err
 	}
-	*c = AppliedCheck{valid: true, sum: sum, endpoint: endpoint, revision: revision, err: err}
+	if missing {
+		_, err = appliedStore(b, true, endpoint, revision)
+		return err
+	}
+	key := [2]string{endpoint, revision}
+	if decided, ok := r.applied[key]; ok {
+		return decided
+	}
+	_, err = appliedStore(b, false, endpoint, revision)
+	if len(r.applied) < 16 {
+		r.applied[key] = err
+	}
 	return err
+}
+
+// AppliedCheck is Applied's error for the gate watcher's once-a-second check.
+type AppliedCheck struct{ reader StoreReader }
+
+func (c *AppliedCheck) Check(profile, endpoint, revision string) error {
+	return c.reader.Applied(profile, endpoint, revision)
 }

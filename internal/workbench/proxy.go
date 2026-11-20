@@ -658,7 +658,7 @@ func (s *Server) refreshProxySubscriptions() {
 	if s.busy() {
 		return
 	}
-	p, err := managedproxy.Load(s.profile)
+	p, err := s.proxyStore.Load(s.profile)
 	if err != nil {
 		return
 	}
@@ -683,10 +683,11 @@ func (s *Server) checkProxyHealth() {
 		_ = s.closeProxyGate("代理配置无法读取，外网保持关闭")
 		return
 	}
-	p, err := managedproxy.Load(s.profile)
+	// Every five seconds: reuse the parse while the store bytes are unchanged.
+	p, err := s.proxyStore.Load(s.profile)
 	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 2*time.Second)
 	defer cancel()
-	if err == nil && cfg.RequireManagedProxy(s.profile) == nil && managedproxy.Running(ctx, s.profile, p) {
+	if err == nil && s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) == nil && managedproxy.Running(ctx, s.profile, p) {
 		return
 	}
 	_ = s.closeProxyGate("内置代理已中断或节点状态变化，请重试应用节点")

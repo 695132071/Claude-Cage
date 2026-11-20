@@ -15,6 +15,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/guestos"
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
+	"github.com/sylvinus/agent-vm/internal/managedproxy"
 	"io"
 	"io/fs"
 	"log"
@@ -99,6 +100,7 @@ type Server struct {
 	conversationDiscovered                           conversationDiscovery       // guarded by conversationMu
 	conversationViews                                map[string]conversationView // guarded by conversationMu
 	conversationGeneration                           atomic.Uint64
+	proxyStore                                       managedproxy.StoreReader // read-only monitor parses
 	mobileConnectMu                                  sync.Mutex
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
