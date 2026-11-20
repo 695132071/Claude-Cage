@@ -7,8 +7,16 @@ import { join } from 'node:path';
 import { isMainModule } from './is-main-module.mjs';
 
 const repo = 'Lee-xeo/Claude-Cage';
-const gh = args => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 8 * 1024 * 1024 });
+const gh = args => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 const api = (path, args = []) => JSON.parse(gh(['api', `repos/${repo}/${path}`, ...args]));
+
+// compareWithMain asks only for the fields assertPublishableRun reads. The
+// full comparison lists every commit and changed file, which for an old
+// commit can exceed any output buffer.
+export function compareWithMain(sha, call = api) {
+  assert.match(sha, /^[a-f0-9]{40}$/);
+  return call(`compare/${sha}...main`, ['--jq', '{status: .status, behind_by: .behind_by}']);
+}
 const digest = data => createHash('sha256').update(data).digest('hex');
 
 export function stagePreview(windows, linux, destination, version, dependencies) {
@@ -96,7 +104,7 @@ async function main() {
   const runID = process.env.CAGE_PREVIEW_RUN;
   assert.match(runID || '', /^\d+$/);
   const run = api(`actions/runs/${runID}`);
-  assertPublishableRun(run, sha => api(`compare/${sha}...main`));
+  assertPublishableRun(run, sha => compareWithMain(sha));
   const sourceFile = path => Buffer.from(api(`contents/${path}?ref=${run.head_sha}`).content, 'base64').toString('utf8');
   const version = sourceFile('VERSION').trim();
   assert.match(version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/);
