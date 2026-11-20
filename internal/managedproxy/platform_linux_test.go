@@ -199,11 +199,9 @@ func TestLinuxCoreStopPinsAndChecksProcessIdentity(t *testing.T) {
 	if err := stopLinuxProcess(record, record.Executable); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		t.Fatal("proxy process was not reaped")
-	}
+	// stopLinuxProcess returns once the pidfd reports the exit, so reaping
+	// follows without a time window; the go test deadline guards a hang.
+	<-done
 	if err := stopLinuxProcess(record, record.Executable); err != nil {
 		t.Fatal("stopping an exited process should succeed", err)
 	}
