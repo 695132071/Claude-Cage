@@ -135,12 +135,27 @@ static int media_plugins_isolate(const char *cache_dir, const char *const *candi
     return 1;
 }
 
-/* Disable WebKitGTK's DMA-BUF renderer by default when not explicitly set by
- * the caller. The workbench only renders local HTML/Canvas 2D UI; DMA-BUF
- * handoff frequently crashes or blanks WebKitWebProcess on Ubuntu 22.04 Mesa,
- * XWayland, and NVIDIA stacks. Returns 1 if this process set the variable. */
-static int media_plugins_disable_dmabuf_default(void) {
+/* Returns 1 when the NVIDIA proprietary kernel driver is loaded. root is
+ * prepended to the /proc and /sys paths ("" on a real system, a fixture
+ * directory in tests). */
+static int media_plugins_nvidia_loaded(const char *root) {
+    const char *markers[] = {"proc/driver/nvidia/version", "sys/module/nvidia", NULL};
+    for (int i = 0; markers[i]; i++) {
+        char path[PATH_MAX];
+        if (!media_plugins_join(path, sizeof path, root && *root ? root : "/", markers[i])) continue;
+        if (access(path, F_OK) == 0) return 1;
+    }
+    return 0;
+}
+
+/* WebKitGTK's DMA-BUF renderer crashes or blanks WebKitWebProcess with the
+ * NVIDIA proprietary driver. Disable it only there: on other GPUs it is the
+ * faster path, and turning it off costs CPU and frame rate in the remote
+ * screen. An explicit WEBKIT_DISABLE_DMABUF_RENDERER from the caller (either
+ * value) always wins. Returns 1 if this process set the variable. */
+static int media_plugins_disable_dmabuf_default(const char *root) {
     if (getenv("WEBKIT_DISABLE_DMABUF_RENDERER")) return 0;
+    if (!media_plugins_nvidia_loaded(root)) return 0;
     return setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 0) == 0;
 }
 

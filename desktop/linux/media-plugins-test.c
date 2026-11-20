@@ -16,6 +16,17 @@ static void write_dummy(const char *dir, const char *name) {
     assert(close(fd) == 0);
 }
 
+static void make_dirs(const char *base, const char *relative) {
+    char path[PATH_MAX];
+    assert(media_plugins_join(path, sizeof path, base, relative));
+    for (char *slash = path + strlen(base) + 1; (slash = strchr(slash, '/')); slash++) {
+        *slash = 0;
+        assert(mkdir(path, 0700) == 0 || errno == EEXIST);
+        *slash = '/';
+    }
+    assert(mkdir(path, 0700) == 0 || errno == EEXIST);
+}
+
 static void clear_gst_env(void) {
     unsetenv("GST_PLUGIN_SYSTEM_PATH_1_0");
     unsetenv("GST_PLUGIN_SYSTEM_PATH");
@@ -148,14 +159,37 @@ int main(void) {
     clear_gst_env();
     assert(media_plugins_isolate(cache_sym, nv_candidates) == 0);
 
-    /* 6. DMA-BUF default helper respects explicit caller config. */
+    /* 6. DMA-BUF stays enabled without NVIDIA's driver, is disabled with
+     *    it, and an explicit caller setting always wins. */
+    char gpu_none[PATH_MAX], gpu_proc[PATH_MAX], gpu_sys[PATH_MAX], marker[PATH_MAX];
+    assert(media_plugins_join(gpu_none, sizeof gpu_none, root, "gpu-none"));
+    assert(media_plugins_join(gpu_proc, sizeof gpu_proc, root, "gpu-proc"));
+    assert(media_plugins_join(gpu_sys, sizeof gpu_sys, root, "gpu-sys"));
+    assert(mkdir(gpu_none, 0700) == 0 && mkdir(gpu_proc, 0700) == 0 && mkdir(gpu_sys, 0700) == 0);
+    make_dirs(gpu_proc, "proc/driver/nvidia");
+    assert(media_plugins_join(marker, sizeof marker, gpu_proc, "proc/driver/nvidia"));
+    write_dummy(marker, "version");
+    make_dirs(gpu_sys, "sys/module/nvidia");
+    assert(media_plugins_nvidia_loaded(gpu_none) == 0);
+    assert(media_plugins_nvidia_loaded(gpu_proc) == 1);
+    assert(media_plugins_nvidia_loaded(gpu_sys) == 1);
+
     unsetenv("WEBKIT_DISABLE_DMABUF_RENDERER");
-    assert(media_plugins_disable_dmabuf_default() == 1);
+    assert(media_plugins_disable_dmabuf_default(gpu_none) == 0);
+    assert(getenv("WEBKIT_DISABLE_DMABUF_RENDERER") == NULL);
+    assert(media_plugins_disable_dmabuf_default(gpu_proc) == 1);
     assert(!strcmp(getenv("WEBKIT_DISABLE_DMABUF_RENDERER"), "1"));
-    assert(media_plugins_disable_dmabuf_default() == 0);
+    assert(media_plugins_disable_dmabuf_default(gpu_proc) == 0);
+    unsetenv("WEBKIT_DISABLE_DMABUF_RENDERER");
+    assert(media_plugins_disable_dmabuf_default(gpu_sys) == 1);
     assert(setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "0", 1) == 0);
-    assert(media_plugins_disable_dmabuf_default() == 0);
+    assert(media_plugins_disable_dmabuf_default(gpu_proc) == 0);
     assert(!strcmp(getenv("WEBKIT_DISABLE_DMABUF_RENDERER"), "0"));
+    /* A user without NVIDIA can still ask for it explicitly. */
+    assert(setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 1) == 0);
+    assert(media_plugins_disable_dmabuf_default(gpu_none) == 0);
+    assert(!strcmp(getenv("WEBKIT_DISABLE_DMABUF_RENDERER"), "1"));
+    unsetenv("WEBKIT_DISABLE_DMABUF_RENDERER");
 
     remove_tree(root);
     puts("Linux media-plugins unit tests: all checks passed.");
