@@ -32,7 +32,7 @@ keywords: 项目 Claude Code 编辑器 code-server Git GitHub gh 提交 推送 �
 通过 SSH 登录运行 Cage 的电脑等纯终端场景，可以在本机项目目录中直接使用 Cage 的命令行（各平台的位置见[让 Agent 配置 Cage](agent.md#agent-从哪里开始)，Linux 上为 `claude-cage`）：
 
 ```sh
-cd /Users/你的名字/Projects/my-project/src
+cd ~/Projects/my-project/src
 cage run pwd          # 输出该目录在环境中的对应路径
 cage run --tty claude # Claude 从这里开始工作
 ```
