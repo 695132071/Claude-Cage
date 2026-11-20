@@ -366,6 +366,156 @@ static void pending_free(PendingReply *pending) {
     g_free(pending->connection);
     g_free(pending);
 }
+/* Notifications go straight to the freedesktop notification service. GNotification
+   would route through org.gtk.Notifications on GNOME, which drops notifications
+   whose application ID has no matching .desktop file, and it cannot report that.
+   Each notification keeps its own click target, keyed by the server's ID. */
+#define NOTIFY_NAME "org.freedesktop.Notifications"
+#define NOTIFY_PATH "/org/freedesktop/Notifications"
+#define NOTIFY_TARGETS 128
+static GDBusConnection *notify_bus;
+static GHashTable *notify_targets, *notify_tokens;
+static void open_notification_target(const char *raw, const char *token) {
+    if (app.window) {
+        if (token && *token) gtk_window_set_startup_id(GTK_WINDOW(app.window), token);
+        gtk_widget_show(app.window);
+        gtk_window_deiconify(GTK_WINDOW(app.window));
+        gtk_window_present(GTK_WINDOW(app.window));
+        publish_visibility();
+    }
+    if (!raw || !*raw) return;
+    const char *sep = strchr(raw, '\n');
+    char *terminal_id = sep ? g_strndup(raw, (gsize)(sep - raw)) : g_strdup(raw);
+    const char *connection_id = sep ? sep + 1 : "";
+    if (*terminal_id) {
+        char *q_term = quote(terminal_id);
+        char *q_conn = quote(connection_id);
+        char *code = g_strdup_printf("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:{terminal_id:%s,connection_id:%s}}));", q_term, q_conn);
+        script(code);
+        g_free(code); g_free(q_conn); g_free(q_term);
+    }
+    g_free(terminal_id);
+}
+static void notification_signal(GDBusConnection *connection, const char *sender, const char *path, const char *interface, const char *signal, GVariant *parameters, gpointer data) {
+    (void)connection; (void)sender; (void)path; (void)interface; (void)data;
+    guint32 id = 0;
+    if (!strcmp(signal, "ActivationToken") && g_variant_is_of_type(parameters, G_VARIANT_TYPE("(us)"))) {
+        const char *token = NULL;
+        g_variant_get(parameters, "(u&s)", &id, &token);
+        if (g_hash_table_contains(notify_targets, GUINT_TO_POINTER(id)))
+            g_hash_table_replace(notify_tokens, GUINT_TO_POINTER(id), g_strdup(token));
+    } else if (!strcmp(signal, "ActionInvoked") && g_variant_is_of_type(parameters, G_VARIANT_TYPE("(us)"))) {
+        const char *action_key = NULL;
+        g_variant_get(parameters, "(u&s)", &id, &action_key);
+        char *target = g_hash_table_lookup(notify_targets, GUINT_TO_POINTER(id));
+        if (target && !strcmp(action_key, "default"))
+            open_notification_target(target, g_hash_table_lookup(notify_tokens, GUINT_TO_POINTER(id)));
+        if (target) {
+            g_hash_table_remove(notify_tokens, GUINT_TO_POINTER(id));
+            g_hash_table_remove(notify_targets, GUINT_TO_POINTER(id));
+        }
+    } else if (!strcmp(signal, "NotificationClosed") && g_variant_is_of_type(parameters, G_VARIANT_TYPE("(uu)"))) {
+        guint32 reason = 0;
+        g_variant_get(parameters, "(uu)", &id, &reason);
+        g_hash_table_remove(notify_tokens, GUINT_TO_POINTER(id));
+        g_hash_table_remove(notify_targets, GUINT_TO_POINTER(id));
+    }
+}
+static GDBusConnection *notification_bus(void) {
+    if (notify_bus) return notify_bus;
+    GError *error = NULL;
+    notify_bus = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, &error);
+    if (!notify_bus) {
+        diagnostic_event(error ? error->message : "session bus unavailable");
+        g_clear_error(&error);
+        return NULL;
+    }
+    notify_targets = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    notify_tokens = g_hash_table_new_full(g_direct_hash, g_direct_equal, NULL, g_free);
+    g_dbus_connection_signal_subscribe(notify_bus, NOTIFY_NAME, NOTIFY_NAME, NULL, NOTIFY_PATH, NULL,
+        G_DBUS_SIGNAL_FLAGS_NONE, notification_signal, NULL, NULL);
+    return notify_bus;
+}
+/* The service reports whether it can play sounds; Cage offers the sound
+   switch only when it can. An unreachable service is reported, not hidden. */
+static void notification_status_finished(GObject *source, GAsyncResult *result, gpointer data) {
+    PendingReply *pending = data;
+    GError *error = NULL;
+    GVariant *value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    gboolean sound = FALSE;
+    if (value) {
+        GVariantIter *caps = NULL;
+        const char *cap = NULL;
+        g_variant_get(value, "(as)", &caps);
+        while (g_variant_iter_next(caps, "&s", &cap)) if (!strcmp(cap, "sound")) sound = TRUE;
+        g_variant_iter_free(caps);
+        g_variant_unref(value);
+        reply_json(pending->reply, pending->context, sound
+            ? "{\"supported\":true,\"permission\":\"authorized\",\"canOpenSettings\":false,\"sound\":true}"
+            : "{\"supported\":true,\"permission\":\"authorized\",\"canOpenSettings\":false,\"sound\":false}");
+    } else {
+        diagnostic_event(error->message);
+        g_clear_error(&error);
+        reply_json(pending->reply, pending->context, "{\"supported\":false,\"permission\":\"unavailable\",\"canOpenSettings\":false,\"sound\":false}");
+    }
+    pending_free(pending);
+}
+static void notification_status(WebKitScriptMessageReply *reply, JSCContext *context) {
+    GDBusConnection *bus = notification_bus();
+    if (!bus) {
+        reply_json(reply, context, "{\"supported\":false,\"permission\":\"unavailable\",\"canOpenSettings\":false,\"sound\":false}");
+        return;
+    }
+    g_dbus_connection_call(bus, NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME, "GetCapabilities", NULL, G_VARIANT_TYPE("(as)"),
+        G_DBUS_CALL_FLAGS_NONE, 3000, NULL, notification_status_finished, pending_reply(reply, context));
+}
+typedef struct { PendingReply *pending; char *target; } NotificationSend;
+static void notification_sent(GObject *source, GAsyncResult *result, gpointer data) {
+    NotificationSend *send = data;
+    GError *error = NULL;
+    GVariant *value = g_dbus_connection_call_finish(G_DBUS_CONNECTION(source), result, &error);
+    if (value) {
+        guint32 id = 0;
+        g_variant_get(value, "(u)", &id);
+        g_variant_unref(value);
+        if (g_hash_table_size(notify_targets) >= NOTIFY_TARGETS) {
+            g_hash_table_remove_all(notify_targets);
+            g_hash_table_remove_all(notify_tokens);
+        }
+        g_hash_table_replace(notify_targets, GUINT_TO_POINTER(id), send->target);
+        send->target = NULL;
+        reply_json(send->pending->reply, send->pending->context, "{\"delivered\":true,\"permission\":\"authorized\"}");
+    } else {
+        diagnostic_event(error->message);
+        g_clear_error(&error);
+        reply_json(send->pending->reply, send->pending->context, "{\"delivered\":false,\"permission\":\"unavailable\"}");
+    }
+    pending_free(send->pending);
+    g_free(send->target);
+    g_free(send);
+}
+static void notification_send(WebKitScriptMessageReply *reply, JSCContext *context, const char *title, const char *body,
+                              const char *terminal_id, const char *connection_id, gboolean sound) {
+    GDBusConnection *bus = notification_bus();
+    if (!bus) {
+        reply_json(reply, context, "{\"delivered\":false,\"permission\":\"unavailable\"}");
+        return;
+    }
+    GVariantBuilder actions, hints;
+    g_variant_builder_init(&actions, G_VARIANT_TYPE("as"));
+    g_variant_builder_add(&actions, "s", "default");
+    g_variant_builder_add(&actions, "s", "Cage");
+    g_variant_builder_init(&hints, G_VARIANT_TYPE("a{sv}"));
+    g_variant_builder_add(&hints, "{sv}", "desktop-entry", g_variant_new_string("io.github.lee_xeo.Cage"));
+    if (sound) g_variant_builder_add(&hints, "{sv}", "sound-name", g_variant_new_string("message-new-instant"));
+    else g_variant_builder_add(&hints, "{sv}", "suppress-sound", g_variant_new_boolean(TRUE));
+    NotificationSend *send = g_new0(NotificationSend, 1);
+    send->pending = pending_reply(reply, context);
+    send->target = g_strdup_printf("%s\n%s", terminal_id, connection_id);
+    g_dbus_connection_call(bus, NOTIFY_NAME, NOTIFY_PATH, NOTIFY_NAME, "Notify",
+        g_variant_new("(susssasa{sv}i)", "Cage", 0, "io.github.lee_xeo.Cage", title, body, &actions, &hints, -1),
+        G_VARIANT_TYPE("(u)"), G_DBUS_CALL_FLAGS_NONE, 5000, NULL, notification_sent, send);
+}
 static void language_refreshed(JsonObject *object, const GError *error, gpointer data) {
     PendingReply *pending = data;
     if (error) reply_error(pending->reply, error->message);
@@ -1182,31 +1332,22 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
         }
         g_object_unref(theme_parser);
     } else if (!strcmp(name, "notificationStatus") || !strcmp(name, "requestNotificationPermission")) {
-        reply_json(reply, context, "{\"supported\":true,\"permission\":\"authorized\",\"canOpenSettings\":false}");
+        notification_status(reply, context);
     } else if (!strcmp(name, "openNotificationSettings")) {
         reply_json(reply, context, "false");
     } else if (!strcmp(name, "showNotification")) {
         const char *title = text_member(request, "title");
         const char *body = text_member(request, "body");
-        const char *notif_id = text_member(request, "id");
         const char *terminal_id = text_member(request, "terminal_id");
         const char *connection_id = text_member(request, "connection_id");
+        JsonNode *sound = request ? json_object_get_member(request, "sound") : NULL;
         gboolean valid_terminal = !*terminal_id || (strlen(terminal_id) == 16 && strspn(terminal_id, "0123456789abcdef") == 16);
-        if (!*title || strlen(title) > 600) reply_error(reply, "通知标题无效。");
-        else if (strlen(body) > 1500) reply_error(reply, "通知内容过长。");
+        if (!*title || strlen(title) > 600 || !g_utf8_validate(title, -1, NULL)) reply_error(reply, "通知标题无效。");
+        else if (strlen(body) > 1500 || !g_utf8_validate(body, -1, NULL)) reply_error(reply, "通知内容过长。");
         else if (!valid_terminal) reply_error(reply, "通知目标终端无效。");
         else if (strlen(connection_id) > 128) reply_error(reply, "通知连接标识无效。");
-        else {
-            GNotification *notification = g_notification_new(title);
-            if (*body) g_notification_set_body(notification, body);
-            char *target = g_strdup_printf("%s\n%s", terminal_id, connection_id);
-            g_notification_set_default_action_and_target(notification, "app.open-notification", "s", target);
-            g_free(target);
-            const char *tag = (*notif_id && strlen(notif_id) <= 128) ? notif_id : "cage-turn";
-            g_application_send_notification(G_APPLICATION(app.application), tag, notification);
-            g_object_unref(notification);
-            reply_json(reply, context, "{\"delivered\":true,\"permission\":\"authorized\"}");
-        }
+        else notification_send(reply, context, title, body, terminal_id, connection_id,
+            !sound || !JSON_NODE_HOLDS_VALUE(sound) || json_node_get_value_type(sound) != G_TYPE_BOOLEAN || json_node_get_boolean(sound));
     } else if (!strcmp(name, "refreshLanguage")) {
         const char *args[] = {"interface-language", "--json", NULL};
         backend_arguments_limited(args, 4, 64 * 1024, language_refreshed, pending_reply(reply, context));
@@ -1410,28 +1551,6 @@ static void update_menu(void) {
     g_menu_append_submenu(app.menu, ui_text("帮助"), G_MENU_MODEL(help));
     g_object_unref(file); g_object_unref(settings); g_object_unref(help);
 }
-static void open_notification_action(GSimpleAction *action_obj, GVariant *parameter, gpointer data) {
-    (void)action_obj; (void)data;
-    if (app.window) {
-        gtk_widget_show(app.window);
-        gtk_window_deiconify(GTK_WINDOW(app.window));
-        gtk_window_present(GTK_WINDOW(app.window));
-        publish_visibility();
-    }
-    const char *raw = parameter ? g_variant_get_string(parameter, NULL) : "";
-    if (!raw || !*raw) return;
-    const char *sep = strchr(raw, '\n');
-    char *terminal_id = sep ? g_strndup(raw, (gsize)(sep - raw)) : g_strdup(raw);
-    const char *connection_id = sep ? sep + 1 : "";
-    if (*terminal_id) {
-        char *q_term = quote(terminal_id);
-        char *q_conn = quote(connection_id);
-        char *code = g_strdup_printf("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:{terminal_id:%s,connection_id:%s}}));", q_term, q_conn);
-        script(code);
-        g_free(code); g_free(q_conn); g_free(q_term);
-    }
-    g_free(terminal_id);
-}
 static void create_window(void) {
     app.window = gtk_application_window_new(app.application);
     gtk_window_set_title(GTK_WINDOW(app.window), "Cage");
@@ -1455,10 +1574,6 @@ static void create_window(void) {
         g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(simple));
         g_object_unref(simple);
     }
-    GSimpleAction *open_notif = g_simple_action_new("open-notification", G_VARIANT_TYPE_STRING);
-    g_signal_connect(open_notif, "activate", G_CALLBACK(open_notification_action), NULL);
-    g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(open_notif));
-    g_object_unref(open_notif);
     const char *quit_accels[] = {"<Primary>q", NULL};
     gtk_application_set_accels_for_action(app.application, "app.quit", quit_accels);
     update_menu();

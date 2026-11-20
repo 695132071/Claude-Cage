@@ -716,24 +716,87 @@ class ChannelTests(unittest.TestCase):
         fire("Stop")
         self.assertEqual(channel.read_json(state_path).get("turn_done"), 2)
 
-    def test_watch_streams_turn_completions_and_ignores_stale_connections(self):
+    def test_late_stop_does_not_release_a_newer_send(self):
+        connection = str(uuid.uuid4())
+        state_path = self.root / connection / "state.json"
+        transcript = self.home / "transcript.jsonl"
+        transcript.write_text(json.dumps({"type": "user", "message": {"content": "earlier"}}) + "\n")
+        def fire(event_name):
+            payload = {"hook_event_name": event_name, "session_id": self.session, "cwd": self.project, "transcript_path": str(transcript)}
+            with patch.object(channel.sys, "stdin", io.StringIO(json.dumps(payload))):
+                channel.hook(connection)
+
+        fire("UserPromptSubmit")
+        # The phone stops the turn, then a new send is admitted before the
+        # cancelled turn's Stop hook arrives.
+        with channel.state_file(connection) as state:
+            state.update(stopped=True, busy=False)
+        request_id = str(uuid.uuid4())
+        with channel.state_file(connection) as state:
+            state.pop("stopped", None)
+            state["pending_send"] = request_id
+        fire("Stop")
+        state = channel.read_json(state_path)
+        self.assertEqual(state.get("pending_send"), request_id, "late Stop released the newer send")
+        self.assertIsNone(state.get("turn_done"), "late Stop counted as a completed reply")
+        # Once Claude has taken the message, its own Stop completes the turn.
+        with transcript.open("a") as stream:
+            stream.write(json.dumps({"type": "user", "isMeta": True, "message": {"content": f'<channel source="cage" request_id="{request_id}">\nhi\n</channel>'}}) + "\n")
+        fire("Stop")
+        state = channel.read_json(state_path)
+        self.assertIsNone(state.get("pending_send"))
+        self.assertEqual(state.get("turn_done"), 1)
+        # A missing transcript never releases a send.
+        with channel.state_file(connection) as state:
+            state["pending_send"] = str(uuid.uuid4())
+        transcript.unlink()
+        fire("Stop")
+        self.assertIsNotNone(channel.read_json(state_path).get("pending_send"))
+
+    def watcher(self, request):
         source = Path(__file__).with_name("cli_events_watch.py")
-        stale = str(uuid.uuid4())
-        active = str(uuid.uuid4())
-        channel.save(self.root / stale / "state.json", {"cli_id": self.session, "turn_done": 3, "closed": False})
-        channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 1, "closed": False})
+        helper = Path(__file__).with_name("cli_channel.py").read_text(encoding="utf-8")
+        # Mirror the host: the watcher reuses cli_channel.py's ROOT line.
+        root = next(line for line in helper.split("\n") if line.startswith("ROOT = "))
+        script = self.home / "watch.py"
+        script.write_text("import os\nfrom pathlib import Path\n_controller_context = dict(os.environ)\n" + root + "\n" + source.read_text(encoding="utf-8"))
         watcher = subprocess.Popen(
-            [sys.executable, "-I", str(source), json.dumps({"connections": [active], "interval": 0.05, "heartbeat": 1.0})],
+            [sys.executable, "-I", str(script), json.dumps(request)],
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=self.env,
         )
-        self.addCleanup(lambda: (watcher.terminate(), watcher.wait(timeout=5), watcher.stdout.close(), watcher.stderr.close()))
-        first = json.loads(watcher.stdout.readline())
-        self.assertEqual(first["id"], f"{active}:turn:1")
-        self.assertEqual(first["event"], "turn_completed")
-        channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 2, "closed": False})
-        second = json.loads(watcher.stdout.readline())
-        self.assertEqual(second["id"], f"{active}:turn:2")
+        self.addCleanup(lambda: (watcher.kill(), watcher.wait(timeout=5), watcher.stdout.close(), watcher.stderr.close()))
+        return watcher
 
+    def read_event(self, watcher, timeout=5):
+        ready = select.select([watcher.stdout], [], [], timeout)[0]
+        self.assertTrue(ready, "watcher produced no event")
+        return json.loads(watcher.stdout.readline())
+
+    def test_watch_streams_fresh_events_for_active_connections(self):
+        for inotify in (True, False):
+            with self.subTest(inotify=inotify):
+                stale, active, old, late = (str(uuid.uuid4()) for _ in range(4))
+                now = time.time()
+                channel.save(self.root / stale / "state.json", {"cli_id": self.session, "turn_done": 3, "updated_at": now})
+                channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 1, "updated_at": now})
+                # A completion from before the stream started is a backlog.
+                channel.save(self.root / old / "state.json", {"cli_id": self.session, "turn_done": 4, "updated_at": now - 600,
+                                                             "approvals": [{"id": "a-old"}]})
+                watcher = self.watcher({"connections": [active, old, late], "heartbeat": 30, "inotify": inotify})
+                first = self.read_event(watcher)
+                self.assertEqual(first["id"], f"{active}:turn:1")
+                self.assertEqual(first["event"], "turn_completed")
+                channel.save(self.root / active / "state.json", {"cli_id": self.session, "turn_done": 2, "updated_at": time.time()})
+                self.assertEqual(self.read_event(watcher)["id"], f"{active}:turn:2")
+                # Inactive connections are never read.
+                channel.save(self.root / stale / "state.json", {"cli_id": self.session, "turn_done": 4, "updated_at": time.time()})
+                channel.save(self.root / old / "state.json", {"cli_id": self.session, "turn_done": 5, "updated_at": time.time()})
+                self.assertEqual(self.read_event(watcher)["id"], f"{old}:turn:5")
+                # A connection whose directory appears after the watcher started.
+                channel.save(self.root / late / "state.json", {"cli_id": self.session, "approvals": [{"id": "a1"}], "updated_at": time.time()})
+                event = self.read_event(watcher)
+                self.assertEqual((event["id"], event["event"]), (f"{late}:approval:a1", "approval_requested"))
+                self.assertFalse(select.select([watcher.stdout], [], [], 0.3)[0], "unexpected extra event")
 
 if __name__ == "__main__":
     unittest.main()

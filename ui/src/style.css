@@ -1830,6 +1830,14 @@ svg {
   color: var(--muted);
   flex: none;
 }
+.terminal-limit-note {
+  margin: 0;
+  padding: 6px 10px 8px;
+  color: var(--muted);
+  font-size: 0.8571rem;
+  line-height: 1.5;
+  white-space: normal;
+}
 .sidebar-bottom {
   padding: 8px 0 12px;
   border-top: 1px solid var(--line);

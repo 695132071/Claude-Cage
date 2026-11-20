@@ -437,7 +437,7 @@ export function WorkspaceTabs({
                   <TerminalAction label={saved[tab.id]?.pinned ? tr("取消置顶") : tr("置顶")}
                     icon={saved[tab.id]?.pinned ? PinOff : Pin} disabled={busy} onClick={() => onPin(tab.id)} />
                   <TerminalAction label={tr("重命名")} icon={Pencil} disabled={busy} onClick={() => onRename(tab)} />
-                  <TerminalAction label={tab.cli_session_id ? tr("归档") : tr("关闭终端")} icon={tab.cli_session_id ? Archive : X} disabled={busy} onClick={event => onClose(tab, event.currentTarget)} />
+                  <TerminalAction label={tab.cli_session_id && !tab.closed ? tr("归档") : tr("关闭终端")} icon={tab.cli_session_id && !tab.closed ? Archive : X} disabled={busy} onClick={event => onClose(tab, event.currentTarget)} />
                 </div>
               )}
             </div>

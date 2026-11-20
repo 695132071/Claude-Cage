@@ -23,6 +23,7 @@ type terminalSession struct {
 	backgroundLogin       bool
 	mu                    sync.Mutex
 	id, title             string
+	creationOrder         int
 	sharedID              string
 	connectionID          string
 	conversationEnded     bool
@@ -54,6 +55,22 @@ func (t *terminalSession) accountID() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.claudeAccountID
+}
+
+func (t *terminalSession) ended() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.closed {
+		return false
+	}
+	if t.done != nil {
+		select {
+		case <-t.done:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (t *terminalSession) replaceable() bool {

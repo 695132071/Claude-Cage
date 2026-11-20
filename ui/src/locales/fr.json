@@ -2527,5 +2527,10 @@
   "终端有操作等待确认，点击返回终端": "Une action attend votre confirmation ; cliquez pour revenir au terminal",
   "Claude Code 已完成回复": "Claude Code a terminé sa réponse",
   "{0} · 点击返回终端": "{0} · Cliquez pour revenir au terminal",
-  "本轮回复已结束，点击返回终端": "La réponse est terminée ; cliquez pour revenir au terminal"
+  "本轮回复已结束，点击返回终端": "La réponse est terminée ; cliquez pour revenir au terminal",
+  "确认复制的是订阅地址，而非服务商登录页或管理页。暂不支持单条分享链接、Base64 节点列表，以及只引用远程节点列表的配置；请向服务商获取含节点的 Clash/Mihomo YAML。": "Vérifiez que vous avez copié l'adresse d'abonnement, et non la page de connexion ou de gestion du fournisseur. Les liens de partage individuels, les listes de nœuds en Base64 et les configurations qui ne font que référencer des listes de nœuds distantes ne sont pas encore pris en charge ; demandez à votre fournisseur un YAML Clash/Mihomo contenant les nœuds.",
+  "最多同时运行 {0} 个终端，请先关闭或归档不用的会话": "Au maximum {0} terminaux peuvent fonctionner en même temps. Fermez ou archivez d'abord les sessions inutilisées.",
+  "其他终端": "Autres terminaux",
+  "系统通知服务不可用": "Service de notifications système indisponible",
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Aucun service de notifications système n'a été détecté. Vérifiez que les notifications sont activées dans l'environnement de bureau, puis réessayez."
 }
