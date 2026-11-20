@@ -2451,7 +2451,7 @@
   "保存并切换": "Kaydi oo beddel",
   "恢复官方服务": "Ku celi adeegga rasmiga ah",
   "切换控制服务器？": "Ma la beddelaa server-ka maamulka?",
-  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Xiriirka shabakadda gaarka ah ee hadda jira wuu go’i doonaa waxaadna u baahan doontaa inaad mar kale ka gasho server-ka cusub. Aqoonsiga qalabka iyo furayaasha SSH ee server kasta si gaar ah ayaa loo ilaaliyaa.",
+  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留；切换不会在原服务器上注销本机，它仍留在原服务器的设备列表中。如需在原服务器上注销本机，请先取消，在当前服务器点击「退出登录」后再切换。": "Xiriirka gaarka ah ee hadda wuu go'ayaa, waxaadna u baahan doontaa inaad gasho server-ka loo socdo. Aqoonsiyada qalabka iyo furayaasha guud ee SSH ee adeegga rasmiga ah iyo server kasta oo aad leedahay waa la kala keydiyaa; beddelku kama saarayo qalabkan server-kii hore, wuxuuna ku hadhayaa liiska qalabkiisa. Si aad uga saarto server-kii hore, jooji, ku dhufo «Ka bax» server-ka hadda, kadibna beddel.",
   "已保存自建控制服务器地址": "Cinwaanka server-ka maamulka gaarka ah waa la kaydiyay",
   "已恢复使用 Tailscale 官方控制服务器": "Waxaa lagu celiyay server-ka maamulka rasmiga ah ee Tailscale",
   "SSH agent 套接字（可选）": "Socket-ka SSH agent (ikhtiyaari)",

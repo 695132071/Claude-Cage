@@ -101,7 +101,7 @@ export function TailscalePanel({ status, onOpenLogin, onOpenBrowser, onInstall, 
     if (state?.enabled && trimmed !== current) {
       if (!await onConfirm({
         title: tr("切换控制服务器？"),
-        body: tr("当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。"),
+        body: tr("当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留；切换不会在原服务器上注销本机，它仍留在原服务器的设备列表中。如需在原服务器上注销本机，请先取消，在当前服务器点击「退出登录」后再切换。"),
         confirm: tr("保存并切换"),
       })) return;
     }

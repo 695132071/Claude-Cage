@@ -23,6 +23,7 @@ import (
 	"github.com/pkg/sftp"
 	gossh "golang.org/x/crypto/ssh"
 	"tailscale.com/client/local"
+	"tailscale.com/envknob"
 	"tailscale.com/ipn"
 	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
@@ -58,21 +59,21 @@ type state struct {
 	Backend    string         `json:"backend"`
 	ControlURL string         `json:"control_url,omitempty"`
 	URL        string         `json:"auth_url,omitempty"`
-	ReturnID  string         `json:"return_id,omitempty"`
-	Name      string         `json:"name,omitempty"`
-	Hostname  string         `json:"hostname,omitempty"`
-	OS        string         `json:"os,omitempty"`
-	Tailnet   string         `json:"tailnet,omitempty"`
-	Account   string         `json:"account,omitempty"`
-	Health    []string       `json:"health,omitempty"`
-	IPs       []string       `json:"ips"`
-	Peers     []peer         `json:"peers"`
-	Keys      []string       `json:"keys"`
-	User      string         `json:"user"`
-	SSHPort   int            `json:"ssh_port"`
-	Error     string         `json:"error,omitempty"`
-	ProxyURL  string         `json:"proxy_url,omitempty"`
-	Forwards  []forwardState `json:"forwards"`
+	ReturnID   string         `json:"return_id,omitempty"`
+	Name       string         `json:"name,omitempty"`
+	Hostname   string         `json:"hostname,omitempty"`
+	OS         string         `json:"os,omitempty"`
+	Tailnet    string         `json:"tailnet,omitempty"`
+	Account    string         `json:"account,omitempty"`
+	Health     []string       `json:"health,omitempty"`
+	IPs        []string       `json:"ips"`
+	Peers      []peer         `json:"peers"`
+	Keys       []string       `json:"keys"`
+	User       string         `json:"user"`
+	SSHPort    int            `json:"ssh_port"`
+	Error      string         `json:"error,omitempty"`
+	ProxyURL   string         `json:"proxy_url,omitempty"`
+	Forwards   []forwardState `json:"forwards"`
 }
 type node struct {
 	mu          sync.Mutex
@@ -130,10 +131,57 @@ func (n *node) start() error {
 	if err != nil {
 		return err
 	}
-	hostname, _ := os.Hostname()
-	hostname = "cage-" + strings.TrimPrefix(hostname, "cage-")
+	hostname, err := nodeHostname(dir)
+	if err != nil {
+		return err
+	}
+	configureLogUpload(n.config.ControlURL)
 	s := &tsnet.Server{Dir: dir, Hostname: hostname, ControlURL: n.config.ControlURL, UserLogf: func(string, ...any) {}}
 	return n.startServer(s)
+}
+
+// plainHostnameMarker marks a node identity created with the plain host name.
+const plainHostnameMarker = "hostname-plain"
+
+// nodeHostname is the name this node registers with its control server. New
+// identities use the computer's own name with no product prefix. Identities
+// created by earlier versions registered as "cage-<name>" and keep it: a new
+// name would change their MagicDNS name and break existing SSH configurations
+// and bookmarks.
+func nodeHostname(stateDir string) (string, error) {
+	hostname, _ := os.Hostname()
+	hostname = strings.TrimPrefix(strings.TrimSpace(hostname), "cage-")
+	if hostname == "" {
+		hostname = "linux"
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, plainHostnameMarker)); err == nil {
+		return hostname, nil
+	}
+	if _, err := os.Stat(filepath.Join(stateDir, "tailscaled.state")); err == nil {
+		return "cage-" + hostname, nil
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, plainHostnameMarker), nil, 0600); err != nil {
+		return "", err
+	}
+	return hostname, nil
+}
+
+// userNoLogs keeps a TS_NO_LOGS_NO_SUPPORT value set for this process by the
+// user, restored when the official service is selected again.
+var userNoLogs = os.Getenv("TS_NO_LOGS_NO_SUPPORT")
+
+// configureLogUpload keeps a node on a self-hosted control server from
+// uploading its logs to Tailscale's log service (log.tailscale.com): tsnet
+// would otherwise start uploading before the control server's own settings
+// arrive. It must run before the tsnet server starts.
+func configureLogUpload(controlURL string) {
+	if controlURL != "" {
+		envknob.SetNoLogsNoSupport()
+		return
+	}
+	envknob.Setenv("TS_NO_LOGS_NO_SUPPORT", userNoLogs)
 }
 
 func (n *node) startServer(s *tsnet.Server) error {

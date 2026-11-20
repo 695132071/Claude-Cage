@@ -2451,7 +2451,7 @@
   "保存并切换": "Guardar y cambiar",
   "恢复官方服务": "Restaurar servicio oficial",
   "切换控制服务器？": "¿Cambiar de servidor de control?",
-  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Se desconectará la red privada actual y tendrás que volver a iniciar sesión en el servidor de destino. Las identidades de dispositivo y las claves SSH de cada servidor se conservan por separado.",
+  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留；切换不会在原服务器上注销本机，它仍留在原服务器的设备列表中。如需在原服务器上注销本机，请先取消，在当前服务器点击「退出登录」后再切换。": "La conexión privada actual se cerrará y tendrás que iniciar sesión en el servidor de destino. Las identidades de dispositivo y las claves públicas SSH del servicio oficial y de cada servidor propio se conservan por separado; cambiar no cierra la sesión de este equipo en el servidor anterior, que lo seguirá mostrando en su lista de dispositivos. Para cerrar su sesión allí, cancela, pulsa «Cerrar sesión» en el servidor actual y luego cambia.",
   "已保存自建控制服务器地址": "Dirección del servidor de control propio guardada",
   "已恢复使用 Tailscale 官方控制服务器": "Se restauró el servidor de control oficial de Tailscale",
   "SSH agent 套接字（可选）": "Socket del SSH agent (opcional)",
