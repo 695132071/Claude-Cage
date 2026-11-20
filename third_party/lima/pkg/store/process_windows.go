@@ -5,6 +5,7 @@ package store
 
 import (
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/windows"
 )
@@ -18,15 +19,46 @@ const pidFileTimeSlack = 2 * time.Second
 // Query failures retain the marker: they do not prove that its owner is gone.
 func processStartedAfter(pid int, modified time.Time) bool {
 	handle, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
-	if err != nil {
-		return false
+	if err == nil {
+		defer windows.CloseHandle(handle)
+		var created, exited, kernel, user windows.Filetime
+		if windows.GetProcessTimes(handle, &created, &exited, &kernel, &user) == nil {
+			return created.Nanoseconds() > modified.Add(pidFileTimeSlack).UnixNano()
+		}
 	}
-	defer windows.CloseHandle(handle)
-	var created, exited, kernel, user windows.Filetime
-	if windows.GetProcessTimes(handle, &created, &exited, &kernel, &user) != nil {
-		return false
+	// The snapshot includes processes whose handles we cannot open.
+	created, ok := processCreationTimeFromSnapshot(pid)
+	return ok && created > modified.Add(pidFileTimeSlack).UnixNano()
+}
+
+func processCreationTimeFromSnapshot(pid int) (int64, bool) {
+	size := uint32(64 * 1024)
+	for range 8 {
+		buf := make([]byte, size)
+		var length uint32
+		err := windows.NtQuerySystemInformation(windows.SystemProcessInformation, unsafe.Pointer(&buf[0]), size, &length)
+		if err == windows.STATUS_INFO_LENGTH_MISMATCH {
+			size = max(size*2, length)
+			continue
+		}
+		if err != nil || length > uint32(len(buf)) {
+			return 0, false
+		}
+		buf = buf[:length]
+		for len(buf) >= int(unsafe.Sizeof(windows.SYSTEM_PROCESS_INFORMATION{})) {
+			info := (*windows.SYSTEM_PROCESS_INFORMATION)(unsafe.Pointer(&buf[0]))
+			if info.UniqueProcessID == uintptr(pid) {
+				created := windows.Filetime{LowDateTime: uint32(info.CreateTime), HighDateTime: uint32(info.CreateTime >> 32)}
+				return created.Nanoseconds(), true
+			}
+			if info.NextEntryOffset == 0 || info.NextEntryOffset > uint32(len(buf)) {
+				break
+			}
+			buf = buf[info.NextEntryOffset:]
+		}
+		return 0, false
 	}
-	return created.Nanoseconds() > modified.Add(pidFileTimeSlack).UnixNano()
+	return 0, false
 }
 
 // processExited reports whether pid names a process that has already exited.

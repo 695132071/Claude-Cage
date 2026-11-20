@@ -4,11 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
@@ -32,6 +36,8 @@ type proxyInput struct {
 	NodeID       string   `json:"node_id"`
 	NodeIDs      []string `json:"node_ids"`
 	Port         int      `json:"port"`
+	Server       string   `json:"server"`
+	ServerPort   int      `json:"server_port"`
 }
 
 func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
@@ -51,6 +57,11 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 		nodes := []any{}
 		for _, n := range src.Nodes {
 			node := map[string]any{"id": n.ID, "name": n.Name, "type": n.Type}
+			if src.URL == "" {
+				// Local nodes can be edited in place, so the form shows their
+				// address. Credentials and other options are never returned.
+				node["server"], node["port"] = n.Config["server"], n.Config["port"]
+			}
 			if reason := blocked[n.ID]; reason != "" {
 				node["blocked_reason"] = reason
 			}
@@ -108,7 +119,7 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 			state, label = "migration_required", "需要迁移代理节点"
 		}
 	}
-	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(managedproxy.BootstrapDNSURLs(), "、"), "udp_blocked": true, "ipv6_blocked": true})
+	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(p.NodeResolvers(), "、"), "udp_blocked": true, "ipv6_blocked": true})
 }
 func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("action") == "import-local" && !s.requireLocalConfigAccess(w, r) {
@@ -119,7 +130,7 @@ func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	action := r.PathValue("action")
-	allowed := map[string]bool{"import": true, "import-local": true, "refresh": true, "edit": true, "delete": true, "select": true, "restart": true, "stop": true, "route": true}
+	allowed := map[string]bool{"import": true, "import-local": true, "refresh": true, "edit": true, "edit-node": true, "delete": true, "select": true, "restart": true, "stop": true, "route": true}
 	if !allowed[action] {
 		http.NotFound(w, r)
 		return
@@ -127,15 +138,15 @@ func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	pauseVersion := s.safety.pauseVersion
 	s.mu.Unlock()
-	s.launch(w, "proxy", func() error { return s.changeProxy(action, input, &pauseVersion) })
+	s.launchRequest(w, r, "proxy", func() error { return s.changeProxy(action, input, &pauseVersion) })
 }
 func (s *Server) subscriptionClient(host bool) (*http.Client, error) {
-	if host {
-		return managedproxy.BootstrapClient(), nil
-	}
 	cfg, err := loadConfig(s.configPath)
 	if err != nil {
 		return nil, err
+	}
+	if host {
+		return managedproxy.BootstrapClientWith(cfg.BootstrapEndpoints()), nil
 	}
 	if err = cfg.RequireManagedProxy(s.profile); err != nil {
 		return nil, err
@@ -236,6 +247,42 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 			p.Selected = ""
 			p.Chain = nil
 		}
+	} else if action == "edit-node" {
+		// Address and port of a locally imported node can change in place; the
+		// credentials and protocol options stay as imported (#204). Nodes of a
+		// subscription are rewritten by its next refresh, so they are refused.
+		if index < 0 {
+			return errors.New("订阅来源不存在")
+		}
+		if p.Sources[index].URL != "" {
+			return errors.New("订阅节点会在更新订阅时被覆盖，请在服务商处修改；只能编辑本地导入的节点")
+		}
+		server := strings.Trim(strings.TrimSpace(in.Server), "[]")
+		if len(server) > 253 || net.ParseIP(server) == nil && !nodeHostname.MatchString(server) {
+			return errors.New("服务器地址无效，请填写 IP 地址或域名")
+		}
+		if in.ServerPort < 1 || in.ServerPort > 65535 {
+			return errors.New("节点端口应为 1–65535")
+		}
+		found := false
+		for i, n := range p.Sources[index].Nodes {
+			if n.ID == in.NodeID {
+				config := maps.Clone(n.Config)
+				config["server"], config["port"] = server, in.ServerPort
+				p.Sources[index].Nodes[i].Config = config
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("节点不存在")
+		}
+		candidate := p
+		if candidate.Selected == "" {
+			candidate.Selected = in.NodeID
+		}
+		if err = validateProxyCore(ctx, s.profile, candidate); err != nil {
+			return err
+		}
 	} else if action == "edit" {
 		if index < 0 {
 			return errors.New("订阅来源不存在")
@@ -257,10 +304,20 @@ func (s *Server) changeProxy(action string, in proxyInput, resumeVersion *uint64
 		var data []byte
 		usage := ""
 		if action == "refresh" {
-			if index < 0 || p.Sources[index].URL == "" {
-				return errors.New("该来源没有订阅链接")
+			if index < 0 {
+				return errors.New("订阅来源不存在")
 			}
 			src := p.Sources[index]
+			if src.URL == "" {
+				// A local source is updated from new YAML in place. The source ID
+				// and node names keep node IDs, selection and exit bindings (#507).
+				if strings.TrimSpace(in.Content) == "" {
+					return errors.New("本地来源需要提供新的配置内容才能更新")
+				}
+				data = []byte(in.Content)
+			} else if in.Content != "" {
+				return errors.New("订阅来源从订阅链接更新，不能用粘贴的内容替换")
+			}
 			in.Name, in.URL, in.Interval = src.Name, src.URL, src.Interval
 		} else {
 			data = []byte(in.Content)
@@ -365,6 +422,8 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 		return err
 	}
 	s.setMessage("正在验证节点配置…")
+	// The core resolves with the same endpoints as guest DNS and the DNS check.
+	p.GuestDNS, p.BootstrapDNS = old.DNSEndpoints(), old.BootstrapEndpoints()
 	if err := validateProxyCore(ctx, s.profile, p); err != nil {
 		return err
 	}
@@ -447,6 +506,37 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	return nil
 }
 
+var nodeHostname = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$`)
+
+// measureProxyDelay asks the running core to time one node. Tests replace it.
+var measureProxyDelay = func(ctx context.Context, profile, nodeID string) (int, error) {
+	var v struct {
+		Delay int `json:"delay"`
+	}
+	err := managedproxy.API(ctx, profile, "GET", "/proxies/"+url.PathEscape(nodeID)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v)
+	if err != nil {
+		return 0, managedproxy.DelayError(err)
+	}
+	return v.Delay, nil
+}
+
+const (
+	// Batch measurement shares the core with live traffic. A small pool keeps
+	// upstream connection bursts bounded; the cap bounds one request's duration.
+	proxyDelayWorkers = 4
+	proxyDelayMaxIDs  = 300
+)
+
+type proxyDelayResult struct {
+	NodeID string `json:"node_id"`
+	Delay  int    `json:"delay,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// proxyDelay measures one node (node_id, reply {"delay"}) or several
+// (node_ids, reply {"results", "best"}). It never changes the selected node:
+// "best" is the fastest successful node, which the caller may apply with
+// proxy.select, so the usual exit and network checks still run.
 func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 	var in proxyInput
 	if !readJSON(w, r, &in) {
@@ -457,23 +547,85 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
-	if _, ok := p.Find(in.NodeID); !ok {
-		requestError(w, errors.New("节点不存在"))
+	if len(in.NodeIDs) == 0 {
+		if _, ok := p.Find(in.NodeID); !ok {
+			requestError(w, errors.New("节点不存在"))
+			return
+		}
+		if reason := p.BlockedNodes()[in.NodeID]; reason != "" {
+			requestError(w, errors.New(reason))
+			return
+		}
+		delay, err := measureProxyDelay(r.Context(), s.profile, in.NodeID)
+		if err != nil {
+			requestError(w, err)
+			return
+		}
+		jsonReply(w, map[string]int{"delay": delay})
 		return
 	}
-	if reason := p.BlockedNodes()[in.NodeID]; reason != "" {
-		requestError(w, errors.New(reason))
+	if in.NodeID != "" {
+		requestError(w, errors.New("node_id 与 node_ids 只能填写一个"))
 		return
 	}
-	var v struct {
-		Delay int `json:"delay"`
-	}
-	err = managedproxy.API(r.Context(), s.profile, "GET", "/proxies/"+url.PathEscape(in.NodeID)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v)
-	if err != nil {
-		requestError(w, managedproxy.DelayError(err))
+	if len(in.NodeIDs) > proxyDelayMaxIDs {
+		requestError(w, fmt.Errorf("一次最多测速 %d 个节点", proxyDelayMaxIDs))
 		return
 	}
-	jsonReply(w, v)
+	seen := map[string]bool{}
+	for _, id := range in.NodeIDs {
+		if _, ok := p.Find(id); !ok {
+			requestError(w, errors.New("节点不存在"))
+			return
+		}
+		if seen[id] {
+			requestError(w, errors.New("测速列表包含重复节点"))
+			return
+		}
+		seen[id] = true
+	}
+	blocked := p.BlockedNodes()
+	results := make([]proxyDelayResult, len(in.NodeIDs))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range min(proxyDelayWorkers, len(in.NodeIDs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				id := in.NodeIDs[i]
+				if reason := blocked[id]; reason != "" {
+					results[i] = proxyDelayResult{NodeID: id, Error: reason}
+					continue
+				}
+				delay, err := measureProxyDelay(r.Context(), s.profile, id)
+				results[i] = proxyDelayResult{NodeID: id, Delay: delay}
+				if err != nil {
+					results[i] = proxyDelayResult{NodeID: id, Error: err.Error()}
+				}
+			}
+		}()
+	}
+	for i := range in.NodeIDs {
+		if r.Context().Err() != nil {
+			break
+		}
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	if err := r.Context().Err(); err != nil {
+		requestError(w, errors.New("测速已取消"))
+		return
+	}
+	best := ""
+	bestDelay := 0
+	for _, result := range results {
+		if result.Error == "" && result.Delay > 0 && (best == "" || result.Delay < bestDelay) {
+			best, bestDelay = result.NodeID, result.Delay
+		}
+	}
+	jsonReply(w, map[string]any{"results": results, "best": best})
 }
 func (s *Server) proxyConnections(w http.ResponseWriter, r *http.Request) {
 	var response struct {
@@ -516,7 +668,7 @@ func (s *Server) proxyLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	// Whitelisted lifecycle messages avoid publishing upstream raw log lines,
 	// which can contain subscription secrets, credentials and host paths.
-	lines := []string{"客机公网 UDP、IPv6、ICMP：阻断", "业务 DNS：经选定节点转发", "代理基础设施 DNS：" + strings.Join(managedproxy.BootstrapDNSURLs(), "、") + "（主机网络，并行查询）"}
+	lines := []string{"客机公网 UDP、IPv6、ICMP：阻断", "业务 DNS：经选定节点转发", "代理基础设施 DNS：" + strings.Join(p.NodeResolvers(), "、") + "（主机网络，并行查询）"}
 	if managedproxy.Running(r.Context(), s.profile, p) {
 		lines = append(lines, "内置核心运行中；已读回当前节点选择")
 	} else {
@@ -536,7 +688,7 @@ func (s *Server) refreshProxySubscriptions() {
 	if s.busy() {
 		return
 	}
-	p, err := managedproxy.Load(s.profile)
+	p, err := s.proxyStore.Load(s.profile)
 	if err != nil {
 		return
 	}
@@ -598,14 +750,15 @@ func (s *Server) checkProxyHealth() {
 		_ = s.closeProxyGate("代理配置无法读取，外网保持关闭")
 		return
 	}
-	p, err := managedproxy.Load(s.profile)
+	// Every five seconds: reuse the parse while the store bytes are unchanged.
+	p, err := s.proxyStore.Load(s.profile)
 	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 2*time.Second)
 	defer cancel()
 	reason := "内置代理未就绪；外网保持关闭"
 	if err == nil {
 		if _, routeErr := p.Route(); errors.Is(routeErr, managedproxy.ErrLocalProxyNode) {
 			reason = routeErr.Error()
-		} else if cfg.RequireManagedProxy(s.profile) == nil && managedproxy.Running(ctx, s.profile, p) {
+		} else if s.proxyStore.Applied(s.profile, cfg.ProxyURL, cfg.ProxyRevision) == nil && managedproxy.Running(ctx, s.profile, p) {
 			return
 		}
 	}

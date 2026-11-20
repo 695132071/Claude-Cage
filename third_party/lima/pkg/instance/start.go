@@ -372,6 +372,11 @@ func waitHostAgentStart(_ context.Context, haPIDPath, haStderrPath string) error
 func watchHostAgentEvents(ctx context.Context, inst *limatype.Instance, haStdoutPath, haStderrPath string, begin time.Time, showProgress bool) error {
 	ctx, cancel := context.WithTimeout(ctx, watchHostAgentTimeout(ctx))
 	defer cancel()
+	// With an idle timeout, any hostagent event (including each cloud-init
+	// output line in progress mode) postpones the deadline: a boot that keeps
+	// making progress is not cut off, a stalled one still fails.
+	ctx, touch, idleExpired := withIdleDeadline(ctx, watchHostAgentIdleTimeout(ctx))
+	defer touch(false)
 
 	var (
 		printedSSHLocalPort  bool
@@ -381,6 +386,7 @@ func watchHostAgentEvents(ctx context.Context, inst *limatype.Instance, haStdout
 	)
 
 	onEvent := func(ev hostagentevents.Event) bool {
+		touch(true)
 		if !printedSSHLocalPort && ev.Status.SSHLocalPort != 0 {
 			logrus.Infof("SSH Local Port: %d", ev.Status.SSHLocalPort)
 			printedSSHLocalPort = true
@@ -450,10 +456,50 @@ func watchHostAgentEvents(ctx context.Context, inst *limatype.Instance, haStdout
 	}
 
 	if !receivedRunningEvent {
+		if idleExpired() {
+			return fmt.Errorf("did not receive an event with the `running` status: no boot progress for %v", watchHostAgentIdleTimeout(ctx))
+		}
 		return errors.New("did not receive an event with the `running` status")
 	}
 
 	return nil
+}
+
+// withIdleDeadline cancels ctx after idle passes without touch(true).
+// touch(false) stops the timer. An idle of zero disables the deadline.
+func withIdleDeadline(ctx context.Context, idle time.Duration) (context.Context, func(bool), func() bool) {
+	if idle <= 0 {
+		return ctx, func(bool) {}, func() bool { return false }
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	errIdle := errors.New("no hostagent progress")
+	timer := time.AfterFunc(idle, func() { cancel(errIdle) })
+	touch := func(alive bool) {
+		if alive {
+			timer.Reset(idle)
+			return
+		}
+		timer.Stop()
+		cancel(nil)
+	}
+	return ctx, touch, func() bool { return errors.Is(context.Cause(ctx), errIdle) }
+}
+
+// A defined type, not an alias of struct{}: watchHostAgentEventsTimeoutKey
+// and launchingShellKey are aliases of struct{}, and an alias here would make
+// the idle timeout replace the overall one stored under the same key.
+type watchHostAgentIdleTimeoutKey struct{}
+
+// WithWatchHostAgentIdleTimeout makes watchHostAgentEvents fail only after
+// idle passes without any hostagent event, within the overall timeout set by
+// WithWatchHostAgentTimeout.
+func WithWatchHostAgentIdleTimeout(ctx context.Context, idle time.Duration) context.Context {
+	return context.WithValue(ctx, watchHostAgentIdleTimeoutKey{}, idle)
+}
+
+func watchHostAgentIdleTimeout(ctx context.Context) time.Duration {
+	idle, _ := ctx.Value(watchHostAgentIdleTimeoutKey{}).(time.Duration)
+	return idle
 }
 
 type watchHostAgentEventsTimeoutKey = struct{}

@@ -124,7 +124,7 @@ cage agent call proxy.select --input /private/path/selection.json --wait 2m
 cage agent call proxy.status
 ```
 
-链式代理使用 `proxy.route`，输入 `{"node_ids":["入口ID","最终出口ID"]}`，顺序为入口到出口。只传一个节点时与 `proxy.select` 相同，保留该节点在订阅中自带的 `dialer-proxy` 中转。`proxy.select` 总是把路由替换为所选的单个节点：已有链会被清除，所选节点即使原本在链中也可以。节点无效、配置验证或核心启动失败时保留原路由；路由保存后的网络检查仍可能失败，应以 `proxy.status` 返回的当前路由为准。要保留或重建多跳链，请重新调用 `proxy.route`。更新订阅使用 `proxy.refresh` 和已有来源 `id`；`proxy.import` 每次创建来源，不能盲目重试。
+链式代理使用 `proxy.route`，输入 `{"node_ids":["入口ID","最终出口ID"]}`，顺序为入口到出口。只传一个节点时与 `proxy.select` 相同，保留该节点在订阅中自带的 `dialer-proxy` 中转。`proxy.select` 总是把路由替换为所选的单个节点：已有链会被清除，所选节点即使原本在链中也可以。节点无效、配置验证或核心启动失败时保留原路由；路由保存后的网络检查仍可能失败，应以 `proxy.status` 返回的当前路由为准。要保留或重建多跳链，请重新调用 `proxy.route`。更新订阅使用 `proxy.refresh` 和已有来源 `id`；本地来源没有订阅链接，`proxy.refresh` 需同时提供新的 `content`，按节点名称保留节点 ID、选择和出口规则。`proxy.edit-node` 输入来源 `id`、`node_id`、`server`、`server_port`，只修改本地节点的地址与端口；`proxy.import` 每次创建来源，不能盲目重试。
 
 仅切换节点或代理链（包括跨国家切换）会保留运行中的环境和终端。旧网络连接和检查授权会被撤销，完整检查通过后才恢复联网。首次启用内置代理、修改代理端口或环境设置仍可能需要重启环境。
 
@@ -147,7 +147,7 @@ cage agent call settings.get
 
 首次需要换存储位置时，在安装前用 `storage.set`，输入 `directory`、`previous`、`migrate`；后两项分别来自 `storage.get` 的 `directory` 和 `has_environment`。已有环境的迁移会停止任务并保留备份，应先保存工作。资源配置用 `resources.set` 的 `allocation` 对象；修改保存后再以 `{}` 调用应用资源，会重启环境。容器资源由服务器部署管理。
 
-只发送需要修改的设置，先预检再应用；browser_home_url 单独通过 browser.preferences.set 保存，环境设置分开提交；未指定字段会保留，包括出口规则对象中未指定的 IP、国家和城市基准。`null` 不用于清空字段。
+只发送需要修改的设置，先预检再应用；browser_home_url 单独通过 browser.preferences.set 保存，环境设置分开提交；未指定字段会保留，包括出口规则对象中未指定的 IP、国家和城市基准。`null` 不用于清空字段。修改静态 IP 基准遇到实时出口采样超时或代理连接失败时，默认不会保存并明确提示“静态 IP 基准未保存”（作业 `recovery` 为 `static-ip-draft-available`）；若需离线保存待验证的非大陆静态 IP 基准，可显式传入 `save_static_draft: true`，后台仅保存草稿并保持外网关闭，实时出口、国家与隔离检查全部通过前不会放行外网。
 
 ```json
 {"patch":{"auto_timezone":true,"auto_language":true},"dry_run":true}
@@ -160,7 +160,7 @@ cage agent call settings.patch --input /private/path/settings-apply.json --wait 
 cage agent call environment.start --input /private/path/guest-choice.json --wait 30m
 ```
 
-已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。请求中断时先核对安装状态再决定下一步。
+已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。如果桌面端窗口正处于首次引导（`initialization.status` 返回 `desktop_active: true`），通过 Agent 调用 `environment.start` 会直接返回 `state_conflict`，避免与桌面引导并发冲突；可在桌面端完成引导或关闭引导窗口后再继续。请求中断时先核对安装状态再决定下一步。
 
 需要用户完成的步骤出现时，报告具体需要做的事和恢复查询命令。不要用无限重试掩盖等待用户操作。安装进度在作业的 `setup_progress` 中；`prepared`、安装完成、运行和联网分别检查。
 
@@ -202,7 +202,7 @@ cage agent job 012345abcdef
 cage agent job 012345abcdef --wait 30m
 ```
 
-`--wait` 为有限等待，范围为 0 到 24 小时；不指定时立即返回。等待或客户端断开不会自动取消作业。后台只保留最近一个作业和被它替换的上一个作业，更早的记录会丢失，重启也可能失去记录。仍在运行的作业被停止替换时，原作业返回 `job_canceled`，`superseded_by` 给出替换它的作业 id，可据此查询停止作业的结果。`job_not_found`、`outcome_unknown` 或连接中断后，先读 `status` 和相应配置，核对副作用；不要把其他任务成功当成原任务成功。`job_canceled` 单独表示取消，不能视为完成。
+`--wait` 为有限等待，范围为 0 到 24 小时；不指定时立即返回。等待或客户端断开不会自动取消作业。每个作业会通过 `initiator` 记录发起方（`agent`、`desktop` 或 `setup`）。后台只保留最近一个作业和被它替换的上一个作业，更早的记录会丢失，重启也可能失去记录。仍在运行的作业被停止或取消时，原作业返回 `job_canceled`，`canceled_by` 给出取消来源（`agent`、`desktop` 或 `setup`），`superseded_by` 给出替换它的作业 id，可据此查询停止作业的结果并决定是否重试。`job_not_found`、`outcome_unknown` 或连接中断后，先读 `status` 和相应配置，核对副作用；不要把其他任务成功当成原任务成功。`job_canceled` 单独表示取消，不能视为完成。
 
 命名 call 的输入必须是单个 JSON 对象，最大 12 MiB；request 支持原始二进制文件流。未知命令和字段会被拒绝。能力清单的 `input_schema` 描述允许字段；当前平台、系统状态和字段组合仍由后台验证。错误说明经过脱敏，正常业务结果保持接口原值。用户可以查看的密码、Cookie、配对码等，在同样的再次验证和权限检查通过后也可由 Agent 读取，应通过私有管道处理，避免默认记录或回显。
 
@@ -271,14 +271,14 @@ cage agent call settings.get --scope selected --connection 当前连接代次
 | 本机信任、记住登录、设置密码保护 | desktop 范围 client.trusted-login：action 为 resume/enable/disable/protect，按同一规则提供 password、connection_id。全新配置先用 account.create 注册用户名和密码。 |
 | Touch ID 与快捷登录 | native.submit 提交 accountDevice，operation 为 status/enable/disable/unlock，kind 为 automatic/biometric；设备密钥由原生安全存储管理。Windows/Linux 不支持的操作与用户界面返回相同限制。 |
 | 外观、字体、配色、自定义主题 | appearance.get/set 读写完整对象，appearance.codex 读取本机 Codex 外观导入；读取后保留未修改字段。 |
-| 出口位置检测、测速、连接和日志 | settings.probe 输入完整设置草稿；proxy.delay 输入 node_id；proxy.connections/logs。dry_run 仅静态校验。 |
+| 出口位置检测、测速、连接和日志 | settings.probe 输入完整设置草稿；proxy.delay 输入 node_id 测一个节点，返回 `delay`；或输入 node_ids（最多 300 个，每次并发 4 个）批量测速，返回逐节点的 `results`（成功为 `delay`，失败为区分未载入、超时与上游失败的 `error`）和最快可用节点 `best`。批量测速不改变当前选择，需要切换时用 `best` 调用 proxy.select；proxy.connections/logs。dry_run 仅静态校验。 |
 | 尚未开始安装时重选系统 | guest.reselect 输入 guest.options.pending.id，仍由原安装状态约束。 |
 | Claude 账号、额度、分组、启停、调度与排序 | claude-accounts.get/change，动作与字段类型由 capabilities 给出；业务 action 与界面相同。 |
 | 密码保险箱 | vault.get 列元数据；vault.change 的 action 为 save/delete/unblock/reveal；reveal 仍需 account_password，再次验证后返回真实密码；vault.browser 提供页面填充和保存。 |
 | 手机配对 | mobile.get/pair/remove；自建中继输入 admin/relay，配对结果是私密邀请码。 |
-| Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/add-key/remove-key；公钥字段为 key。 |
+| Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/control-server/add-key/remove-key；自建控制服务器字段为 control_url（空字符串恢复官方），公钥字段为 key。 |
 | 浏览器首页 | browser.preferences.get/set；set 立即更新浏览器，失败保留旧值，长度限制与界面一致。settings.patch 单独修改首页时复用同一保存流程。 |
-| Cookie、权限、扩展、收藏 | browser.cookies/settings/extensions；favorites.get/change。Cookie 的 mode、scope、id、cookieKey 与界面相同。 |
+| Cookie、权限、扩展、收藏 | browser.cookies/settings/extensions；favorites.get/change。Cookie 的 mode、scope、id、cookieKey 与界面相同；mode 为 set 时在 cookie 中给出 name、value、domain、path、secure、httpOnly、sameSite（Strict/Lax/None，可省略）和 expires（Unix 秒，省略为会话 Cookie），带 cookieKey 表示编辑该条。set 只写入 id 所指网站标签自身的会话和站点，规则与界面相同；partitioned 暂不支持，会被明确拒绝。value 属于敏感数据，应通过私有管道传入。 |
 | SSH 主机与部署、指纹核对、连接与切换 | desktop 范围 client.hosts、client.hosts.create、client.candidate/commit/cancel/disconnect/local-stop；更新/删除主机使用 PUT/DELETE /api/client/hosts/主机ID。保留同一连接代次、候选、指纹和本机任务去留规则。 |
 | 已归档会话、名称、固定、账户切换 | request 访问 /api/cli/sessions 和 /api/cli/sessions/会话ID/{metadata,account,archive,restore,purge,open}。 |
 | 文件选择、主题导入导出、App 更新 | native.submit 调现有 chooseFolder、importTheme、exportTheme、appUpdate 等原生 action。系统选择器和签名检查照常执行。 |

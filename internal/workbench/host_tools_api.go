@@ -47,6 +47,9 @@ type hostPluginView struct {
 	Tools   []hostbridge.ToolInfo `json:"tools,omitempty"`
 	// Problem is why the plugin's folder cannot be used.
 	Problem string `json:"problem,omitempty"`
+	// MissingProgram names the host program (such as uv, uvx, npx, node or
+	// python3) that was not found on PATH when starting the plugin.
+	MissingProgram string `json:"missing_program,omitempty"`
 }
 
 // hostContributesView is what a plugin adds, as far as the page shows it.
@@ -136,6 +139,12 @@ func (s *Server) hostPluginDir() string { return filepath.Join(s.profile, "plugi
 func (s *Server) hostToolsView() hostToolsView {
 	s.mu.Lock()
 	enabled, tools, off := s.preferences.HostTools, s.hostTools, hostPluginsOff(s.preferences)
+	var pluginProblems, missingPrograms map[string]string
+	var problems []string
+	if tools != nil {
+		// Replaced, not changed, when a plugin restarts for a new project.
+		pluginProblems, missingPrograms, problems = tools.pluginProblems, tools.missingPrograms, tools.problems
+	}
 	s.mu.Unlock()
 	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil && tools.serving,
 		Directory: s.hostPluginDir(), Folders: s.hostToolDirs()}
@@ -144,9 +153,12 @@ func (s *Server) hostToolsView() hostToolsView {
 	}
 	loaded := map[string][]hostbridge.ToolInfo{}
 	if tools != nil {
-		view.Problems = tools.problems
+		view.Problems = problems
 		for _, plugin := range tools.plugins {
-			loaded[plugin.Manifest.Name] = plugin.ToolList()
+			// One waiting for a project folder is kept, not running.
+			if plugin.Running() {
+				loaded[plugin.Manifest.Name] = plugin.ToolList()
+			}
 		}
 	}
 	view.Plugins = []hostPluginView{{Name: hostCommandsPlugin, BuiltIn: true, Supported: true, Enabled: !slices.Contains(off, hostCommandsPlugin),
@@ -191,6 +203,9 @@ func (s *Server) hostToolsView() hostToolsView {
 			plugin.Problem = hostPluginUnavailable(unavailable)
 		} else if list, ok := loaded[manifest.Name]; ok {
 			plugin.Loaded, plugin.Tools = true, list
+		} else if msg := pluginProblems[manifest.Name]; msg != "" {
+			plugin.Problem = msg
+			plugin.MissingProgram = missingPrograms[manifest.Name]
 		}
 		view.Plugins = append(view.Plugins, plugin)
 	}
@@ -476,6 +491,10 @@ type hostMarketEntryView struct {
 	Update           bool   `json:"update"`
 	// Icon says the list has a picture for the plugin.
 	Icon bool `json:"icon,omitempty"`
+	// Runtime names the runtime program the plugin uses, if the list says.
+	Runtime string `json:"runtime,omitempty"`
+	// Platforms lists the host operating systems the plugin supports.
+	Platforms []string `json:"platforms,omitempty"`
 	// Source is the open-source project the plugin is built on.
 	Source *hostbridge.Source `json:"source,omitempty"`
 }
@@ -540,9 +559,14 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, entry := range entries {
 		unavailable := hostbridge.Manifest{Kind: entry.Kind, Engines: entry.Engines, Contributes: entry.Contributes}.Unavailable(version.Version, true)
+		platforms := entry.AllPlatforms
+		if len(platforms) == 0 {
+			platforms = []string{"darwin", "windows", "linux"}
+		}
 		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description, Author: entry.Author,
 			Permissions: entry.Permissions, Categories: hostbridge.ShownCategories(entry.Categories), Kind: entry.Kind, Contributes: hostContributes(entry.Contributes), Problem: hostPluginUnavailable(unavailable),
-			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != "", Source: entry.Source}
+			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != "",
+			Runtime: entry.Runtime, Platforms: platforms, Source: entry.Source}
 		if manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name)); err == nil {
 			item.InstalledVersion = manifest.Version
 			item.Update = manifest.Version != entry.Version
