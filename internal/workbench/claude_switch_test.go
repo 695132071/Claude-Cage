@@ -11,17 +11,43 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/google/uuid"
 )
+
+// settledTempDir is t.TempDir for directories that fixture processes or server
+// goroutines may still write into when the test returns (macOS runners saw
+// "directory not empty" from the plain cleanup). Removal retries briefly.
+func settledTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "cage-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			err := os.RemoveAll(dir)
+			if err == nil || time.Now().After(deadline) {
+				if err != nil {
+					t.Errorf("remove %s: %v", dir, err)
+				}
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	})
+	return dir
+}
 
 func TestClaudeSwitchUnopenedSessionWhenSourceLoggedOut(t *testing.T) {
 	s, _, project := metadataFixture(t)
 	s.ready = true
 	s.terminals.sessions = nil
 	s.projectShares = map[string]*projectShare{project: {done: make(chan struct{})}}
-	home, err := filepath.EvalSymlinks(t.TempDir())
+	home, err := filepath.EvalSymlinks(settledTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

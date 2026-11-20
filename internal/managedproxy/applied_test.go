@@ -38,7 +38,7 @@ func TestEndpointAloneCannotAuthorizeNetworking(t *testing.T) {
 func TestAppliedCheckMatchesAppliedForEveryStoreState(t *testing.T) {
 	profile := t.TempDir()
 	p, _ := Load(profile)
-	if err := p.Import("qa", "", []byte(`proxies: [{name: qa, type: socks5, server: 127.0.0.1, port: 1080}]`), "qa", 0, ""); err != nil {
+	if err := p.Import("qa", "", []byte(`proxies: [{name: qa, type: socks5, server: 203.0.113.10, port: 1080}]`), "qa", 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	p.Revision, p.Selected = "applied", p.Sources[0].Nodes[0].ID
@@ -79,7 +79,7 @@ func TestStoreReaderLoadMatchesLoad(t *testing.T) {
 		t.Fatalf("missing store: %+v %v", p, err)
 	}
 	p, _ := Load(profile)
-	if err := p.Import("qa", "", []byte(`proxies: [{name: qa, type: socks5, server: 127.0.0.1, port: 1080}]`), "qa", 0, ""); err != nil {
+	if err := p.Import("qa", "", []byte(`proxies: [{name: qa, type: socks5, server: 203.0.113.10, port: 1080}]`), "qa", 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Save(profile); err != nil {

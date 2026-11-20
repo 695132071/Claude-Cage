@@ -18,11 +18,11 @@ func TestProxyDelayBatchBoundsConcurrencyAndKeepsSelection(t *testing.T) {
 	s := testServer(t)
 	p, _ := managedproxy.Load(s.profile)
 	if err := p.Import("batch", "", []byte(`proxies:
-  - {name: slow, type: http, server: 127.0.0.1, port: 1081}
-  - {name: fast, type: http, server: 127.0.0.1, port: 1082}
-  - {name: broken, type: http, server: 127.0.0.1, port: 1083}
-  - {name: mid, type: http, server: 127.0.0.1, port: 1084}
-  - {name: other, type: http, server: 127.0.0.1, port: 1085}
+  - {name: slow, type: http, server: 203.0.113.10, port: 1081}
+  - {name: fast, type: http, server: 203.0.113.10, port: 1082}
+  - {name: broken, type: http, server: 203.0.113.10, port: 1083}
+  - {name: mid, type: http, server: 203.0.113.10, port: 1084}
+  - {name: other, type: http, server: 203.0.113.10, port: 1085}
 `), "batch", 0, ""); err != nil {
 		t.Fatal(err)
 	}

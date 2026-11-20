@@ -19,12 +19,12 @@ func localUpdateServer(t *testing.T) (*Server, string) {
 	}
 	p, _ := managedproxy.Load(s.profile)
 	if err := p.Import("本地", "", []byte(`proxies:
-  - {name: A, type: socks5, server: 127.0.0.1, port: 1081, username: u, password: keep-secret}
-  - {name: B, type: socks5, server: 127.0.0.1, port: 1082}
+  - {name: A, type: socks5, server: 203.0.113.10, port: 1081, username: u, password: keep-secret}
+  - {name: B, type: socks5, server: 203.0.113.10, port: 1082}
 `), "local", 0, ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.Import("订阅", "https://sub.example.com/x", []byte(`proxies: [{name: R, type: socks5, server: 127.0.0.1, port: 1090}]`), "remote", 0, ""); err != nil {
+	if err := p.Import("订阅", "https://sub.example.com/x", []byte(`proxies: [{name: R, type: socks5, server: 203.0.113.10, port: 1090}]`), "remote", 0, ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Save(s.profile); err != nil {
@@ -69,8 +69,8 @@ func nodeConfig(t *testing.T, s *Server, source, name string) map[string]any {
 func TestLocalSourceRefreshFromNewYAMLKeepsSelectionAndBinding(t *testing.T) {
 	s, a := localUpdateServer(t)
 	err := s.changeProxy("refresh", proxyInput{ID: "local", Content: `proxies:
-  - {name: A, type: socks5, server: 127.0.0.2, port: 2081, username: u, password: new-secret}
-  - {name: C, type: http, server: 127.0.0.3, port: 3128}
+  - {name: A, type: socks5, server: 203.0.113.20, port: 2081, username: u, password: new-secret}
+  - {name: C, type: http, server: 203.0.113.30, port: 3128}
 `}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestLocalSourceRefreshFromNewYAMLKeepsSelectionAndBinding(t *testing.T) {
 	if p.Selected != a || cfg.ExitPolicy.IP != "1.1.1.1" {
 		t.Fatalf("update lost the selection or exit binding: selected=%s policy=%+v", p.Selected, cfg.ExitPolicy)
 	}
-	if got := nodeConfig(t, s, "local", "A"); got["server"] != "127.0.0.2" || fmt.Sprint(got["port"]) != "2081" || got["password"] != "new-secret" {
+	if got := nodeConfig(t, s, "local", "A"); got["server"] != "203.0.113.20" || fmt.Sprint(got["port"]) != "2081" || got["password"] != "new-secret" {
 		t.Fatalf("node A was not updated: %v", got)
 	}
 	if nodeConfig(t, s, "local", "B") != nil || nodeConfig(t, s, "local", "C") == nil {
@@ -90,7 +90,7 @@ func TestLocalSourceRefreshFromNewYAMLKeepsSelectionAndBinding(t *testing.T) {
 		t.Fatal("update changed the source identity")
 	}
 	// Removing the applied exit keeps the saved source untouched.
-	if err := s.changeProxy("refresh", proxyInput{ID: "local", Content: `proxies: [{name: C, type: http, server: 127.0.0.3, port: 3128}]`}, nil); err == nil || !strings.Contains(err.Error(), "原配置已保留") {
+	if err := s.changeProxy("refresh", proxyInput{ID: "local", Content: `proxies: [{name: C, type: http, server: 203.0.113.30, port: 3128}]`}, nil); err == nil || !strings.Contains(err.Error(), "原配置已保留") {
 		t.Fatalf("removing the current exit was accepted: %v", err)
 	}
 	if nodeConfig(t, s, "local", "A") == nil {
