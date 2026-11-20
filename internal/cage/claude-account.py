@@ -46,7 +46,9 @@ def shared_root():
 
 
 class SharedResourceConflict(ValueError):
-    pass
+    def __init__(self, message, local=None, shared=None):
+        super().__init__(message)
+        self.local, self.shared = local, shared
 
 
 class SubscriptionStatusError(ValueError):
@@ -1422,6 +1424,72 @@ def heal_shared_file(base, local, shared, record):
     prune_backup_series(backup_prefix)
 
 
+# A conflict that stays unresolved is explained again at most this often, so a
+# terminal does not repeat the same paragraph on every launch.
+NOTICE_INTERVAL = 24 * 60 * 60
+
+
+def shown_path(path):
+    """A path as the user would type it in the guest, without Home spelled out."""
+    try:
+        return "~/" + Path(path).relative_to(Path.home()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def path_state(path):
+    try:
+        info = path.lstat()
+    except OSError:
+        return "missing"
+    target = ""
+    if linked(path):
+        try:
+            target = os.readlink(path)
+        except OSError:
+            target = "?"
+    return f"{info.st_mode}:{info.st_size}:{info.st_mtime_ns}:{target}"
+
+
+class Notices:
+    """Show each launch problem when it first appears or changes, then daily."""
+
+    def __init__(self, record, now=None):
+        stored = record.get("notices")
+        self.previous = stored if isinstance(stored, dict) else {}
+        self.current = {}
+        self.record = record
+        self.now = time.time() if now is None else now
+
+    def show(self, key, state, message):
+        entry = self.previous.get(key)
+        if (isinstance(entry, dict) and entry.get("state") == state and type(entry.get("at")) in (int, float)
+                and 0 <= self.now - entry["at"] < NOTICE_INTERVAL):
+            self.current[key] = entry
+            return
+        print(message, file=sys.stderr)
+        self.current[key] = {"state": state, "at": self.now}
+
+    def finish(self):
+        # Resolved problems are forgotten, so a recurrence is explained again.
+        if self.current:
+            self.record["notices"] = self.current
+        else:
+            self.record.pop("notices", None)
+
+
+def resource_conflict_notice(notices, local, shared):
+    local_text, shared_text = shown_path(local), shown_path(shared)
+    if linked(local):
+        message = (f"共用资料同名冲突：账号中的 {local_text} 是指向共用位置以外的链接。本次未共享这一项，"
+                   f"原链接保留，启动不受影响。若不再需要它，删除 {local_text} 后下次启动即改为共享 {shared_text}。")
+    else:
+        message = (f"共用资料同名冲突：账号中的 {local_text} 与共用的 {shared_text} 内容不同。本次未共享这一项，"
+                   f"两份都原样保留，启动不受影响。请对照两份内容，把要保留的部分并入 {shared_text}，"
+                   f"再删除 {local_text}，下次启动即改为共享。")
+    notices.show("resource:" + str(local), path_state(local) + "|" + path_state(shared), message)
+
+
 def shared_profile_resources(base, desktop=False):
     """Share local customizations; credentials, synced skills and history stay private."""
     config = config_directory(base)
@@ -1434,6 +1502,7 @@ def shared_profile_resources(base, desktop=False):
     with (lock_dir / "resources.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = read_record(base)
+        notices = Notices(record)
         conflict = "账号的技能或指令与共用资料同名冲突，请先核对 ~/.claude 中的对应文件；原文件已保留"
         healable_names = {"CLAUDE.md", "AGENTS.md"}
         def check(local, shared):
@@ -1441,7 +1510,7 @@ def shared_profile_resources(base, desktop=False):
                 return
             if linked(local):
                 if safe_resolve(local) != safe_resolve(shared):
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
             elif local.exists() and shared.exists():
                 if local.name in healable_names and local.parent == config and can_heal_shared_file(base, local, shared, record):
                     return
@@ -1449,14 +1518,14 @@ def shared_profile_resources(base, desktop=False):
                     for child in local.iterdir():
                         check(child, shared / child.name)
                 elif not (local.is_file() and shared.is_file() and local.read_bytes() == shared.read_bytes()):
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
         def merge(local, shared):
             if same_path(local, shared):
                 return
             if linked(local):
                 if safe_resolve(local) == safe_resolve(shared):
                     return
-                raise SharedResourceConflict(conflict)
+                raise SharedResourceConflict(conflict, local, shared)
             if local.exists():
                 if local.is_dir() and shared.is_dir():
                     for child in list(local.iterdir()):
@@ -1472,7 +1541,7 @@ def shared_profile_resources(base, desktop=False):
                     local.unlink()
                 else:
                     # Never choose which conflicting instruction or skill wins.
-                    raise SharedResourceConflict(conflict)
+                    raise SharedResourceConflict(conflict, local, shared)
             if not shared.exists():
                 if local.name in ("CLAUDE.md", "AGENTS.md"):
                     shared.touch(mode=0o600)
@@ -1489,25 +1558,21 @@ def shared_profile_resources(base, desktop=False):
             # If config/skills is already a symlink to ~/.claude/skills, never
             # iterate and unlink entries through the self-alias.
             if safe_resolve(local_skills) != safe_resolve(shared_skills):
-                if desktop:
-                    print(conflict, file=sys.stderr)
-                else:
-                    raise SharedResourceConflict(conflict)
+                resource_conflict_notice(notices, local_skills, shared_skills)
         else:
             local_skills.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
             names = {p.name for folder in (local_skills, shared_skills) for p in folder.iterdir()} - {"synced"}
             resources += [(local_skills / name, shared_skills / name) for name in sorted(names)]
-        # Validate before mutating: terminals fail atomically; Desktop isolates
-        # conflicting entries so plugins, settings, MCP and memory still sync.
+        # Validate before mutating. A conflicting entry is left exactly as it
+        # is on both sides and explained; terminals and Desktop still start and
+        # everything else (plugins, settings, MCP and memory) still syncs.
         ready_resources = []
         for source, destination in resources:
             try:
                 check(source, destination)
                 ready_resources.append((source, destination))
             except SharedResourceConflict as error:
-                if not desktop:
-                    raise
-                print(str(error), file=sys.stderr)
+                resource_conflict_notice(notices, error.local or source, error.shared or destination)
         for source, destination in ready_resources:
             if source.name in healable_names and source.parent == config:
                 heal_shared_file(base, source, destination, record)
@@ -1520,7 +1585,12 @@ def shared_profile_resources(base, desktop=False):
                     shutil.copytree(source, backup, symlinks=True)
                 else:
                     shutil.copy2(source, backup)
-            merge(source, destination)
+            try:
+                merge(source, destination)
+            except SharedResourceConflict as error:
+                # Changed after validation (a concurrent save): each rename is
+                # atomic, so what is not yet linked stays where it was.
+                resource_conflict_notice(notices, error.local or source, error.shared or destination)
             if backup_prefix is not None:
                 prune_backup_series(backup_prefix)
         for source, destination in ready_resources:
@@ -1531,7 +1601,7 @@ def shared_profile_resources(base, desktop=False):
         if plugins_shared:
             private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record)
         else:
-            print("账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响", file=sys.stderr)
+            notices.show("plugins", "separate", "账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响")
         sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins)
         sync_profile_mcp(base, lock_dir, record, desktop)
         if desktop:
@@ -1546,6 +1616,7 @@ def shared_profile_resources(base, desktop=False):
                        lock_dir / "backups" / "common" / "CLAUDE.md",
                        lock_dir / "backups" / "common" / "AGENTS.md"):
             prune_backup_series(prefix)
+        notices.finish()
         write_record(base, record)
 
 

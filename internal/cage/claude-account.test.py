@@ -567,14 +567,41 @@ printf '%s\\n' "$@"
             (common/"CLAUDE.md").write_text("global")
             (config/"CLAUDE.md").write_text("account")
             (config/"commands").mkdir()
-            (config/"commands/keep.md").write_text("retain the original layout on conflict")
-            with self.assertRaises(ValueError):helper.shared_profile_resources(base)
+            (config/"commands/keep.md").write_text("shared despite the conflict elsewhere")
+            # A terminal behaves like Desktop: the conflicting entry is skipped
+            # on both sides, everything else is shared, and the launch goes on.
+            stderr=io.StringIO()
+            with contextlib.redirect_stderr(stderr):helper.shared_profile_resources(base)
             self.assertEqual((common/"CLAUDE.md").read_text(),"global")
             self.assertEqual((config/"CLAUDE.md").read_text(),"account")
-            self.assertFalse((config/"commands").is_symlink())
-            self.assertEqual((config/"commands/keep.md").read_text(),"retain the original layout on conflict")
-            failure=self.run_helper("run",FIRST,check=False)
-            self.assertIn("同名冲突",failure.stderr)
+            self.assertFalse((config/"CLAUDE.md").is_symlink())
+            self.assertTrue((config/"commands").is_symlink())
+            self.assertEqual((common/"commands/keep.md").read_text(),"shared despite the conflict elsewhere")
+            # The notice names both files and how to resolve the conflict.
+            notice=stderr.getvalue()
+            self.assertIn("同名冲突",notice)
+            self.assertIn("~/.claude/CLAUDE.md",notice)
+            self.assertIn("~/"+(config/"CLAUDE.md").relative_to(self.home).as_posix(),notice)
+            self.assertIn("并入",notice)
+        launch=self.run_helper("run",FIRST,check=False)
+        self.assertEqual(launch.returncode,0,launch.stderr)
+        # Explained once; an unchanged conflict is not repeated on every launch.
+        self.assertNotIn("同名冲突",launch.stderr)
+        self.assertNotIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        # It is explained again once a day, or as soon as either file changes.
+        record=json.loads((base/"shared-settings.json").read_text())
+        for entry in record["notices"].values():entry["at"]-=helper.NOTICE_INTERVAL
+        (base/"shared-settings.json").write_text(json.dumps(record))
+        self.assertIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        self.assertNotIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        (config/"CLAUDE.md").write_text("account, edited again")
+        self.assertIn("同名冲突",self.run_helper("run",FIRST).stderr)
+        # Resolved: the file is shared and the notice is forgotten.
+        (config/"CLAUDE.md").unlink()
+        resolved=self.run_helper("run",FIRST)
+        self.assertNotIn("同名冲突",resolved.stderr)
+        self.assertTrue((config/"CLAUDE.md").is_symlink())
+        self.assertNotIn("notices",json.loads((base/"shared-settings.json").read_text()))
 
     def test_existing_project_memory_is_backed_up_and_remains_shared(self):
         with patch.dict(os.environ,self.env,clear=True),patch.object(helper.Path,"cwd",return_value=self.home):
@@ -1314,8 +1341,8 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         # Despite the CLAUDE.md conflict, Desktop still synced settings and MCP!
         self.assertEqual(self.read(config / "settings.json").get("theme"), "dark")
         self.assertIn("notes", self.read(config / ".claude.json")["mcpServers"])
-        # Preflight ordering: in terminal mode, if AGENTS.md conflicts, a healable
-        # CLAUDE.md must NOT mutate ~/.claude/CLAUDE.md before preflight fails.
+        # A terminal isolates a conflicting AGENTS.md too: the healable CLAUDE.md
+        # still folds back, and both versions of AGENTS.md stay untouched.
         (self.common / "CLAUDE.md").unlink()
         (self.common / "CLAUDE.md").write_text("v1", encoding="utf-8")
         (self.common / "AGENTS.md").write_text("shared-agents", encoding="utf-8")
@@ -1327,9 +1354,14 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         (cfg3 / "AGENTS.md").unlink()
         (cfg3 / "AGENTS.md").write_text("conflicting-agents", encoding="utf-8")
         (self.common / "AGENTS.md").write_text("other-agents", encoding="utf-8")
-        with self.assertRaises(helper.SharedResourceConflict):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
             helper.shared_profile_resources(base3, desktop=False)
-        self.assertEqual((self.common / "CLAUDE.md").read_text(encoding="utf-8"), "v1")
+        self.assertIn("AGENTS.md", stderr.getvalue())
+        self.assertEqual((self.common / "CLAUDE.md").read_text(encoding="utf-8"), "v2-edited")
+        self.assertTrue((cfg3 / "CLAUDE.md").is_symlink())
+        self.assertEqual((cfg3 / "AGENTS.md").read_text(encoding="utf-8"), "conflicting-agents")
+        self.assertEqual((self.common / "AGENTS.md").read_text(encoding="utf-8"), "other-agents")
 
     def test_volatile_last_updated_merges_memory_rejects_symlinks_and_statusline_hardening(self):
         first, config = self.profile(FIRST)
