@@ -16,7 +16,32 @@ type agentNativeItem struct {
 	Result     json.RawMessage `json:"result,omitempty"`
 	Error      string          `json:"error,omitempty"`
 	created    time.Time
+	claimed    time.Time
 }
+
+const (
+	agentNativeClaimTimeout = 2 * time.Minute
+	// agentNativeRunTimeout bounds a claimed request whose result never
+	// arrives, e.g. when the window reloaded after receiving it.
+	agentNativeRunTimeout = 10 * time.Minute
+)
+
+// expireLocked fails a request nobody claimed in time and one claimed but
+// never completed, so neither stays outstanding forever. A claimed request
+// is never handed out again: its native action may already have run.
+func (item *agentNativeItem) expireLocked(now time.Time) {
+	switch {
+	case item.Status == "pending" && now.Sub(item.created) > agentNativeClaimTimeout:
+		item.Status = "failed"
+		item.Error = "Desktop did not claim this request in time. No native action was executed."
+		item.Request = nil
+	case item.Status == "running" && now.Sub(item.claimed) > agentNativeRunTimeout:
+		item.Status = "failed"
+		item.Error = "Desktop claimed this request but reported no result in time. The native action may or may not have run; inspect state before repeating it."
+		item.Request = nil
+	}
+}
+
 type agentNativeQueue struct {
 	mu      sync.Mutex
 	items   []*agentNativeItem
@@ -69,11 +94,7 @@ func (s *Server) agentNative(w http.ResponseWriter, r *http.Request) {
 		now := time.Now()
 		kept := q.items[:0]
 		for _, item := range q.items {
-			if item.Status == "pending" && now.Sub(item.created) > 2*time.Minute {
-				item.Status = "failed"
-				item.Error = "Desktop did not claim this request in time. No native action was executed."
-				item.Request = nil
-			}
+			item.expireLocked(now)
 			if now.Sub(item.created) < 30*time.Minute {
 				kept = append(kept, item)
 			}
@@ -116,11 +137,7 @@ func (s *Server) agentNative(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, item := range q.items {
 		if item.ID == id {
-			if item.Status == "pending" && time.Since(item.created) > 2*time.Minute {
-				item.Status = "failed"
-				item.Error = "Desktop did not claim this request in time. No native action was executed."
-				item.Request = nil
-			}
+			item.expireLocked(time.Now())
 			if r.Method == "POST" {
 				if item.Status == "completed" || item.Status == "failed" {
 					jsonReply(w, map[string]bool{"ok": true})
@@ -194,17 +211,21 @@ func (s *Server) claimAgentNative(w http.ResponseWriter, r *http.Request) {
 		deadline = timer.C
 	}
 	for {
+		// A window that went away while waiting (a reload, a closed window)
+		// must not take a request it can no longer receive.
+		if r.Context().Err() != nil {
+			q.mu.Unlock()
+			return
+		}
+		now := time.Now()
 		for _, item := range q.items {
+			item.expireLocked(now)
 			if item.Status == "pending" && item.Connection == conn {
-				if time.Since(item.created) > 2*time.Minute {
-					item.Status = "failed"
-					item.Error = "Desktop did not claim this request in time. No native action was executed."
-					item.Request = nil
-					continue
-				}
 				item.Status = "running"
+				item.claimed = now
+				claimed := *item
 				q.mu.Unlock()
-				jsonReply(w, item)
+				jsonReply(w, &claimed)
 				return
 			}
 		}
