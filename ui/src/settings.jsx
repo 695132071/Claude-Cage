@@ -34,6 +34,7 @@ import { canonicalExitPolicy } from "./safety-state.mjs";
 import { EnvironmentVersions } from "./environment-versions";
 import { EnvironmentStorage } from "./environment-storage";
 import { EnvironmentCache } from "./environment-cache";
+import { EnvironmentDeviceReset } from "./environment-device-reset";
 import { ResourceSettings } from "./resources";
 import { DiagnosticSettings } from "./diagnostics.jsx";
 import { AccountSettings } from "./account";
@@ -727,6 +728,13 @@ export function SettingsPanel({
                 </p>
                 {!status.storage_recovery?.required && <EnvironmentVersions status={status} onConfirm={onConfirm} />}
                 {!status.storage_recovery?.required && <EnvironmentCache status={status} onConfirm={onConfirm} />}
+                {!status.storage_recovery?.required && (
+                  <EnvironmentDeviceReset
+                    status={status}
+                    onConfirm={onConfirm}
+                    onOpenProxy={() => setSection("network")}
+                  />
+                )}
                 {!status.storage_recovery?.required && <ResourceSettings status={status} onConfirm={onConfirm} onDirtyChange={setResourceDirty} />}
  <DiagnosticSettings />
                 {status.can_restore && (
