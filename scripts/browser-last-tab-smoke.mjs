@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { setTimeout as delay } from 'node:timers/promises';
 import { createPrivacyController } from './browser-privacy-fixture.mjs';
 
-const fixture = await createPrivacyController();
+// Headless Chromium never exits with its last window. With a display (as in
+// the guest), this also covers the browser staying up after the last tab.
+const fixture = await createPrivacyController({ headless: !process.env.DISPLAY });
 const { api, cdp, waitFor, origin } = fixture;
 const events = [];
 const stream = new AbortController();
@@ -23,6 +26,9 @@ try {
     }
   })().catch(error => { if (!stream.signal.aborted) throw error; });
   const assertEmpty = async () => {
+    // Chromium shuts down shortly after its last target is gone.
+    await delay(1250);
+    assert.equal((await api('/health')).ready, true);
     const state = await api('/tabs');
     assert.deepEqual(state.tabs, []);
     assert.equal(state.active, '');
@@ -36,6 +42,8 @@ try {
   assert.equal((await api('/tabs')).active, reopened.id);
 
   // Native Chromium closes must publish the same empty state as the HTTP action.
+  // Chromium ignores a close during a new window's first navigation.
+  await waitFor(async () => (await api('/tabs')).tabs[0]?.url.endsWith('/reopened'), 'reopened page');
   await cdp(reopened.id, 'Target.closeTarget', { targetId: reopened.id });
   await waitFor(async () => (await api('/tabs')).tabs.length === 0, 'external close');
   await assertEmpty();
