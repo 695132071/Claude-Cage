@@ -57,6 +57,10 @@ try {
 
     $downloads = Join-Path $root 'downloads'
     $script:downloadContent = 'truncated payload'
+    function Get-BuildCommand {
+        param([string[]]$Names, [switch]$Optional)
+        return $null
+    }
     function Invoke-WebRequest {
         param($Uri, $OutFile, $TimeoutSec, $MaximumRedirection)
         [IO.File]::WriteAllText($OutFile, $script:downloadContent)

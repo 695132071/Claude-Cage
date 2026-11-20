@@ -15,6 +15,20 @@ import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
 import { cleanupApps } from "./cleanup-apps.mjs";
 
+async function stopChild(child) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve) => {
+    const force = setTimeout(() => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    }, 2000);
+    child.once("exit", () => {
+      clearTimeout(force);
+      resolve();
+    });
+    child.kill("SIGTERM");
+  });
+}
+
 const cageID = "io.github.lee-xeo.claude-cage";
 test("cleanup preserves a Cage executable still in use", { skip: process.platform !== "darwin" }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cage-cleanup-running-"));
@@ -23,17 +37,17 @@ test("cleanup preserves a Cage executable still in use", { skip: process.platfor
     const latest = await app(path.join(directory, "new.app"));
     const running = await app(path.join(directory, "running.app"));
     const executable = path.join(running, "Contents/MacOS/Cage");
-    child = spawn(executable, ["30"], { stdio: "ignore" });
+    child = spawn(executable, ["300"], { stdio: "ignore" });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
     const skipped = [];
     assert.deepEqual(await cleanupApps({ keep: [latest], roots: [directory], onInUse: (bundle) => skipped.push(bundle) }), []);
     assert.deepEqual(skipped, [running]);
     await access(executable);
-    await new Promise((resolve) => { child.once("exit", resolve); child.kill("SIGTERM"); });
+    await stopChild(child);
     child = null;
     assert.deepEqual(await cleanupApps({ keep: [latest], roots: [directory] }), [running]);
   } finally {
-    if (child && child.exitCode === null) await new Promise((resolve) => { child.once("exit", resolve); child.kill("SIGTERM"); });
+    await stopChild(child);
     await rm(directory, { recursive: true, force: true });
   }
 });
