@@ -26,7 +26,7 @@ function formatBytes(bytes) {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GiB`;
 }
 
-export function EnvironmentDeviceReset({ status, onConfirm, onJobStart, onOpenProxy }) {
+export function EnvironmentDeviceReset({ status, onConfirm, onOpenProxy }) {
   const tr = useTranslation();
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -159,8 +159,8 @@ export function EnvironmentDeviceReset({ status, onConfirm, onJobStart, onOpenPr
         payload.custom_profile = customProfile;
       }
       const result = await api("/environment/device-reset/execute", payload);
-      if (result?.id && onJobStart) {
-        onJobStart(result.id);
+      if (result && !result.running) {
+        await load();
       }
       setNotice(tr("换机任务已提交，请在下方查看实时进度。"));
     } catch (failure) {
@@ -184,9 +184,11 @@ export function EnvironmentDeviceReset({ status, onConfirm, onJobStart, onOpenPr
     setNotice("");
     try {
       const res = await api("/environment/device-reset/restore", { kind, id });
-      if (kind === "archive" && res?.id && onJobStart) {
-        onJobStart(res.id);
+      if (kind === "archive") {
         setNotice(tr("旧环境回滚任务已启动。"));
+        if (res && !res.running) {
+          await load();
+        }
       } else {
         setNotice(res?.status === "partial" ? tr("部分资料已恢复，原位置已有新数据的项目已保留。") : tr("已恢复这批重置前的数据。"));
         await load();
@@ -443,7 +445,7 @@ export function EnvironmentDeviceReset({ status, onConfirm, onJobStart, onOpenPr
             ))}
           </div>
 
-          <label className="device-reset-irreversible">
+          <label className="check-line device-reset-irreversible">
             <input
               type="checkbox"
               checked={irreversible}
@@ -478,6 +480,11 @@ export function EnvironmentDeviceReset({ status, onConfirm, onJobStart, onOpenPr
           {error && (
             <p role="alert" className="error-message">
               <SafetyMessage message={error} />
+            </p>
+          )}
+          {status.job?.running && (status.job.kind === "device-reset" || status.job.kind === "device-reset-restore") && (
+            <p role="status" className="field-help">
+              {status.job.message}
             </p>
           )}
           {notice && (

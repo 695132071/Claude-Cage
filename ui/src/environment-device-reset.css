@@ -1,4 +1,5 @@
 .environment-device-reset { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 18px; }
+.environment-device-reset .cache-item { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; }
 .device-reset-modes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 14px 0; }
 .device-reset-mode { display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; cursor: pointer; text-align: left; }
 .device-reset-mode.selected { border-color: var(--accent, currentColor); box-shadow: 0 0 0 1px var(--accent, currentColor); }
@@ -9,9 +10,9 @@
 .device-reset-current div { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
 .device-reset-current span { opacity: .72; white-space: nowrap; }
 .device-reset-current strong { overflow-wrap: anywhere; text-align: right; }
-.device-reset-irreversible { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; }
-.device-reset-irreversible input { flex: 0 0 auto; width: auto; margin-top: 3px; }
-.device-reset-irreversible small { display: block; opacity: .75; font-size: 12px; margin-top: 4px; }
+.environment-device-reset label.device-reset-irreversible { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 8px; margin: 12px 0; }
+.environment-device-reset label.device-reset-irreversible > input { flex: 0 0 auto; width: auto; margin-top: 3px; }
+.environment-device-reset label.device-reset-irreversible small { display: block; opacity: .75; font-size: 12px; margin-top: 4px; font-weight: 400; }
 .device-reset-warning { font-size: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; margin: 8px 0; }
 .device-reset-diff { display: grid; gap: 6px; margin: 8px 0; font-size: 13px; }
 .device-reset-diff-row { display: flex; justify-content: space-between; gap: 10px; }

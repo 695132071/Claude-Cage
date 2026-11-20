@@ -644,7 +644,6 @@ export function SettingsPanel({
                   <EnvironmentDeviceReset
                     status={status}
                     onConfirm={onConfirm}
-                    onJobStart={setJobId}
                     onOpenProxy={() => setSection("network")}
                   />
                 )}
