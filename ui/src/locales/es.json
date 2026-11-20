@@ -2417,5 +2417,14 @@
   "颜色须为六位十六进制值，例如 #fdf6e3": "Los colores deben ser valores hexadecimales de seis dígitos, por ejemplo #fdf6e3",
   "高对比": "Alto contraste",
   "黄色": "Amarillo",
-  "黑色": "Negro"
+  "黑色": "Negro",
+  "从已有代理软件导入节点": "Importar nodos desde otro cliente proxy",
+  "导入节点": "Importar nodos",
+  "这里需要节点服务器地址。本机代理端口无法用作节点。": "Introduce la dirección del servidor del nodo. Un puerto proxy local no puede utilizarse como nodo.",
+  "粘贴 v2rayN 导出的节点分享链接（每行一个），或导入 Clash/Mihomo YAML。": "Pega los enlaces de nodos exportados desde v2rayN (uno por línea) o importa un archivo YAML de Clash/Mihomo.",
+  "{0}（需迁移）": "{0} (requiere migración)",
+  "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "La configuración anterior usa un puerto proxy local. Importa los nodos de la cadena y aplícalos en el orden original.",
+  "节点配置": "Configuración de nodos",
+  "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Importa nodos individuales. Para una cadena, selecciona en Cage los nodos intermedios en orden y después el nodo de salida.",
+  "代理链需要迁移": "La cadena de proxies requiere migración"
 }

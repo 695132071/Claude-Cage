@@ -273,7 +273,7 @@ function ProfileCard({ proxySources, desktopNetwork, profile, environment, usage
         {profile.proxy_node_id && !proxySources.some(source => source.nodes.some(node => node.id === profile.proxy_node_id)) &&
           <option value={profile.proxy_node_id} disabled>{tr("已绑定节点不可用")}</option>}
         {proxySources.map(source => <optgroup label={source.name} key={source.id}>
-          {source.nodes.map(node => <option value={node.id} key={node.id}>{node.name}</option>)}
+          {source.nodes.map(node => <option value={node.id} key={node.id} disabled={Boolean(node.blocked_reason)}>{node.blocked_reason ? tr("{0}（需迁移）", node.name) : node.name}</option>)}
         </optgroup>)}
       </InlineSelect>
     </label>}
@@ -310,6 +310,7 @@ export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, runni
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
   const [node, setNode] = useState("");
+  const nodeAvailable = !node || proxySources.some(source => source.nodes.some(n => n.id === node && !n.blocked_reason));
   const [requestingUsage, setRequestingUsage] = useState(false);
   const [actionError, setActionError] = useState("");
   const visibleProfiles = useMemo(() => detected ? [detected, ...(accounts || [])] : accounts, [accounts, detected]);
@@ -402,13 +403,13 @@ export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, runni
     </div>
     {adding && <form className="claude-add-form" onSubmit={e=>{
       e.preventDefault();
-      perform(async()=>{await login(undefined,node);setAdding(false);});
+      if (nodeAvailable) perform(async()=>{await login(undefined,node);setAdding(false);});
     }}>
       {desktopNetwork && !!proxySources.length && <label>{tr("账号出口")}<InlineSelect inline aria-label={tr("新账号出口")} value={node} onValueChange={setNode}>
         <option value="">{tr("跟随环境出口")}</option>
-        {proxySources.map(source=><optgroup key={source.id} label={source.name}>{source.nodes.map(n=><option value={n.id} key={n.id}>{n.name}</option>)}</optgroup>)}
+        {proxySources.map(source=><optgroup key={source.id} label={source.name}>{source.nodes.map(n=><option value={n.id} key={n.id} disabled={Boolean(n.blocked_reason)}>{n.blocked_reason ? tr("{0}（需迁移）", n.name) : n.name}</option>)}</optgroup>)}
       </InlineSelect></label>}
-      <div><button className="primary" disabled={busy || !!environment}>{tr("开始授权")}</button>
+      <div><button className="primary" disabled={busy || !!environment || !nodeAvailable}>{tr("开始授权")}</button>
         <button type="button" onClick={()=>setAdding(false)}>{tr("取消")}</button></div>
     </form>}
     {enrollmentID && <div className="claude-add-profile"><span role="status">{tr("正在等待 Claude 授权…")}</span><button onClick={() => perform(cancelLogin)}>{tr("取消授权")}</button></div>}

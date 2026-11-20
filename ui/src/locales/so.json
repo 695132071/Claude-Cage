@@ -2417,5 +2417,14 @@
   "颜色须为六位十六进制值，例如 #fdf6e3": "Midabku waa inuu noqdaa qiime hexadecimal ah oo lix xaraf ah, tusaale #fdf6e3",
   "高对比": "Kala-soocid sare",
   "黄色": "Jaalle",
-  "黑色": "Madow"
+  "黑色": "Madow",
+  "从已有代理软件导入节点": "Ka soo deji noodhadhka barnaamij kale oo wakiil ah",
+  "导入节点": "Soo deji noodhadhka",
+  "这里需要节点服务器地址。本机代理端口无法用作节点。": "Geli cinwaanka seerfarka noodhka. Dekedda wakiilka maxalliga ah looma adeegsan karo noodh ahaan.",
+  "粘贴 v2rayN 导出的节点分享链接（每行一个），或导入 Clash/Mihomo YAML。": "Ku dheji xiriirrada wadaagga noodhadhka ee laga soo saaray v2rayN (midkiiba sadar), ama soo deji faylka YAML ee Clash/Mihomo.",
+  "{0}（需迁移）": "{0} (wuxuu u baahan yahay guurin)",
+  "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "Habayntii hore waxay isticmaashaa deked wakiil maxalli ah. Soo deji noodhadhka silsiladdii hore oo ku dabaq isla siday u kala horreeyeen.",
+  "节点配置": "Habaynta noodhadhka",
+  "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Soo deji noodhadhka mid mid. Si aad silsilad u samayso, Cage ka dooro noodhadhka dhexe siday u kala horreeyaan, dabadeed noodhka bixitaanka.",
+  "代理链需要迁移": "Silsiladda wakiilladu waxay u baahan tahay guurin"
 }

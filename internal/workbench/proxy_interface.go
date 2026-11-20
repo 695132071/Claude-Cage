@@ -3,6 +3,7 @@ package workbench
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -15,6 +16,8 @@ var physicalProxyInterface = managedproxy.PhysicalInterface
 
 type proxyInterfaceObservation struct {
 	name, configuration, jobID string
+	bound                      string
+	bindingErr                 error
 	err                        error
 }
 
@@ -26,11 +29,19 @@ func (s *Server) observeProxyInterface(ctx context.Context) proxyInterfaceObserv
 		return proxyInterfaceObservation{}
 	}
 	cfg, err := loadConfig(s.configPath)
-	if err != nil || cfg.RequireManagedProxy(s.profile) != nil {
+	if err != nil {
 		return proxyInterfaceObservation{}
 	}
-	name, err := physicalProxyInterface(ctx)
-	return proxyInterfaceObservation{name: name, configuration: cfg.Fingerprint(), jobID: job.ID, err: err}
+	observed := proxyInterfaceObservation{configuration: cfg.Fingerprint(), jobID: job.ID}
+	observed.bound, observed.bindingErr = managedproxy.BoundInterface(filepath.Join(managedproxy.Dir(s.profile), "config.yaml"))
+	if errors.Is(observed.bindingErr, managedproxy.ErrLocalProxyNode) {
+		return observed
+	}
+	if cfg.RequireManagedProxy(s.profile) != nil {
+		return proxyInterfaceObservation{}
+	}
+	observed.name, observed.err = physicalProxyInterface(ctx)
+	return observed
 }
 
 // The lifecycle lock covers effects such as revocation and recovery admission.
@@ -41,7 +52,16 @@ func (s *Server) applyProxyInterfaceObservation(observed proxyInterfaceObservati
 		return
 	}
 	cfg, err := loadConfig(s.configPath)
-	if err != nil || cfg.Fingerprint() != observed.configuration || cfg.RequireManagedProxy(s.profile) != nil {
+	if err != nil || cfg.Fingerprint() != observed.configuration {
+		return
+	}
+	if errors.Is(observed.bindingErr, managedproxy.ErrLocalProxyNode) {
+		if err := s.retireLocalProxyCore(); err != nil {
+			diagnostics.Log("error", "proxy", "停止旧代理核心失败："+err.Error())
+		}
+		return
+	}
+	if cfg.RequireManagedProxy(s.profile) != nil {
 		return
 	}
 	if observed.err != nil {
@@ -57,8 +77,7 @@ func (s *Server) applyProxyInterfaceObservation(observed proxyInterfaceObservati
 	lost := s.proxyNetworkLost
 	retry := s.proxyNetworkRetry
 	s.mu.Unlock()
-	bound, err := managedproxy.BoundInterface(filepath.Join(managedproxy.Dir(s.profile), "config.yaml"))
-	if err != nil || (bound == observed.name && !lost) {
+	if observed.bindingErr != nil && !(lost && os.IsNotExist(observed.bindingErr)) || (observed.bound == observed.name && !lost) {
 		return
 	}
 	if lost && time.Now().Before(retry) {
