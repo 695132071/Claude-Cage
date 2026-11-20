@@ -93,6 +93,7 @@ type Server struct {
 	networkIntentError                               string
 	credentials                                      guestCredentials
 	terminals                                        terminalManager
+	notifications                                    notificationHub
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
 	mobileConnectMu                                  sync.Mutex
@@ -378,6 +379,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/client/about", s.appAbout)
 	mux.HandleFunc("GET /api/client/language", s.interfaceLanguage)
 	mux.HandleFunc("POST /api/client/language", s.interfaceLanguage)
+	mux.HandleFunc("GET /api/client/notifications", s.notificationPreferences)
+	mux.HandleFunc("POST /api/client/notifications", s.notificationPreferences)
+	mux.HandleFunc("GET /api/notifications/events", s.notificationEvents)
 	mux.HandleFunc("POST /api/projects/open", s.openProject)
 	mux.HandleFunc("POST /api/projects/save", s.saveProject)
 	mux.HandleFunc("POST /api/projects/remove", s.removeProject)
@@ -523,7 +527,7 @@ func (s *Server) handler() http.Handler {
 		}
 		// Shell preferences and metadata belong to this computer, even while an
 		// SSH workload is selected. They use local session authentication.
-		if r.URL.Path == "/api/client/about" || r.URL.Path == "/api/client/language" {
+		if r.URL.Path == "/api/client/about" || r.URL.Path == "/api/client/language" || r.URL.Path == "/api/client/notifications" {
 			mux.ServeHTTP(w, r)
 			return
 		}

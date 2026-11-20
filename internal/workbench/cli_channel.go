@@ -15,7 +15,7 @@ import (
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zlib"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 )
 
@@ -44,7 +44,7 @@ var cliChannelEncoded = sync.OnceValue(func() string {
 	}
 	bundle := []byte(helper.String())
 	var compressed bytes.Buffer
-	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
+	writer, _ := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
 	_, _ = writer.Write(bundle)
 	_ = writer.Close()
 	return cliTransport85(compressed.Bytes())
@@ -102,18 +102,17 @@ func cliChannelCommand(mode, argument string) string {
 	// Versioned helpers let an open terminal keep its original protocol while a
 	// rebuilt host begins new sessions. No account configuration is overwritten.
 	digest := sha256.Sum256([]byte(cliChannelHelper + cliResumePrompt + claudeAccountResumePrompt))
-	bootstrap := fmt.Sprintf(`import base64,os,pathlib,sys,tempfile
-d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
-d.mkdir(parents=True,exist_ok=True,mode=0o700)
-n="%x"
-p=d/(n+".py")
+	bootstrap := fmt.Sprintf(`import os,sys
+from pathlib import Path
+d=Path.home()/".local/share/cage/cli-channel-code"
+d.mkdir(0o700,1,1)
+p=d/"%x.py"
 if not p.is_file():
- import gzip
- with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
-  f.write(gzip.decompress(base64.b85decode("%s")))
-  t=f.name
- os.replace(t,p)
-os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
+ import base64 as b,tempfile as t,zlib as z
+ with t.NamedTemporaryFile(dir=d,delete=0) as f:f.write(z.decompress(b.b85decode("%s")));n=f.name
+ os.replace(n,p)
+e=sys.executable
+os.execv(e,[e,"-I",str(p),*sys.argv[1:]])
 `, digest, cliChannelEncoded())
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }

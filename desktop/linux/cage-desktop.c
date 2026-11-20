@@ -43,6 +43,7 @@ static gboolean clipboard_watching = FALSE;
 typedef struct { GPtrArray *paths; gboolean pending, releasing; } ClipboardCopy;
 static GHashTable *clipboard_copies;
 static GPtrArray *clipboard_readers;
+static GPtrArray *clipboard_sends;
 static gboolean clipboard_cache_loaded = FALSE, clipboard_cache_collecting = FALSE;
 static void clipboard_cache_watch(void);
 static void clipboard_cache_ignored(JsonObject *object, const GError *error, gpointer data);
@@ -190,6 +191,7 @@ static void command_finished(GObject *source, GAsyncResult *result, gpointer dat
     JsonObject *object = NULL;
     if (command->deadline) g_source_remove(command->deadline);
     app.backend_commands--;
+    if (clipboard_sends) g_ptr_array_remove(clipboard_sends, command);
     if (g_subprocess_communicate_utf8_finish(G_SUBPROCESS(source), result, &output, NULL, &error)) {
         if (!output || strlen(output) > command->output_limit || !json_parser_load_from_data(parser, output, -1, NULL) ||
             !JSON_NODE_HOLDS_OBJECT(json_parser_get_root(parser))) {
@@ -211,7 +213,7 @@ static void command_finished(GObject *source, GAsyncResult *result, gpointer dat
     g_object_unref(command->cancel);
     g_free(command);
 }
-static void backend_arguments_limited(const char *const *args, guint seconds, gsize output_limit, BackendCallback callback, gpointer data) {
+static Command *backend_arguments_limited(const char *const *args, guint seconds, gsize output_limit, BackendCallback callback, gpointer data) {
     GError *error = NULL;
     GSubprocessLauncher *launcher = g_subprocess_launcher_new(G_SUBPROCESS_FLAGS_STDOUT_PIPE | G_SUBPROCESS_FLAGS_STDERR_SILENCE);
     g_subprocess_launcher_setenv(launcher, "CLAUDE_CAGE_CONFIG", app.profile, TRUE);
@@ -225,7 +227,7 @@ static void backend_arguments_limited(const char *const *args, guint seconds, gs
     if (!process) {
         callback(NULL, error, data);
         g_clear_error(&error);
-        return;
+        return NULL;
     }
     Command *command = g_new0(Command, 1);
     command->process = process;
@@ -236,9 +238,10 @@ static void backend_arguments_limited(const char *const *args, guint seconds, gs
     command->deadline = g_timeout_add_seconds(seconds, command_timeout, command);
     app.backend_commands++;
     g_subprocess_communicate_utf8_async(process, NULL, command->cancel, command_finished, command);
+    return command;
 }
-static void backend_arguments(const char *const *args, guint seconds, BackendCallback callback, gpointer data) {
-    backend_arguments_limited(args, seconds, 65536, callback, data);
+static Command *backend_arguments(const char *const *args, guint seconds, BackendCallback callback, gpointer data) {
+    return backend_arguments_limited(args, seconds, 65536, callback, data);
 }
 static void backend(const char *action, const char *option, BackendCallback callback, gpointer data) {
     const char *args[] = {app.backend, action, "--json", option, NULL};
@@ -255,6 +258,17 @@ static void action(const char *name) {
     g_free(code);
     g_free(quoted);
 }
+static void publish_focus(void) {
+    if (!app.window) return;
+    gboolean focused = gtk_widget_get_visible(app.window) && gtk_window_is_active(GTK_WINDOW(app.window));
+    script(focused ?
+        "window.cageWindowFocused=true;window.dispatchEvent(new Event('cage-window-focus'));" :
+        "window.cageWindowFocused=false;window.dispatchEvent(new Event('cage-window-focus'));");
+}
+static void focus_changed(GObject *object, GParamSpec *spec, gpointer data) {
+    (void)object; (void)spec; (void)data;
+    publish_focus();
+}
 static void publish_visibility(void) {
     GdkWindow *window = gtk_widget_get_window(app.window);
     gboolean visible = gtk_widget_get_visible(app.window) && window &&
@@ -262,6 +276,7 @@ static void publish_visibility(void) {
     script(visible ?
         "window.cageWindowVisible=true;window.dispatchEvent(new Event('cage-window-visibility'));" :
         "window.cageWindowVisible=false;window.dispatchEvent(new Event('cage-window-visibility'));" );
+    publish_focus();
 }
 static gboolean visibility_changed(GtkWidget *widget, GdkEvent *event, gpointer data) {
     (void)widget; (void)event; (void)data;
@@ -323,7 +338,7 @@ static char *choose_file(GtkFileChooserAction kind, const char *title, const cha
     app.picker_open = FALSE;
     return path;
 }
-typedef struct { WebKitScriptMessageReply *reply; JSCContext *context; gboolean sync; guint64 revision, generation; char *connection; GPtrArray *clipboard_paths; } PendingReply;
+typedef struct { WebKitScriptMessageReply *reply; JSCContext *context; gboolean sync, defer_files; guint64 revision, generation; char *connection; GPtrArray *clipboard_paths; } PendingReply;
 static PendingReply *pending_reply(WebKitScriptMessageReply *reply, JSCContext *context) {
     PendingReply *pending = g_new0(PendingReply, 1);
     pending->reply = webkit_script_message_reply_ref(reply);
@@ -554,14 +569,25 @@ static void reply_selected_uris(char **uris, PendingReply *pending) {
         }
         g_free(hostname); g_ptr_array_add(paths, path);
     }
+    if (!error && pending->sync && !pending->defer_files && pending->generation != clipboard_generation)
+        g_set_error_literal(&error, G_IO_ERROR, G_IO_ERROR_CANCELLED, "剪贴板文件传递已取消。");
     if (!error && pending->sync) {
+        if (pending->defer_files) {
+            char *json = g_strdup_printf("{\"revision\":%lu,\"files_pending\":true,\"count\":%u}", (unsigned long)pending->revision, paths->len);
+            reply_json(pending->reply, pending->context, json);
+            g_free(json); g_ptr_array_unref(paths); pending_free(pending); return;
+        }
         if (!clipboard_readers) clipboard_readers = g_ptr_array_new();
         pending->clipboard_paths = g_ptr_array_ref(paths);
         g_ptr_array_add(clipboard_readers, pending->clipboard_paths);
         const char **args = g_new0(const char *, paths->len + 7);
         args[0] = app.backend; args[1] = "clipboard-files"; args[2] = "--json"; args[3] = "--connection"; args[4] = pending->connection; args[5] = "send";
         for (guint i = 0; i < paths->len; i++) args[i + 6] = g_ptr_array_index(paths, i);
-        backend_arguments(args, 1800, browser_file_finished, pending);
+        Command *command = backend_arguments(args, 1800, browser_file_finished, pending);
+        if (command) {
+            if (!clipboard_sends) clipboard_sends = g_ptr_array_new();
+            g_ptr_array_add(clipboard_sends, command);
+        }
         g_free(args); g_ptr_array_unref(paths); return;
     }
     char *json = error ? NULL : remember_files(paths, &error);
@@ -985,7 +1011,12 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
     } else if (!strcmp(name, "clipboardRevision")) {
         char revision[32]; g_snprintf(revision,sizeof(revision),"%lu",(unsigned long)clipboard_current_revision()); reply_json(reply,context,revision);
     } else if (!strcmp(name, "clipboardSyncCancel")) {
-        clipboard_generation++; reply_json(reply,context,"true");
+        clipboard_generation++;
+        for (guint i = 0; clipboard_sends && i < clipboard_sends->len; i++) {
+            Command *command = g_ptr_array_index(clipboard_sends, i);
+            g_subprocess_force_exit(command->process);
+        }
+        reply_json(reply,context,"true");
     } else if (!strcmp(name, "clipboardSyncRelease")) {
         const char *id = text_member(request, "files");
         if (!g_uuid_string_is_valid(id)) reply_error(reply, "剪贴板文件标识无效。");
@@ -995,6 +1026,8 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
         }
     } else if (!strcmp(name, "clipboardSyncRead")) {
         PendingReply *pending = pending_reply(reply,context); pending->sync = TRUE; pending->generation = clipboard_generation; pending->revision = clipboard_current_revision(); pending->connection = g_strdup(text_member(request,"connection_id"));
+        JsonNode *defer = json_object_get_member(request,"defer_files");
+        pending->defer_files = defer && JSON_NODE_HOLDS_VALUE(defer) && json_node_get_value_type(defer) == G_TYPE_BOOLEAN && json_node_get_boolean(defer);
         gtk_clipboard_request_uris(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),clipboard_file_uris,pending);
     } else if (!strcmp(name, "clipboardSyncWrite")) {
         PendingReply *pending = pending_reply(reply,context); pending->generation = clipboard_generation; pending->revision = json_object_has_member(request,"revision") ? (guint64)json_object_get_int_member(request,"revision") : clipboard_current_revision();
@@ -1128,6 +1161,32 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
             g_free(path);
         }
         g_object_unref(theme_parser);
+    } else if (!strcmp(name, "notificationStatus") || !strcmp(name, "requestNotificationPermission")) {
+        reply_json(reply, context, "{\"supported\":true,\"permission\":\"authorized\",\"canOpenSettings\":false}");
+    } else if (!strcmp(name, "openNotificationSettings")) {
+        reply_json(reply, context, "false");
+    } else if (!strcmp(name, "showNotification")) {
+        const char *title = text_member(request, "title");
+        const char *body = text_member(request, "body");
+        const char *notif_id = text_member(request, "id");
+        const char *terminal_id = text_member(request, "terminal_id");
+        const char *connection_id = text_member(request, "connection_id");
+        gboolean valid_terminal = !*terminal_id || (strlen(terminal_id) == 16 && strspn(terminal_id, "0123456789abcdef") == 16);
+        if (!*title || strlen(title) > 600) reply_error(reply, "通知标题无效。");
+        else if (strlen(body) > 1500) reply_error(reply, "通知内容过长。");
+        else if (!valid_terminal) reply_error(reply, "通知目标终端无效。");
+        else if (strlen(connection_id) > 128) reply_error(reply, "通知连接标识无效。");
+        else {
+            GNotification *notification = g_notification_new(title);
+            if (*body) g_notification_set_body(notification, body);
+            char *target = g_strdup_printf("%s\n%s", terminal_id, connection_id);
+            g_notification_set_default_action_and_target(notification, "app.open-notification", "s", target);
+            g_free(target);
+            const char *tag = (*notif_id && strlen(notif_id) <= 128) ? notif_id : "cage-turn";
+            g_application_send_notification(G_APPLICATION(app.application), tag, notification);
+            g_object_unref(notification);
+            reply_json(reply, context, "{\"delivered\":true,\"permission\":\"authorized\"}");
+        }
     } else if (!strcmp(name, "refreshLanguage")) {
         const char *args[] = {"interface-language", "--json", NULL};
         backend_arguments_limited(args, 4, 64 * 1024, language_refreshed, pending_reply(reply, context));
@@ -1307,6 +1366,28 @@ static void update_menu(void) {
     g_menu_append_submenu(app.menu, ui_text("帮助"), G_MENU_MODEL(help));
     g_object_unref(file); g_object_unref(settings); g_object_unref(help);
 }
+static void open_notification_action(GSimpleAction *action_obj, GVariant *parameter, gpointer data) {
+    (void)action_obj; (void)data;
+    if (app.window) {
+        gtk_widget_show(app.window);
+        gtk_window_deiconify(GTK_WINDOW(app.window));
+        gtk_window_present(GTK_WINDOW(app.window));
+        publish_visibility();
+    }
+    const char *raw = parameter ? g_variant_get_string(parameter, NULL) : "";
+    if (!raw || !*raw) return;
+    const char *sep = strchr(raw, '\n');
+    char *terminal_id = sep ? g_strndup(raw, (gsize)(sep - raw)) : g_strdup(raw);
+    const char *connection_id = sep ? sep + 1 : "";
+    if (*terminal_id) {
+        char *q_term = quote(terminal_id);
+        char *q_conn = quote(connection_id);
+        char *code = g_strdup_printf("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:{terminal_id:%s,connection_id:%s}}));", q_term, q_conn);
+        script(code);
+        g_free(code); g_free(q_conn); g_free(q_term);
+    }
+    g_free(terminal_id);
+}
 static void create_window(void) {
     app.window = gtk_application_window_new(app.application);
     gtk_window_set_title(GTK_WINDOW(app.window), "Cage");
@@ -1317,6 +1398,7 @@ static void create_window(void) {
     g_signal_connect(app.window, "window-state-event", G_CALLBACK(visibility_changed), NULL);
     g_signal_connect(app.window, "map-event", G_CALLBACK(visibility_changed), NULL);
     g_signal_connect(app.window, "unmap-event", G_CALLBACK(visibility_changed), NULL);
+    g_signal_connect(app.window, "notify::is-active", G_CALLBACK(focus_changed), NULL);
     g_object_get(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", &app.initial_dark, NULL);
     GtkWidget *layout = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
     gtk_container_add(GTK_CONTAINER(app.window), layout);
@@ -1329,6 +1411,10 @@ static void create_window(void) {
         g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(simple));
         g_object_unref(simple);
     }
+    GSimpleAction *open_notif = g_simple_action_new("open-notification", G_VARIANT_TYPE_STRING);
+    g_signal_connect(open_notif, "activate", G_CALLBACK(open_notification_action), NULL);
+    g_action_map_add_action(G_ACTION_MAP(app.application), G_ACTION(open_notif));
+    g_object_unref(open_notif);
     const char *quit_accels[] = {"<Primary>q", NULL};
     gtk_application_set_accels_for_action(app.application, "app.quit", quit_accels);
     update_menu();

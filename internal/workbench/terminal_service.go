@@ -180,6 +180,20 @@ func (m *terminalManager) forConversation(connection string) *terminalSession {
 	return nil
 }
 
+func (m *terminalManager) managedConnections() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for _, session := range m.sessions {
+		session.mu.Lock()
+		if session.connectionID != "" && !session.closed {
+			out = append(out, session.connectionID)
+		}
+		session.mu.Unlock()
+	}
+	return out
+}
+
 // Reattaching a repeated login request must not create a second OAuth flow.
 // A profile can serve many normal terminals or a single exclusive login.
 func (m *terminalManager) existingClaudeLogin(id string, login bool) (*terminalSession, error) {
@@ -471,6 +485,7 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 		}
 		s.prepareCLIConnection(session, conversation.ID)
 		s.monitorClaudeAccount(session, conversation.ID)
+		s.notifications.wake()
 	}
 	if err == nil && input.Kind == "claude" && selection.ID != "" {
 		s.noteClaudeSelection(selection.ID, workspace)

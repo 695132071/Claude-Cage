@@ -407,8 +407,11 @@ def hook(connection):
             state.pop("pending_send", None)
         if event in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionEnd"):
             state["approvals"] = []
+        if event == "Stop" and (state.get("busy") or state.get("pending_send")) and not state.get("stopped") and not state.get("account_failure"):
+            state["turn_done"] = state.get("turn_done", 0) + 1
         if event in ("Stop", "StopFailure", "SessionEnd"):
             state["busy"] = False
+            state.pop("pending_send", None)
             state.pop("display", None)
         if event == "StopFailure":
             state["account_failure"] = payload.get("error", "unknown")

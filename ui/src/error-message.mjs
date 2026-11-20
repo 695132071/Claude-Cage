@@ -1,6 +1,7 @@
 export function operationName(path = "", method = "GET") {
   const reading = method === "GET";
   if (path === "/client/about") return reading ? "读取软件版本" : "检测应用更新";
+  if (path === "/client/notifications") return reading ? "读取通知设置" : "保存通知设置";
   if (path.startsWith("/api/mobile/cli")) return reading ? "读取会话消息" : "提交会话操作";
   if (path.startsWith("/api/mobile/browser")) return "连接电脑上的浏览器";
   if (path.startsWith("/api/mobile/desktop")) return "连接电脑上的 Claude Desktop";
@@ -69,6 +70,6 @@ export function connectionErrorMessage(path, method = "GET") {
 
 export function nativeFailureMessage(action, message = "") {
   if (/\p{Script=Han}/u.test(message) && !["文件操作失败", "原生操作超时，请重试", "操作失败"].includes(message)) return message;
-  const names = { chooseFolder: "选择本机文件夹", chooseUploadFiles: "选择上传文件", uploadHostFiles: "上传本机文件", openHostPath: "打开本机文件", exportDiagnostics: "导出诊断包", appUpdate: "检查或安装应用更新", clipboardRead: "读取剪贴板", clipboardWrite: "写入剪贴板", refreshSession: "恢复工作台登录会话" };
+  const names = { chooseFolder: "选择本机文件夹", chooseUploadFiles: "选择上传文件", uploadHostFiles: "上传本机文件", openHostPath: "打开本机文件", exportDiagnostics: "导出诊断包", appUpdate: "检查或安装应用更新", clipboardRead: "读取剪贴板", clipboardWrite: "写入剪贴板", refreshSession: "恢复工作台登录会话", notificationStatus: "读取系统通知状态", requestNotificationPermission: "请求系统通知权限", showNotification: "发送系统通知", openNotificationSettings: "打开系统通知设置" };
   return `${names[action] || "执行本机操作"}失败：${/timeout|超时/i.test(message) ? "等待本机组件响应超时" : "本机组件没有返回可识别的原因"}。请重新连接 Cage；仍失败时在设置中导出诊断包。`;
 }
