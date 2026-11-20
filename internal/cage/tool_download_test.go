@@ -7,6 +7,7 @@ import (
 	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -325,16 +326,16 @@ func TestToolDownloadRecoversFromSustainedLowSpeed(t *testing.T) {
 			target := filepath.Join(dir, "package.part")
 			// Shorten only the low-speed window; keep the real curl and idle monitor.
 			source := strings.Replace(toolDownload, "low_speed_time = 60", "low_speed_time = 1", 1)
-			command := exec.Command("python3", "-c", source, target, "--fail", "--location", "--continue-at", "-", "--write-out", "%{http_code}", server.URL, "-o", target)
+			command := exec.CommandContext(t.Context(), "python3", "-c", source, target, "--fail", "--location", "--continue-at", "-", "--write-out", "%{http_code}", server.URL, "-o", target)
 			command.Env = env
 			var output bytes.Buffer
 			command.Stdout, command.Stderr = &output, &output
 			if err := command.Start(); err != nil {
 				t.Fatal(err)
 			}
-			deadline := time.AfterFunc(7*time.Second, func() { _ = command.Process.Signal(syscall.SIGTERM) })
+			// curl's one-second speed window ends each attempt; the go test
+			// deadline is the only guard against a hang.
 			err := command.Wait()
-			deadline.Stop()
 			if err == nil || command.ProcessState.ExitCode() != 28 {
 				t.Fatalf("low-speed transfer did not time out: %v %s", err, &output)
 			}
@@ -342,8 +343,9 @@ func TestToolDownloadRecoversFromSustainedLowSpeed(t *testing.T) {
 			if err != nil || info.Size() == 0 || info.Size() >= int64(len(data)) {
 				t.Fatalf("partial data not retained: %v %v", info, err)
 			}
-			if mode == "parallel" && bounded.Load() < 4 {
-				t.Fatal("parallel low-speed path not exercised")
+			// Each slow range gets three connections before the single fallback.
+			if mode == "parallel" && bounded.Load() < 12 {
+				t.Fatalf("parallel low-speed ranges were not retried: %d requests", bounded.Load())
 			}
 			recovered.Store(true)
 			command = exec.CommandContext(t.Context(), "bash", "-c", ToolInstallPrelude()+`cage_download_tool "$DOWNLOAD_URL" "$DOWNLOAD_HASH" "$HOME/package"`)
@@ -426,5 +428,53 @@ func TestToolMirrorFallbackPreservesOfficialProgress(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestToolParallelRetriesOneDroppedRange(t *testing.T) {
+	data := toolFixtureBytes()
+	width := (len(data) + 3) / 4
+	var dropped atomic.Bool
+	var fallback atomic.Int32
+	var resumedAt atomic.Int64
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead {
+			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
+			return
+		}
+		var start, end int
+		if _, err := fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end); err != nil {
+			fallback.Add(1)
+			http.ServeContent(w, r, "package", time.Time{}, bytes.NewReader(data))
+			return
+		}
+		if start > 2*width && start < 3*width {
+			resumedAt.Store(int64(start))
+		}
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(data)))
+		w.Header().Set("Content-Length", fmt.Sprint(end-start+1))
+		w.WriteHeader(http.StatusPartialContent)
+		if start == 2*width && dropped.CompareAndSwap(false, true) {
+			// Send part of the third range, then drop the connection.
+			w.Write(data[start : start+5000])
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		}
+		w.Write(data[start : end+1])
+	}))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	defer server.Close()
+	dir, env := parallelToolFixture(t, server)
+	command := exec.CommandContext(t.Context(), "bash", "-c", "set -euo pipefail\n"+ToolInstallPrelude()+`cage_download_tool "$DOWNLOAD_URL" "$DOWNLOAD_HASH" "$HOME/package"`)
+	command.Env = append(env, "DOWNLOAD_URL="+server.URL, fmt.Sprintf("DOWNLOAD_HASH=%x", sha256.Sum256(data)))
+	if out, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("%v %s", err, out)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "package"))
+	if err != nil || !bytes.Equal(got, data) {
+		t.Fatalf("incorrect bytes %v", err)
+	}
+	if fallback.Load() != 0 || resumedAt.Load() != int64(2*width+5000) {
+		t.Fatalf("dropped range was not resumed on its own: fallback=%d resumed at %d", fallback.Load(), resumedAt.Load())
 	}
 }
