@@ -77,6 +77,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     [pending, setPending] = useState(""),
     [notice, setNotice] = useState(""),
     [delays, setDelays] = useState({}),
+    [fastest, setFastest] = useState(""),
     [connections, setConnections] = useState({ connections: [] }),
     [logs, setLogs] = useState([]),
     [port, setPort] = useState("17896"),
@@ -245,6 +246,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     try {
       // A small worker pool bounds probes without changing the selected group.
       let index = 0;
+      const timings = {};
+      if (ids.length > 1) setFastest("");
       await Promise.all(
         Array.from({ length: Math.min(4, ids.length) }, async () => {
           while (index < ids.length && alive.current) {
@@ -252,6 +255,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             try {
               const result = await api("/proxy/delay", { node_id: id });
               delete delayReasons.current[id];
+              if (result.delay > 0) timings[id] = result.delay;
               if (alive.current)
                 setDelays((old) => ({ ...old, [id]: `${result.delay} ms` }));
             } catch (e) {
@@ -264,6 +268,12 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
           }
         }),
       );
+      // Offer the fastest node as a draft only; applying it stays explicit and
+      // runs the usual exit and network checks.
+      if (ids.length > 1 && alive.current) {
+        const best = Object.entries(timings).sort((a, b) => a[1] - b[1])[0];
+        setFastest(best ? best[0] : "");
+      }
     } finally {
       measuring.current = false;
       if (alive.current) setPending("");
@@ -694,6 +704,16 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
               <Activity size={14} />
               {tr("测速")}
             </button>
+            {fastest && fastest !== route.at(-1) && allNodes.some((n) => n.id === fastest) && (
+              <button
+                disabled={busy}
+                title={tr("把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络")}
+                onClick={() => setRouteDraft([fastest])}
+              >
+                <Check size={14} />
+                {tr("选用最快：{0}", routeName(fastest))}
+              </button>
+            )}
           </div>
           {!allNodes.length ? (
             <div className="proxy-empty">

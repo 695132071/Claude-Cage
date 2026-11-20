@@ -103,7 +103,7 @@ func AgentOperations() []AgentOperation {
 	post("settings.probe", "Probe actual exit location for a complete settings draft", "/api/settings/probe", from(Settings{}))
 	get("proxy.connections", "Inspect live proxy connections", "/api/proxy/connections")
 	get("proxy.logs", "Inspect proxy logs", "/api/proxy/logs")
-	post("proxy.delay", "Measure one proxy node", "/api/proxy/delay", object(map[string]string{"node_id": "string"}))
+	post("proxy.delay", "Measure one node (node_id) or up to 300 nodes four at a time (node_ids); returns per-node results and the fastest working node as best without changing the selection", "/api/proxy/delay", object(map[string]string{"node_id": "string", "node_ids": "array"}))
 	add("guest.reselect", "Clear only the same unstarted installation the UI can reselect", "DELETE", "/api/environment/guest-systems", object(map[string]string{"id": "string"}))
 	get("claude-accounts.get", "Read account roster, quotas and scheduling", "/api/claude-accounts")
 	post("claude-accounts.change", "Apply the same join, cancel, update, scheduling, refresh and removal actions as the UI", "/api/claude-accounts", from(claudeAccountInput{}))

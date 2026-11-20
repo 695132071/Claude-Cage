@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
@@ -425,6 +426,35 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 	return nil
 }
 
+// measureProxyDelay asks the running core to time one node. Tests replace it.
+var measureProxyDelay = func(ctx context.Context, profile, nodeID string) (int, error) {
+	var v struct {
+		Delay int `json:"delay"`
+	}
+	err := managedproxy.API(ctx, profile, "GET", "/proxies/"+url.PathEscape(nodeID)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v)
+	if err != nil {
+		return 0, managedproxy.DelayError(err)
+	}
+	return v.Delay, nil
+}
+
+const (
+	// Batch measurement shares the core with live traffic. A small pool keeps
+	// upstream connection bursts bounded; the cap bounds one request's duration.
+	proxyDelayWorkers = 4
+	proxyDelayMaxIDs  = 300
+)
+
+type proxyDelayResult struct {
+	NodeID string `json:"node_id"`
+	Delay  int    `json:"delay,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+// proxyDelay measures one node (node_id, reply {"delay"}) or several
+// (node_ids, reply {"results", "best"}). It never changes the selected node:
+// "best" is the fastest successful node, which the caller may apply with
+// proxy.select, so the usual exit and network checks still run.
 func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 	var in proxyInput
 	if !readJSON(w, r, &in) {
@@ -435,19 +465,76 @@ func (s *Server) proxyDelay(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
-	if _, ok := p.Find(in.NodeID); !ok {
-		requestError(w, errors.New("节点不存在"))
+	if len(in.NodeIDs) == 0 {
+		if _, ok := p.Find(in.NodeID); !ok {
+			requestError(w, errors.New("节点不存在"))
+			return
+		}
+		delay, err := measureProxyDelay(r.Context(), s.profile, in.NodeID)
+		if err != nil {
+			requestError(w, err)
+			return
+		}
+		jsonReply(w, map[string]int{"delay": delay})
 		return
 	}
-	var v struct {
-		Delay int `json:"delay"`
-	}
-	err = managedproxy.API(r.Context(), s.profile, "GET", "/proxies/"+url.PathEscape(in.NodeID)+"/delay?timeout=5000&url="+url.QueryEscape("https://www.gstatic.com/generate_204"), nil, &v)
-	if err != nil {
-		requestError(w, managedproxy.DelayError(err))
+	if in.NodeID != "" {
+		requestError(w, errors.New("node_id 与 node_ids 只能填写一个"))
 		return
 	}
-	jsonReply(w, v)
+	if len(in.NodeIDs) > proxyDelayMaxIDs {
+		requestError(w, fmt.Errorf("一次最多测速 %d 个节点", proxyDelayMaxIDs))
+		return
+	}
+	seen := map[string]bool{}
+	for _, id := range in.NodeIDs {
+		if _, ok := p.Find(id); !ok {
+			requestError(w, errors.New("节点不存在"))
+			return
+		}
+		if seen[id] {
+			requestError(w, errors.New("测速列表包含重复节点"))
+			return
+		}
+		seen[id] = true
+	}
+	results := make([]proxyDelayResult, len(in.NodeIDs))
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	for range min(proxyDelayWorkers, len(in.NodeIDs)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := range jobs {
+				id := in.NodeIDs[i]
+				delay, err := measureProxyDelay(r.Context(), s.profile, id)
+				results[i] = proxyDelayResult{NodeID: id, Delay: delay}
+				if err != nil {
+					results[i] = proxyDelayResult{NodeID: id, Error: err.Error()}
+				}
+			}
+		}()
+	}
+	for i := range in.NodeIDs {
+		if r.Context().Err() != nil {
+			break
+		}
+		jobs <- i
+	}
+	close(jobs)
+	wg.Wait()
+	if err := r.Context().Err(); err != nil {
+		requestError(w, errors.New("测速已取消"))
+		return
+	}
+	best := ""
+	bestDelay := 0
+	for _, result := range results {
+		if result.Error == "" && result.Delay > 0 && (best == "" || result.Delay < bestDelay) {
+			best, bestDelay = result.NodeID, result.Delay
+		}
+	}
+	jsonReply(w, map[string]any{"results": results, "best": best})
 }
 func (s *Server) proxyConnections(w http.ResponseWriter, r *http.Request) {
 	var response struct {

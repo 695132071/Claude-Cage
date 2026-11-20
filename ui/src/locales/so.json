@@ -2431,5 +2431,7 @@
   "请先在本机安装 Node.js（https://nodejs.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Node.js (https://nodejs.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
   "请先在本机安装 Python 3（https://www.python.org/）并确保终端中可运行 {0}，然后点击「重新加载插件」。": "Marka hore ku rakib Python 3 (https://www.python.org/) kombiyuutarkan oo hubi in {0} uu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
   "请先在本机安装 {0} 并确保终端中可运行，然后点击「重新加载插件」。": "Marka hore ku rakib {0} kombiyuutarkan oo hubi inuu ka shaqeeyo terminal-ka, kadibna guji \"Dib u rar plugin-yada\".",
-  "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Hubi inaad koobiyeysay cinwaanka rukunka, ee aanad koobiyeyn bogga gelitaanka ama maamulka bixiyaha. Waxaad soo dejin kartaa Clash/Mihomo YAML, liiska xiriirinada wadaagga ama koodhkiisa Base64; habaynta tixraacda oo kaliya liisaska nodes-ka fog weli lama taageero. Nodes-ka aan la aqoonsan waxay ka muuqdaan sababaha laga booday."
+  "确认复制的是订阅地址，而非服务商登录页或管理页。可导入 Clash/Mihomo YAML、分享链接列表或其 Base64 编码；暂不支持只引用远程节点列表的配置。无法识别的节点会列在跳过原因中。": "Hubi inaad koobiyeysay cinwaanka rukunka, ee aanad koobiyeyn bogga gelitaanka ama maamulka bixiyaha. Waxaad soo dejin kartaa Clash/Mihomo YAML, liiska xiriirinada wadaagga ama koodhkiisa Base64; habaynta tixraacda oo kaliya liisaska nodes-ka fog weli lama taageero. Nodes-ka aan la aqoonsan waxay ka muuqdaan sababaha laga booday.",
+  "选用最快：{0}": "Dooro kan ugu dhaqsaha badan: {0}",
+  "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Wuxuu ka dhigayaa node-ka ugu dhaqsaha badan bixitaan sugaya in la dabaqo; beddelka iyo dib-u-hubinta shabakadda waxay dhacaan kaliya marka aad gujiso «Dabaq proxy»"
 }
