@@ -431,6 +431,29 @@ class ChannelTests(unittest.TestCase):
             channel.discover(request)
         self.assertEqual(calls.call_count, 3)
 
+    def test_discovery_fresh_request_bypasses_guest_listing_cache(self):
+        # A forced refresh from the workbench ("fresh") must rerun the process
+        # listing even when the guest's cached listing is still valid.
+        self.history(self.session, self.project, [{"type":"user", "message":{"content":"hello"}}])
+        request = {"accounts":["default"], "workspaces":{self.project:self.project}}
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        rows = [{"sessionId": self.session, "pid": child.pid, "status": "idle"}]
+        listing = patch.object(channel, "running_sessions", side_effect=lambda config="": [dict(row) for row in rows])
+        calls = listing.start()
+        self.addCleanup(listing.stop)
+        channel.save(self.home / ".claude/sessions" / (str(child.pid) + ".json"), rows[0])
+        channel.discover(request)
+        channel.discover(request)
+        self.assertEqual(calls.call_count, 1)
+        self.assertTrue(channel.discover({**request, "fresh": True})[0]["running"])
+        self.assertEqual(calls.call_count, 2)
+        channel.running_sessions_cached(str(self.home / ".claude"), fresh=True)
+        self.assertEqual(calls.call_count, 3)
+        # Without fresh the refreshed cache is used again.
+        channel.discover(request)
+        self.assertEqual(calls.call_count, 3)
+
     def test_view_token_changes_with_every_view_input(self):
         config = self.home / ".claude"
         path = self.history(self.session, self.project, [{"type":"user", "message":{"content":"hello"}}])
