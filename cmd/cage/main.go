@@ -52,7 +52,10 @@ cage up            Start the shared Cage environment, editor and browser
 cage login         Start cage services, then Claude's login flow inside the VM
 cage access        Inspect legacy viewer credentials (diagnostics only)
 cage shell         Open a shell in the shared environment
-cage run COMMAND   Execute a command in the shared environment
+cage run COMMAND   Execute a command in the shared environment, in the current
+                   directory's place in a shared project. Asks before sharing a
+                   new folder on a terminal; --workdir DIR runs from DIR in the
+                   environment instead
 cage claude        Run Claude Code in the shared environment
 cage stop          Stop the shared Cage environment and its proxy core
                    --keep-proxy keeps the core running for an environment restart
@@ -540,6 +543,16 @@ func run() int {
 			return fail(err)
 		}
 		return 0
+	}
+	if args[0] == "run" {
+		// Before the switch to the environment directory below.
+		here, err := os.Getwd()
+		if err != nil {
+			return fail(fmt.Errorf("无法读取当前目录：%w", err))
+		}
+		if args, err = followRunDirectory(path, args, here, terminalConfirm(os.Stdin, os.Stderr)); err != nil {
+			return fail(err)
+		}
 	}
 	if handled, err := containerOperation(path, args, cfg, keepProxy); handled {
 		if err != nil {

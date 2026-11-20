@@ -27,6 +27,23 @@ keywords: 项目 Claude Code 编辑器 code-server Git GitHub gh 提交 推送 �
 
 共享文件在环境内显示为当前用户所有，Git 可正常读取已打开项目的状态与历史。文件内容仍属于原来的主机目录，Git 元数据与项目一起共享，环境中的 Git 操作会直接更新主机仓库。授权目录内的隐藏文件、工具配置、Git 配置和钩子均按普通项目文件共享。Cage 不按文件名额外隐藏文件或禁止写入；云端共享的整目录只读授权仍然生效。
 
+### 从命令行在项目中运行
+
+通过 SSH 登录运行 Cage 的电脑等纯终端场景，可以在本机项目目录中直接使用 Cage 的命令行（各平台的位置见[让 Agent 配置 Cage](agent.md#agent-从哪里开始)，Linux 上为 `claude-cage`）：
+
+```sh
+cd /Users/你的名字/Projects/my-project/src
+cage run pwd          # 输出该目录在环境中的对应路径
+cage run --tty claude # Claude 从这里开始工作
+```
+
+- 当前目录位于已添加的项目内（包括子目录和多文件夹项目中的任一文件夹）时，命令在环境中的对应位置运行，并按需重新连接该项目。macOS 和 Linux 上环境路径与本机相同；Windows 的 `D:\Projects\demo` 在环境中为 `/d/Projects/demo`。
+- 当前目录尚未共享时，在终端里运行会先询问是否共享。确认后按与“添加本机项目”相同的规则校验并创建项目，再运行命令；主目录、Cage 配置、凭据目录等不允许共享的位置照常被拒绝。
+- 输入不是终端（脚本、管道）时不会询问，直接报错并说明如何共享。取消、共享失败、Cage 未打开或环境未就绪时，命令都不会运行，也不会改在其他目录运行。
+- `--workdir 目录` 明确指定环境中的绝对路径，优先于当前目录，不检查共享，例如 `cage run --workdir /tmp ls`。目录不存在时命令不运行。
+
+这项功能需要 Cage 已打开且环境就绪：项目共享由运行中的 Cage 维持。共享对环境中的所有程序生效，和在界面中添加项目相同。
+
 <figure class="guide-shot">
   <a href="../../www/public/docs/screenshots/first-start.jpg" target="_blank" rel="noopener"><img src="../../www/public/docs/screenshots/first-start.jpg" alt="工作台侧栏、默认项目与终端入口（环境未启动）" width="2560" height="1764" loading="lazy" decoding="async" /></a>
   <figcaption>工作台侧栏、默认项目与终端入口（环境未启动）。截图版本：0.1.6-alpha-preview（开发构建） · macOS 原生应用 · 2026-11-07。<a href="../../www/public/docs/screenshots/first-start.jpg" target="_blank" rel="noopener">查看原图（2560 × 1764） ↗</a></figcaption>
