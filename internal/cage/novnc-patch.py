@@ -149,6 +149,22 @@ replace_once('''        const scancode = XtScancode[code];''', '''        // Tra
             else this._cageModifiers.delete(code);
         }
         const scancode = XtScancode[code];''')
+# WebKit on macOS fills MouseEvent.buttons from the hardware state when it
+# handles the event ([NSEvent pressedMouseButtons]), not from the event: a
+# quick tap or a synthesized click reads 0 on mousedown, and a release handled
+# late can still read the button as held. noVNC would then send no press, or
+# no release. The event's own button is reliable, so apply that transition.
+replace_once('''        let bmask = RFB._convertButtonMask(ev.buttons);
+
+        let down = ev.type == 'mousedown';''', '''        let bmask = RFB._convertButtonMask(ev.buttons);
+        const cageButton = [1, 4, 2, 8, 16][ev.button];
+        if (cageButton && ev.type === 'mousedown') {
+            bmask |= RFB._convertButtonMask(cageButton);
+        } else if (cageButton && ev.type === 'mouseup') {
+            bmask &= ~RFB._convertButtonMask(cageButton);
+        }
+
+        let down = ev.type == 'mousedown';''')
 replace_once('''    _sendMouse(x, y, mask) {''', '''    _sendMouse(x, y, mask) {
         if (this._cageInputChain) {
             this._cageQueueInput(() => this._cageSendMouse(x, y, mask));
