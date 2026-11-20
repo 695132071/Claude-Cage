@@ -51,6 +51,10 @@ class SharedResourceConflict(ValueError):
         self.local, self.shared = local, shared
 
 
+class MemoryConflict(SharedResourceConflict):
+    """Project memory that cannot be shared this time; the account keeps its own."""
+
+
 class SubscriptionStatusError(ValueError):
     pass
 
@@ -2103,7 +2107,7 @@ def shared_profile_resources(base, desktop=False):
         sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins, guard)
         sync_profile_mcp(base, lock_dir, record, desktop, guard)
         if desktop:
-            link_known_project_memory(base)
+            link_known_project_memory(base, record)
         for prefix in (lock_dir / "backups" / base.name / "settings.json",
                        lock_dir / "backups" / base.name / "claude.json",
                        lock_dir / "backups" / base.name / "plugins/installed_plugins.json",
@@ -2144,63 +2148,237 @@ def legacy_project_key(directory):
     return key[:140] + "-" + hashlib.sha256(str(directory).encode()).hexdigest()[:32] if len(key) > 180 else key
 
 
-def link_project_memory(own, memory, backup):
-    """Move a memory folder's notes into the shared one and leave a link behind."""
-    if same_path(own, memory) or own == memory or linked(own):
+MEMORY_INDEX = "MEMORY.md"
+
+
+def memory_entries(folder, allowed_roots):
+    """Files of a memory folder; links are refused unless they stay inside allowed_roots."""
+    files = []
+    for entry in sorted(folder.rglob("*")):
+        if linked(entry):
+            target = safe_resolve(entry)
+            if target is None or not any(target.is_relative_to(root) for root in allowed_roots if root is not None):
+                raise SharedResourceConflict("项目记忆包含指向配置目录之外的异常链接，原记忆已保留，请先核对记忆目录")
+            raise MemoryConflict("项目记忆包含链接，本次未合并")
+        if entry.is_file():
+            files.append(entry)
+        elif not entry.is_dir():
+            raise MemoryConflict("项目记忆包含无法合并的条目")
+    return files
+
+
+def suffixed_name(relative, data):
+    return relative.with_name(f"{relative.stem}-{hashlib.sha256(data).hexdigest()[:8]}{relative.suffix}")
+
+
+def plan_memory_merge(source, memory, allowed_roots):
+    """Plan folding one memory folder into the shared one without losing either side.
+
+    Same-name notes with different content keep both: the incoming one under a
+    name with a content suffix. MEMORY.md, one index entry per line, becomes
+    the shared lines followed by every incoming line not already present (with
+    links to renamed notes pointing at their new names), plus a line for each
+    renamed note the incoming index did not mention. Anything else that differs
+    is not merged (MemoryConflict). Returns (copies, index, merged): copies maps
+    shared relative paths to bytes, index is (original bytes or None, new bytes)
+    or None, and merged tells whether both sides had to be combined.
+    """
+    copies, renamed = {}, {}
+    files = memory_entries(source, allowed_roots)
+    incoming_index = None
+    for file in files:
+        relative = file.relative_to(source)
+        data = file.read_bytes()
+        target = memory / relative
+        if linked(target) or any(linked(parent) for parent in target.parents if parent.is_relative_to(memory) and parent != memory):
+            raise MemoryConflict("共用项目记忆包含链接")
+        if relative.as_posix() == MEMORY_INDEX:
+            incoming_index = data
+            continue
+        if not target.exists():
+            if any(parent.exists() and not parent.is_dir() for parent in target.parents if parent.is_relative_to(memory)):
+                raise MemoryConflict("项目记忆的目录与文件同名")
+            copies[relative] = data
+        elif not target.is_file():
+            raise MemoryConflict("项目记忆的目录与文件同名")
+        elif target.read_bytes() != data:
+            alternative = suffixed_name(relative, data)
+            existing = memory / alternative
+            if existing.exists() and (not existing.is_file() or existing.read_bytes() != data):
+                raise MemoryConflict("项目记忆的备用文件名已被占用")
+            if not existing.exists():
+                copies[alternative] = data
+            renamed[relative.as_posix()] = alternative.as_posix()
+    index_path = memory / MEMORY_INDEX
+    shared_index = index_path.read_bytes() if index_path.is_file() else None
+    if index_path.exists() and not index_path.is_file():
+        raise MemoryConflict("项目记忆索引不是文件")
+    if incoming_index is None and not renamed:
+        return copies, None, False
+    try:
+        shared_lines = shared_index.decode("utf-8").splitlines() if shared_index is not None else []
+        incoming_lines = incoming_index.decode("utf-8").splitlines() if incoming_index is not None else []
+    except UnicodeDecodeError:
+        raise MemoryConflict("项目记忆索引不是文本")
+    if incoming_index is not None and not renamed and (shared_index is None or incoming_index == shared_index):
+        # Nothing to combine: a missing shared index is simply moved over.
+        if shared_index is None:
+            copies[Path(MEMORY_INDEX)] = incoming_index
+        return copies, None, False
+    present = set(shared_lines)
+    added = []
+    mentioned = set()
+    for line in incoming_lines:
+        rewritten = line
+        for old, new in renamed.items():
+            if f"]({old})" in rewritten:
+                rewritten = rewritten.replace(f"]({old})", f"]({new})")
+                mentioned.add(old)
+        if rewritten not in present:
+            added.append(rewritten)
+            present.add(rewritten)
+    for old, new in renamed.items():
+        if old not in mentioned:
+            line = f"- [{new}]({new})"
+            if line not in present:
+                added.append(line)
+                present.add(line)
+    if not added:
+        return copies, None, bool(renamed)
+    # The shared index keeps its exact bytes; incoming entries follow it.
+    head = shared_index or b""
+    if head and not head.endswith(b"\n"):
+        head += b"\n"
+    data = head + ("\n".join(added) + "\n").encode("utf-8")
+    return copies, (shared_index, data), bool(renamed) or shared_index is not None
+
+
+def apply_memory_merge(memory, copies, index, backup_prefix):
+    for relative, data in copies.items():
+        target = memory / relative
+        target.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+        try:
+            with target.open("xb") as output:
+                output.write(data)
+        except FileExistsError:
+            # A running CLI wrote it meanwhile; equal content is fine.
+            if not target.is_file() or target.read_bytes() != data:
+                raise MemoryConflict("项目记忆在合并期间发生变化")
+    if index is None:
         return
+    original, data = index
+    path = memory / MEMORY_INDEX
+    if original is not None:
+        write_backup_bytes(backup_prefix, original)
+    with tempfile.NamedTemporaryFile(dir=memory, delete=False) as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+        temporary = stream.name
+    try:
+        try:
+            current = path.read_bytes()
+        except FileNotFoundError:
+            current = None
+        if current != original:
+            raise MemoryConflict("项目记忆索引在合并期间发生变化")
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
+    prune_backup_series(backup_prefix)
+
+
+def link_project_memory(own, memory, backup, allowed_roots=()):
+    """Move a memory folder's notes into the shared one and leave a link behind.
+
+    Returns True when notes had to be merged (renamed copies or index lines).
+    Raises MemoryConflict when they cannot be merged without loss (the account
+    keeps its own folder) and SharedResourceConflict for unsafe links.
+    """
+    if same_path(own, memory) or own == memory or linked(own):
+        return False
     backup_prefix = None
+    merged = False
     if own.exists():
-        entries = list(own.rglob("*"))
-        if any(linked(entry) for entry in entries):
-            raise SharedResourceConflict("账号的项目记忆包含异常链接，原记忆已保留，请先核对")
-        sources = [source for source in entries if source.is_file()]
-        for source in sources:
-            destination = memory / source.relative_to(own)
-            if linked(destination) or destination.exists() and (not destination.is_file() or destination.read_bytes() != source.read_bytes()):
-                raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
-        for source in sources:
-            destination = memory / source.relative_to(own)
-            if linked(destination) or destination.exists() and destination.read_bytes() != source.read_bytes():
-                raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
-            destination.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-            if not destination.exists():
-                shutil.copy2(source, destination)
+        roots = [safe_resolve(own), safe_resolve(memory), *(safe_resolve(root) for root in allowed_roots)]
+        copies, index, merged = plan_memory_merge(own, memory, roots)
+        apply_memory_merge(memory, copies, index, shared_root() / "backups/common/projects" / memory.parent.name / "memory" / MEMORY_INDEX)
         backup_prefix = backup
         backup = unique_backup_path(backup_prefix)
         own.rename(backup)
     resource_link(own, memory)
     if backup_prefix is not None:
         prune_backup_series(backup_prefix)
+    return merged
 
 
-def shared_project_memory(base, directory):
-    """Locate the shared memory of a project, folding in older Cage locations."""
+def memory_notice(notices, key, own, memory, error=None, merged=False):
+    if notices is None:
+        if error is not None:
+            print(str(error), file=sys.stderr)
+        return
+    local, shared = shown_path(own), shown_path(memory)
+    if error is not None:
+        message = (f"项目记忆冲突：账号中的 {local} 与共用的 {shared} 有同名内容无法自动合并。本次该项目使用账号自己的记忆，"
+                   f"两份都原样保留，启动不受影响。请把需要的内容并入 {shared}，再删除 {local}，下次启动即改为共用。")
+        notices.show("memory:" + key, path_state(own) + "|" + path_state(memory), message,
+                     kind="memory_conflict", item=key, local=local, shared=shared)
+    elif merged:
+        message = (f"项目记忆已自动合并：账号中的 {local} 已并入共用的 {shared}。内容不同的同名笔记两份都保留"
+                   f"（账号的那份加了后缀），索引 MEMORY.md 按行合并；合并前的两份都有备份。")
+        notices.event("memory-merged:" + key, "memory_merged", message, item=key, local=local, shared=shared)
+
+
+def shared_project_memory(base, directory, notices=None):
+    """Locate the shared memory of a project, folding in older Cage locations.
+
+    Returns (key, memory) or (key, None) when the account's own memory for the
+    project could not be merged and stays in use this time.
+    """
     key = project_key(directory)
     projects = Path.home() / ".claude/projects"
     memory = projects / key / "memory"
     memory.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     legacy = legacy_project_key(directory)
     if legacy != key and (projects / legacy / "memory").is_dir():
-        link_project_memory(projects / legacy / "memory", memory, shared_root() / "backups/common/projects" / legacy / "memory")
+        try:
+            link_project_memory(projects / legacy / "memory", memory, shared_root() / "backups/common/projects" / legacy / "memory")
+        except MemoryConflict as error:
+            memory_notice(notices, legacy, projects / legacy / "memory", memory, error)
+    use_own = False
     for name in sorted({key, legacy}):
         own = config_directory(base) / "projects" / name / "memory"
         if name == key or own.is_dir() and not linked(own):
-            link_project_memory(own, memory, shared_root() / "backups" / base.name / "projects" / name / "memory")
-    return key, memory
+            try:
+                merged = link_project_memory(own, memory, shared_root() / "backups" / base.name / "projects" / name / "memory",
+                                             (config_directory(base),))
+                memory_notice(notices, name, own, memory, merged=merged)
+            except MemoryConflict as error:
+                memory_notice(notices, name, own, memory, error)
+                use_own = use_own or name == key
+    return key, None if use_own else memory
 
 
-def link_known_project_memory(base):
+def link_known_project_memory(base, record=None):
     """Give clients without launch flags (Desktop) the shared memory of known projects."""
     shared, own = Path.home() / ".claude/projects", config_directory(base) / "projects"
     keys = {path.parent.name for path in shared.glob("*/memory") if path.is_dir() and not linked(path)}
     keys |= {path.parent.name for path in own.glob("*/memory") if path.is_dir() and not linked(path)}
     for key in sorted(keys):
+        notices = Notices(record, scope="memory-" + key) if record is not None else None
         try:
             memory = shared / key / "memory"
             memory.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-            link_project_memory(own / key / "memory", memory, shared_root() / "backups" / base.name / "projects" / key / "memory")
+            merged = link_project_memory(own / key / "memory", memory, shared_root() / "backups" / base.name / "projects" / key / "memory",
+                                         (config_directory(base),))
+            memory_notice(notices, key, own / key / "memory", memory, merged=merged)
+        except MemoryConflict as error:
+            memory_notice(notices, key, own / key / "memory", shared / key / "memory", error)
         except (SharedResourceConflict, OSError) as error:
             print(str(error), file=sys.stderr)
+        if notices is not None:
+            notices.finish()
 
 
 def shared_launch_arguments(base, args, settings_fd=None):
@@ -2212,8 +2390,14 @@ def shared_launch_arguments(base, args, settings_fd=None):
         return shared_launch_arguments_locked(base, args, settings_fd)
 
 
-def shared_memory_path(memory):
-    """Recover only an owned memory directory; never replace runtime executables."""
+def shared_memory_path(memory, notices=None):
+    """Recover only an owned memory directory; never replace runtime executables.
+
+    A real directory found where the runtime alias belongs holds notes a CLI
+    wrote there; they are merged into the shared memory like an account's own
+    (MemoryConflict when that is not possible without loss). Foreign owners and
+    links leading elsewhere are refused.
+    """
     try:
         return _runtime["path"](memory)
     except _runtime["RuntimePathConflict"] as error:
@@ -2222,41 +2406,18 @@ def shared_memory_path(memory):
         raise SharedResourceConflict("项目记忆的运行路径异常，原数据已保留，请同步环境组件后重试")
     if os.name != "nt" and alias.stat().st_uid != os.getuid():
         raise SharedResourceConflict("项目记忆的运行路径归属异常，原数据已保留，请检查目录权限")
-    # Inspect the entire tree before copying. A conflicting note must never be
-    # overwritten, and links must not redirect recovery outside this directory.
-    entries = sorted(alias.rglob("*"))
-    for source in entries:
-        destination = memory / source.relative_to(alias)
-        if linked(source) or linked(destination):
-            raise SharedResourceConflict("项目记忆包含异常链接，原数据已保留，请先核对记忆目录")
-        if source.is_dir():
-            conflict = destination.exists() and not destination.is_dir()
-        elif source.is_file():
-            conflict = destination.exists() and (not destination.is_file() or source.read_bytes() != destination.read_bytes())
-        else:
-            conflict = True
-        if conflict:
-            raise SharedResourceConflict("项目记忆存在同名内容冲突，两份记忆均已保留，请先核对后重试")
+    # Plan the entire tree before copying: a note is never overwritten, and
+    # links must not redirect recovery outside this directory.
+    copies, index, merged = plan_memory_merge(alias, memory, [safe_resolve(alias), safe_resolve(memory)])
     backup_prefix = shared_root() / "backups/runtime-memory" / alias.name
     backup = unique_backup_path(backup_prefix)
     shutil.copytree(alias, backup, symlinks=True)
-    for source in entries:
-        destination = memory / source.relative_to(alias)
-        if source.is_dir():
-            destination.mkdir(mode=PRIVATE_MODE, exist_ok=True)
-        else:
-            # Exclusive publication also preserves a note written by an active
-            # CLI after preflight. On failure both the source and backup remain.
-            try:
-                with destination.open("xb") as output, source.open("rb") as input:
-                    shutil.copyfileobj(input, output)
-            except FileExistsError:
-                if not destination.is_file() or destination.read_bytes() != source.read_bytes():
-                    raise SharedResourceConflict("项目记忆在恢复期间发生冲突，两份记忆均已保留，请先核对后重试")
+    apply_memory_merge(memory, copies, index, shared_root() / "backups/common/projects" / memory.parent.name / "memory" / MEMORY_INDEX)
     # Retain the original directory too: an older process may still hold it
     # open or write to it. Nothing in recovery recursively deletes user notes.
     alias.rename(alias.with_name(backup.name + ".recovered"))
     prune_backup_series(backup_prefix)
+    memory_notice(notices, memory.parent.name, backup, memory, merged=merged)
     return _runtime["path"](memory)
 
 
@@ -2283,8 +2444,22 @@ def shared_launch_arguments_locked(base, args, settings_fd):
                 directory = common_git.parent.resolve()
     except (OSError, subprocess.SubprocessError):
         pass
-    _, memory = shared_project_memory(base, directory)
-    settings = {"autoMemoryDirectory": shared_memory_path(memory)}
+    # Memory problems are reported like other launch problems: on stderr and,
+    # for a private profile, beside the account in the workbench.
+    record = read_record(base) if base.name != DEFAULT and base.is_dir() else None
+    key = project_key(directory)
+    notices = Notices(record, scope="memory-" + key) if record is not None else None
+    _, memory = shared_project_memory(base, directory, notices)
+    settings = {}
+    if memory is not None:
+        try:
+            settings["autoMemoryDirectory"] = shared_memory_path(memory, notices)
+        except MemoryConflict as error:
+            # The account's own project memory serves this launch.
+            memory_notice(notices, key, memory.parent / "runtime", memory, error)
+    if notices is not None:
+        notices.finish(base.name)
+        write_record(base, record)
     _, common_settings = json_snapshot(Path.home() / ".claude/settings.json")
     shared_keys = SHARED_SETTINGS
     if isinstance(common_settings, dict):

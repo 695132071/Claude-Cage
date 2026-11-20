@@ -305,18 +305,20 @@ printf '%s\\n' "$@"
         self.assertEqual(backups[0].read_text(), "new memory")
         self.run_helper("run", FIRST, cwd=project)
 
-    def test_memory_alias_conflict_preserves_both_versions_and_explains_failure(self):
+    def test_memory_alias_conflict_merges_without_losing_either_note(self):
         project, alias, target = self.replaced_memory_alias()
         (alias / "existing.md").write_text("changed memory")
-        result = self.run_helper("run", FIRST, cwd=project, check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("记忆", result.stderr)
-        self.assertIn("冲突", result.stderr)
-        self.assertNotIn("登录状态", result.stderr)
+        (target / "MEMORY.md").write_text("- [Existing](existing.md) — kept\n")
+        result = self.run_helper("run", FIRST, cwd=project)
+        self.assertIn("自动合并", result.stderr)
         self.assertNotIn(str(self.home), result.stderr)
         self.assertEqual((target / "existing.md").read_text(), "original memory")
-        self.assertEqual((alias / "existing.md").read_text(), "changed memory")
-        self.assertFalse(alias.is_symlink())
+        renamed = [path for path in target.glob("existing-*.md")]
+        self.assertEqual([path.read_text() for path in renamed], ["changed memory"])
+        self.assertEqual((target / "new.md").read_text(), "new memory")
+        self.assertEqual((target / "MEMORY.md").read_text().splitlines(),
+                         ["- [Existing](existing.md) — kept", f"- [{renamed[0].name}]({renamed[0].name})"])
+        self.assertTrue(alias.is_symlink())
 
     def test_memory_alias_backup_failure_preserves_source_and_target(self):
         project, alias, target = self.replaced_memory_alias()
@@ -352,8 +354,9 @@ printf '%s\\n' "$@"
         with patch.dict(os.environ, self.env, clear=True), patch.object(helper.Path, "cwd", return_value=project), \
                 patch.dict(helper._runtime["path"].__globals__, {"root": lambda: alias.parent.parent}), \
                 patch.object(helper.shutil, "copytree", side_effect=backup_then_write):
-            with self.assertRaises(helper.SharedResourceConflict):
-                helper.shared_launch_arguments(helper.profile(FIRST), [])
+            flags = helper.shared_launch_arguments(helper.profile(FIRST), [])
+        # Changed while merging: this launch uses the account's own memory.
+        self.assertNotIn("autoMemoryDirectory", json.loads(Path(flags[1]).read_text()))
         self.assertEqual((target / "new.md").read_text(), "concurrent memory")
         self.assertEqual((alias / "new.md").read_text(), "new memory")
         self.assertFalse(alias.is_symlink())
@@ -1673,6 +1676,84 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.share(FIRST)
         self.assertEqual(self.read(config / "settings.json"), {"theme": "light", "model": "opus"})
         self.assertEqual(self.read(config / ".claude.json")["mcpServers"], {"own": {"command": "mine"}})
+
+    def memory_fixture(self):
+        first, config = self.profile(FIRST)
+        project = self.home / "work/demo"
+        project.mkdir(parents=True)
+        key = helper.project_key(project.resolve())
+        own, shared = config / "projects" / key / "memory", self.common / "projects" / key / "memory"
+        own.mkdir(parents=True)
+        shared.mkdir(parents=True)
+        return first, project, key, own, shared
+
+    def launch_in(self, first, project):
+        stderr = io.StringIO()
+        with patch.object(helper.Path, "cwd", return_value=project), contextlib.redirect_stderr(stderr):
+            flags = helper.shared_launch_arguments(first, [])
+        return json.loads(Path(flags[1]).read_text()), stderr.getvalue()
+
+    def test_differing_project_memory_merges_the_index_and_keeps_both_notes(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "MEMORY.md").write_text("- [A](a.md) — account\n- [Same](same.md) — both\n")
+        (own / "a.md").write_text("only in the account")
+        (own / "same.md").write_text("account version")
+        (shared / "MEMORY.md").write_text("- [Same](same.md) — both\n- [B](b.md) — shared")
+        (shared / "b.md").write_text("only shared")
+        (shared / "same.md").write_text("shared version")
+        settings, stderr = self.launch_in(first, project)
+        self.assertIn("自动合并", stderr)
+        self.assertIn("autoMemoryDirectory", settings)
+        self.assertTrue(own.is_symlink())
+        renamed = list(shared.glob("same-*.md"))
+        self.assertEqual([path.read_text() for path in renamed], ["account version"])
+        self.assertEqual((shared / "same.md").read_text(), "shared version")
+        self.assertEqual((shared / "a.md").read_text(), "only in the account")
+        self.assertEqual((shared / "MEMORY.md").read_text(),
+                         "- [Same](same.md) — both\n- [B](b.md) — shared\n- [A](a.md) — account\n"
+                         f"- [Same]({renamed[0].name}) — both\n")
+        # Both originals are kept in the backups.
+        backups = self.home / ".local/share/cage/claude-shared/backups"
+        self.assertEqual([(path / "same.md").read_text() for path in (backups / FIRST / "projects" / key).glob("memory-*")], ["account version"])
+        self.assertEqual([path.read_text() for path in (backups / "common/projects" / key / "memory").glob("MEMORY.md-*")],
+                         ["- [Same](same.md) — both\n- [B](b.md) — shared"])
+        listed = helper.read_notices(FIRST)
+        self.assertEqual([entry["kind"] for entry in listed], ["memory_merged"])
+
+    def test_unmergeable_project_memory_launches_with_the_accounts_own(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "topic").write_text("a note named like the shared folder")
+        (shared / "topic").mkdir()
+        (shared / "topic/x.md").write_text("shared note")
+        settings, stderr = self.launch_in(first, project)
+        self.assertIn("项目记忆冲突", stderr)
+        self.assertNotIn("autoMemoryDirectory", settings)
+        self.assertFalse(own.is_symlink())
+        self.assertEqual((own / "topic").read_text(), "a note named like the shared folder")
+        self.assertEqual((shared / "topic/x.md").read_text(), "shared note")
+        self.assertEqual([entry["kind"] for entry in helper.read_notices(FIRST)], ["memory_conflict"])
+        # Not repeated on the next launch; Desktop reports it too, and the
+        # notice is cleared once the user resolves it.
+        self.assertNotIn("项目记忆冲突", self.launch_in(first, project)[1])
+        self.share(FIRST)
+        self.assertEqual([entry["kind"] for entry in helper.read_notices(FIRST)], ["memory_conflict"])
+        (own / "topic").unlink()
+        settings, _ = self.launch_in(first, project)
+        self.assertIn("autoMemoryDirectory", settings)
+        self.assertTrue(own.is_symlink())
+        self.assertEqual(helper.read_notices(FIRST), [])
+
+    def test_memory_links_inside_are_skipped_and_links_outside_refuse(self):
+        first, project, key, own, shared = self.memory_fixture()
+        (own / "note.md").write_text("note")
+        (own / "alias.md").symlink_to(own / "note.md")
+        settings, stderr = self.launch_in(first, project)
+        self.assertNotIn("autoMemoryDirectory", settings)
+        self.assertTrue((own / "alias.md").is_symlink())
+        (own / "alias.md").unlink()
+        (own / "alias.md").symlink_to(self.home / "outside.md")
+        with patch.object(helper.Path, "cwd", return_value=project), self.assertRaisesRegex(helper.SharedResourceConflict, "异常链接"):
+            helper.shared_launch_arguments(first, [])
 
     def test_interrupted_settings_intent_claims_only_the_file_it_was_about_to_write(self):
         self.write(self.common / "settings.json", {"theme": "dark", "language": "zh"})
