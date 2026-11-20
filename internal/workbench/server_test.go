@@ -147,7 +147,7 @@ func TestSettingsPreserveSecretsAndRejectHostSharing(t *testing.T) {
 	workspace := t.TempDir()
 	link := filepath.Join(workspace, "private-link")
 	if e = os.Symlink(s.profile, link); e != nil {
-		t.Fatal(e)
+		t.Skip("symlink unavailable, the link to the profile was not checked: " + e.Error())
 	}
 	input.Workspace = link
 	if _, _, e = proposedSettings(input, old, s.profile); e == nil {
