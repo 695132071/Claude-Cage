@@ -79,7 +79,11 @@ function Build-WindowsQemuRuntime {
         Invoke-BuildTool $bash ($shell + @('preflight', $stage)) | Out-Host
         $archive = Get-VerifiedGitArchive $dependencies.qemuSource $DependencyCache
         $keymapArchive = Get-VerifiedDependency $dependencies.qemuKeycodemap $DependencyCache
-        Invoke-BuildTool $bash ($shell + @('configure', $stage, $archive, $keymapArchive, $patchDirectory)) | Out-Host
+        # QEMU's mkvenv bootstraps pip, setuptools and wheel. Supply the pinned
+        # wheels so configure never needs PyPI.
+        $wheels = Join-Path $DependencyCache 'qemu-python-wheels'
+        foreach ($wheel in $dependencies.qemuPythonWheels) { [void](Get-VerifiedDependency $wheel $wheels) }
+        Invoke-BuildTool $bash ($shell + @('configure', $stage, $archive, $keymapArchive, $patchDirectory, $wheels)) | Out-Host
         # Start native Ninja directly. Its child MSYS tools can initialize their
         # own runtime rather than inheriting Bash's MSYS process namespace.
         $env:TEMP = $env:TMP = $env:TMPDIR = Join-Path $stage 'tmp'
