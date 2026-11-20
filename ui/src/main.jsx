@@ -963,7 +963,10 @@ function App() {
     };
   }, []);
   useEffect(() => {
-    if (!status?.ready) return;
+    // Notifications come only from this computer's own environment. A remote
+    // host's terminals never raise banners on the client.
+    const context = getClientContext();
+    if (!status?.ready || context.mode !== "local" || context.client_only) return;
     const stream = new EventSource(runtimeURL("/notifications/events"));
     stream.addEventListener("notification", (event) => {
       let detail;

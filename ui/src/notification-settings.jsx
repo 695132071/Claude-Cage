@@ -18,6 +18,7 @@ function browserPermissionStatus() {
     supported: true,
     permission: value === "granted" ? "authorized" : value === "denied" ? "denied" : "not_determined",
     canOpenSettings: false,
+    sound: true,
   };
 }
 
@@ -130,6 +131,9 @@ export function NotificationSettings({ onUpdated }) {
     setFeedback("");
     try {
       if (nativeAvailable()) {
+        // The system permission prompt appears only from this explicit action
+        // or from turning notifications on, never from a background event.
+        if (systemStatus?.permission === "not_determined") await requestPermission();
         const result = await native("showNotification", {
           id: "cage-test-" + Date.now(),
           title: tr("Cage 通知测试"),
@@ -141,8 +145,10 @@ export function NotificationSettings({ onUpdated }) {
         await refreshSystemStatus();
         if (result?.delivered) {
           setFeedback(tr("已发送测试通知。"));
-        } else if (result?.permission === "denied") {
+        } else if (result?.permission === "denied" || result?.permission === "not_determined") {
           setError(tr("系统通知权限已关闭，请在系统设置中允许 Cage 发送通知。"));
+        } else if (result?.permission === "unavailable") {
+          setError(tr("未检测到系统通知服务，请确认桌面环境已开启通知后重试。"));
         } else {
           setError(tr("当前环境暂不支持系统原生通知。"));
         }
@@ -172,6 +178,9 @@ export function NotificationSettings({ onUpdated }) {
 
   const permission = systemStatus?.permission || "unknown";
   const allOff = prefs.turn_completion === "off" && prefs.approval === "off";
+  // Windows follows its own notification sound setting; show the switch only
+  // where Cage can actually choose a sound.
+  const soundSupported = systemStatus?.sound !== false;
 
   const modeOptions = [
     ["unfocused", tr("仅未聚焦时")],
@@ -189,7 +198,7 @@ export function NotificationSettings({ onUpdated }) {
       {systemStatus && (
         <div className="notification-permission-card" data-state={permission}>
           <div className="notification-permission-copy">
-            {permission === "denied" || permission === "unsupported" ? (
+            {permission === "denied" || permission === "unsupported" || permission === "unavailable" ? (
               <BellOff size={18} aria-hidden="true" />
             ) : permission === "authorized" || permission === "provisional" ? (
               <CheckCircle2 size={18} aria-hidden="true" />
@@ -204,7 +213,9 @@ export function NotificationSettings({ onUpdated }) {
                     ? tr("尚未开启系统通知权限")
                     : permission === "denied"
                       ? tr("系统通知权限已关闭")
-                      : tr("当前运行方式暂不支持系统通知")}
+                      : permission === "unavailable"
+                        ? tr("系统通知服务不可用")
+                        : tr("当前运行方式暂不支持系统通知")}
               </strong>
               <p>
                 {permission === "authorized" || permission === "provisional"
@@ -213,7 +224,9 @@ export function NotificationSettings({ onUpdated }) {
                     ? tr("授权后，切到其他应用时也能及时收到 Claude Code 完成提醒。")
                     : permission === "denied"
                       ? tr("请在系统设置中为 Cage 打开通知权限，返回后状态会自动刷新。")
-                      : tr("请使用 Cage 桌面应用以获得完整的系统通知与点击回跳体验。")}
+                      : permission === "unavailable"
+                        ? tr("未检测到系统通知服务，请确认桌面环境已开启通知后重试。")
+                        : tr("请使用 Cage 桌面应用以获得完整的系统通知与点击回跳体验。")}
               </p>
             </div>
           </div>
@@ -277,7 +290,7 @@ export function NotificationSettings({ onUpdated }) {
         </div>
       </div>
 
-      <label className="toggle-row">
+      {soundSupported && <label className="toggle-row">
         <span>
           <strong>{tr("通知提示音")}</strong>
           <small>{tr("发出系统通知时播放系统默认提示音。关闭后仅显示静默横幅。")}</small>
@@ -289,14 +302,14 @@ export function NotificationSettings({ onUpdated }) {
           disabled={loading || saving || allOff}
           onChange={(e) => persist({ sound: e.target.checked })}
         />
-      </label>
+      </label>}
 
       <div className="notification-test-row">
         <button
           type="button"
           className="secondary-button"
           onClick={sendTestNotification}
-          disabled={loading || testing || permission === "unsupported"}
+          disabled={loading || testing || permission === "unsupported" || permission === "unavailable"}
         >
           {testing ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />}
           {tr("发送测试通知")}

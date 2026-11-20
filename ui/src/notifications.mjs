@@ -1,8 +1,10 @@
 export const notificationModes = Object.freeze(["unfocused", "always", "off"]);
 
+// Off until the user turns notifications on in Settings; enabling them is
+// what asks the system for permission.
 export const defaultNotificationPreferences = Object.freeze({
-  turn_completion: "unfocused",
-  approval: "unfocused",
+  turn_completion: "off",
+  approval: "off",
   sound: true,
 });
 

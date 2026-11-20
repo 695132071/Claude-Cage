@@ -42,7 +42,8 @@ func TestNotificationPreferencesStayOnDesktopProfile(t *testing.T) {
 	if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &pref) != nil {
 		t.Fatalf("GET defaults: %d %s", w.Code, w.Body.String())
 	}
-	if pref.TurnCompletion != "unfocused" || pref.Approval != "unfocused" || !pref.Sound {
+	// A profile that never saved a choice stays silent and never prompts.
+	if pref.TurnCompletion != "off" || pref.Approval != "off" {
 		t.Fatalf("unexpected defaults: %+v", pref)
 	}
 	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
@@ -56,6 +57,13 @@ func TestNotificationPreferencesStayOnDesktopProfile(t *testing.T) {
 	loaded := loadNotificationPreferences(desktop)
 	if loaded.TurnCompletion != "always" || loaded.Approval != "off" || loaded.Sound {
 		t.Fatalf("saved preference mismatch: %+v", loaded)
+	}
+	// An explicit earlier choice is kept as written, not replaced by defaults.
+	if err := os.WriteFile(path, []byte(`{"turn_completion":"unfocused","approval":"unfocused","sound":true}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if loaded = loadNotificationPreferences(desktop); loaded.TurnCompletion != "unfocused" || loaded.Approval != "unfocused" || !loaded.Sound {
+		t.Fatalf("saved choice was overwritten: %+v", loaded)
 	}
 	if _, err := os.Stat(filepath.Join(s.profile, notificationPreferenceFile)); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("wrote into the workload profile: %v", err)
@@ -80,12 +88,23 @@ func TestNotificationDispatchDeduplicatesAndStreamsSSE(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	// Without the local desktop window's proof, no event stream is opened.
+	untrusted, err := ts.Client().Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	untrusted.Body.Close()
+	if untrusted.StatusCode != http.StatusForbidden {
+		t.Fatalf("untrusted view received the notification stream: %d", untrusted.StatusCode)
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.AddCookie(&http.Cookie{Name: s.cookieName() + "-desktop", Value: trustedViewProof(s.token)})
 	resp, err := ts.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -130,5 +149,27 @@ func TestNotificationDispatchDeduplicatesAndStreamsSSE(t *testing.T) {
 	if got.ID != "conn-1:turn:1" || got.Kind != "turn_completed" || got.TerminalID != "a1b2c3d4e5f60708" ||
 		got.TabID != "terminal:a1b2c3d4e5f60708" || got.TerminalTitle != "Claude 1" || got.WorkspaceName != "my-project" {
 		t.Fatalf("unexpected notification payload: %+v", got)
+	}
+}
+
+func TestNotificationWatcherSharesChannelStateRoot(t *testing.T) {
+	source := cliEventsWatchSource()
+	var root string
+	for _, line := range strings.Split(cliChannelHelper, "\n") {
+		if strings.HasPrefix(line, "ROOT = ") {
+			root = line
+		}
+	}
+	if root == "" || !strings.Contains(source, "\n"+root+"\n") {
+		t.Fatalf("watcher does not reuse cli_channel.py's ROOT definition")
+	}
+	if strings.Contains(cliEventsWatchHelper, "cli-channels") {
+		t.Fatal("watcher keeps its own copy of the state directory")
+	}
+}
+
+func TestSameConnectionsIgnoresOrder(t *testing.T) {
+	if !sameConnections([]string{"a", "b"}, []string{"b", "a"}) || sameConnections([]string{"a"}, []string{"a", "b"}) || sameConnections([]string{"a", "c"}, []string{"a", "b"}) {
+		t.Fatal("connection set comparison is wrong")
 	}
 }

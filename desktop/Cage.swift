@@ -765,7 +765,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     }
     private func queryNotificationStatus(_ reply: @escaping ([String: Any]) -> Void) {
         guard notificationsAvailable else {
-            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false])
+            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false, "sound": false])
             return
         }
         UNUserNotificationCenter.current().getNotificationSettings { settings in
@@ -774,13 +774,16 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
                     "supported": true,
                     "permission": self.notificationPermissionName(settings.authorizationStatus),
                     "canOpenSettings": true,
+                    "sound": true,
                 ])
             }
         }
     }
+    // Only the settings page asks for permission: turning a notification
+    // option on, "Allow notifications", or the test button.
     private func requestNotificationAuthorization(_ reply: @escaping ([String: Any]) -> Void) {
         guard notificationsAvailable else {
-            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false])
+            reply(["supported": false, "permission": "unsupported", "canOpenSettings": false, "sound": false])
             return
         }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in
@@ -819,23 +822,12 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
                 }
             }
         }
+        // A turn event never prompts. Without an earlier grant from the
+        // settings page the notification is dropped quietly.
         center.getNotificationSettings { settings in
             let status = settings.authorizationStatus
             if status == .authorized || status == .provisional {
                 post(self.notificationPermissionName(status))
-            } else if status == .notDetermined {
-                center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                    center.getNotificationSettings { updated in
-                        let permission = self.notificationPermissionName(updated.authorizationStatus)
-                        if granted {
-                            post(permission)
-                        } else {
-                            DispatchQueue.main.async {
-                                reply(["delivered": false, "permission": permission], nil)
-                            }
-                        }
-                    }
-                }
             } else {
                 DispatchQueue.main.async {
                     reply(["delivered": false, "permission": self.notificationPermissionName(status)], nil)
