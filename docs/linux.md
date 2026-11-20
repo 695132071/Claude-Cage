@@ -70,7 +70,7 @@ sudo apt remove claude-cage
 
 ## 常见问题
 
-- 工作台无法显示：确认在普通用户的图形桌面会话中启动，且系统 WebKitGTK 安装完整。不要关闭 WebKit 沙箱来绕过桌面配置问题。
+- 工作台无法显示：确认在普通用户的图形桌面会话中启动，且系统 WebKitGTK 安装完整。不要关闭 WebKit 沙箱来绕过桌面配置问题。若主机安装了 NVIDIA GStreamer 插件（`libgstnvcodec.so`），Cage 会自动为内置 WebKit 建立私有插件目录与注册表缓存并排除该插件；默认也会关闭 WebKit DMA-BUF 渲染（除非显式设置 `WEBKIT_DISABLE_DMABUF_RENDERER`），并在启动阶段渲染进程崩溃时自动回退到软件渲染重试一次。若仍失败，请查看 `~/.claude-cage/logs/events.jsonl` 中的 WebKit 退出诊断记录。
 - Ubuntu 24.04 上窗口出现前报 `bwrap: setting up uid map: Permission denied` 或 `Failed to fully launch dbus-proxy`：系统默认限制非特权用户命名空间，WebKitGTK 的 bubblewrap 沙箱因此无法启动。保留沙箱，为 Cage 桌面程序添加应用专属的 AppArmor 配置，例如以管理员身份创建 `/etc/apparmor.d/claude-cage`：
 
   ```text
