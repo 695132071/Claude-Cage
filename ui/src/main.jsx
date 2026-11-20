@@ -52,6 +52,9 @@ import {
   projectName,
   projectGroups,
   tabName,
+  sameState,
+  mergeTabs,
+  mergeBrowserTabs,
 } from "./workspace-state.mjs";
 import { SafetyPanel } from "./safety";
 import { SafetyChecklistContext, SafetyMessage } from "./safety-message";
@@ -350,16 +353,22 @@ function App() {
     }
   };
   const clipboardConnection = getClientContext().connection_id;
+  const clipboardRef = useRef(null);
   useEffect(() => {
     if (!status?.ready || viewingAccountDesktop || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
       setActive: active => { window.cageSharedClipboardActive = active; },
+      isVisible: () => windowVisibleRef.current,
     });
+    clipboardRef.current = clipboard;
     window.cageSyncClipboard = () => clipboard.sync();
-    return () => { clipboard.dispose(); delete window.cageSyncClipboard; };
+    return () => { clipboardRef.current = null; clipboard.dispose(); delete window.cageSyncClipboard; };
   }, [status?.ready, viewingAccountDesktop, clipboardConnection]);
+  useEffect(() => {
+    clipboardRef.current?.setVisible(windowVisible);
+  }, [windowVisible]);
   const desktopFiles = useDesktopFiles(Boolean(status?.ready && !viewingAccountDesktop), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
@@ -756,7 +765,7 @@ function App() {
         const next = await api("/status");
         if (!live) return;
         jobRunning = next.job.running;
-        setStatus(next);
+        setStatus((previous) => (sameState(previous, next) ? previous : next));
         setStartRequest(pending => pending?.id && pending.id === next.job.id ? null : pending);
         setConnectionError("");
         if (
@@ -795,7 +804,7 @@ function App() {
           }
           if (!live) return;
           browserSnapshot.current = b;
-          setBrowser(b);
+          setBrowser((previous) => (sameState(previous, b) ? previous : b));
           const enrollment = t.find(item => item.background_login);
           if (enrollment) {
             accountLogin.current = enrollment.id;
@@ -817,15 +826,7 @@ function App() {
               kind: "terminal",
             })),
           ];
-          setTabs((previous) => {
-            const map = new Map(all.map((item) => [item.id, item]));
-            return [
-              ...previous
-                .filter((item) => map.has(item.id))
-                .map((item) => map.get(item.id)),
-              ...all.filter((item) => !previous.some((p) => p.id === item.id)),
-            ];
-          });
+          setTabs((previous) => mergeTabs(previous, all));
           if (b.tabs.some(t => t.login && t.id === b.active) && !browserIds.current.has(b.active)) setManagementPage("");
           if (!browserDismissed.current && initialized.current && b.active && b.active !== activeRef.current && !browserIds.current.has(b.active)) {
             setDesktopOpen(false);
@@ -890,16 +891,25 @@ function App() {
   useEffect(() => {
     if (windowVisible) refreshStatus.current?.();
   }, [windowVisible]);
+  const statusLoaded = Boolean(status);
   useEffect(() => {
-    if (!settings || !status || fatal || connectionError || launchAcknowledged.current || !nativeAvailable()) return;
+    if (!settings || !statusLoaded || fatal || connectionError || launchAcknowledged.current || !nativeAvailable()) return;
     // Effects run after the workbench render commits. HTML navigation alone
     // cannot confirm a successful upgrade when session/API startup failed.
     let live = true;
-    native("workbenchReady").then((accepted) => {
-      if (live && accepted === true) launchAcknowledged.current = true;
-    }).catch(() => {});
-    return () => { live = false; };
-  }, [settings, status, fatal, connectionError]);
+    let timer;
+    const acknowledge = () => {
+      native("workbenchReady").then((accepted) => {
+        if (!live) return;
+        if (accepted === true) launchAcknowledged.current = true;
+        else timer = setTimeout(acknowledge, 3000);
+      }).catch(() => {
+        if (live) timer = setTimeout(acknowledge, 3000);
+      });
+    };
+    acknowledge();
+    return () => { live = false; clearTimeout(timer); };
+  }, [settings, statusLoaded, fatal, connectionError]);
   useEffect(() => {
     if (!status?.ready) return;
     const stream = new EventSource(runtimeURL("/browser/events"));
@@ -925,16 +935,11 @@ function App() {
         setLayout({ active: survivor });
       }
       browserSnapshot.current = b;
-      setBrowser((previous) => ({ ...previous, ...b }));
-      setTabs((previous) => {
-        const map = new Map(b.tabs.map((t) => [t.id, t]));
-        return [
-          ...previous
-            .filter((t) => t.kind === "terminal" || map.has(t.id))
-            .map((t) => map.get(t.id) || t),
-          ...b.tabs.filter((t) => !previous.some((p) => p.id === t.id)),
-        ];
+      setBrowser((previous) => {
+        const merged = { ...previous, ...b };
+        return sameState(previous, merged) ? previous : merged;
       });
+      setTabs((previous) => mergeBrowserTabs(previous, b.tabs));
       const focusLogin = b.focus && b.tabs.some(tab => tab.id === b.active && tab.login);
       if (focusLogin) {
         if (accountLogin.current) tabsBeforeLogin.current = b.active;

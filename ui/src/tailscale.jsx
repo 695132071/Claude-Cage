@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { Check, ChevronDown, Copy, ExternalLink, KeyRound, LoaderCircle, Monitor, Network, RefreshCw, Search, Server, Smartphone, Terminal, Trash2 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { useTranslation } from "./interface-language.mjs";
+import { useWindowVisibility } from "./window-visibility";
 import "./tailscale.css";
 
 const labels = { Running: "已连接", NeedsLogin: "等待登录", NeedsMachineAuth: "等待管理员批准", Starting: "正在连接", Stopped: "已断开", NotInstalled: "尚未安装" };
@@ -16,6 +17,7 @@ function DeviceIcon({ os }) { return ["android", "iOS"].includes(os) ? <Smartpho
 
 export function TailscalePanel({ status, onOpenLogin, onOpenBrowser, onInstall, onConfirm }) {
   const tr = useTranslation();
+  const windowVisible = useWindowVisibility();
   const [state, setState] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState(false);
   const [loginError, setLoginError] = useState("");
   const [key, setKey] = useState(""), [notice, setNotice] = useState(""), [query, setQuery] = useState("");
@@ -59,10 +61,14 @@ export function TailscalePanel({ status, onOpenLogin, onOpenBrowser, onInstall, 
   };
   useEffect(() => {
     mounted.current = true;
+    return () => { mounted.current = false; revision.current++; inflight.current = false; loginRequested.current = false; };
+  }, []);
+  useEffect(() => {
+    if (!ready || !windowVisible) return;
     void refresh();
     const timer = setInterval(() => void refresh(), 3000);
-    return () => { mounted.current = false; revision.current++; inflight.current = false; loginRequested.current = false; clearInterval(timer); };
-  }, [ready]);
+    return () => { clearInterval(timer); };
+  }, [ready, windowVisible]);
   const act = async (action, body = {}) => {
     if (busy) return;
     setBusy(true); setError(""); setLoginError(""); setNotice(""); revision.current++;

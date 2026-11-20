@@ -22,6 +22,7 @@ import { SafetyMessage } from "./safety-message";
 import { ProxyYAMLInput } from "./proxy-yaml-input";
 import { LocalConfigImport } from "./local-config-import";
 import { getClientContext } from "./client-context.mjs";
+import { useWindowVisibility } from "./window-visibility";
 import "./proxy.css";
 import { translate, useTranslation } from "./interface-language.mjs";
 
@@ -67,6 +68,7 @@ const emptyManual = {
 };
 export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializing = false }) {
   const tr = useTranslation();
+  const windowVisible = useWindowVisibility();
   const [proxy, setProxy] = useState(null),
     [tab, setTab] = useState("nodes"),
     [search, setSearch] = useState(""),
@@ -111,6 +113,12 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   };
   useEffect(() => {
     alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!windowVisible) return;
     const tick = async () => {
       if (loading.current) return;
       loading.current = true;
@@ -125,12 +133,11 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     tick();
     const timer = setInterval(tick, 4000);
     return () => {
-      alive.current = false;
       clearInterval(timer);
     };
-  }, []);
+  }, [windowVisible]);
   useEffect(() => {
-    if (tab !== "connections" && tab !== "diagnostics") return;
+    if (!windowVisible || (tab !== "connections" && tab !== "diagnostics")) return;
     let cancelled = false;
     const tick = async () => {
       try {
@@ -170,7 +177,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
       clearInterval(timer);
       latest.current = null;
     };
-  }, [tab]);
+  }, [tab, windowVisible]);
   const busy = Boolean(pending) || Boolean(status.job?.running);
   const mutate = async (action, input = {}) => {
     if (mutating.current) return false;

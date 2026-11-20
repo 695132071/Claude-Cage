@@ -5,6 +5,8 @@ import {
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { runtimeURL } from "./client-context.mjs";
+import { useWindowVisibility } from "./window-visibility";
+import { sameState } from "./workspace-state.mjs";
 import "./host-plugins.css";
 import { translate, useTranslation } from "./interface-language.mjs";
 
@@ -85,6 +87,7 @@ const size = bytes => !bytes ? "" : bytes < 1024 * 1024 ? `${Math.max(1, Math.ro
 // useHostPlugins keeps the plugin list current while something shows it,
 // and reads the plugin market once when first shown.
 export function useHostPlugins(active) {
+  const windowVisible = useWindowVisibility();
   const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState("");
   const [market, setMarket] = useState({ loading: false, loaded: false });
   const mounted = useRef(true), revision = useRef(0), marketRevision = useRef(0);
@@ -92,7 +95,10 @@ export function useHostPlugins(active) {
     const current = ++revision.current;
     try {
       const value = await api("/host-tools");
-      if (mounted.current && current === revision.current) { setView(value); setError(""); }
+      if (mounted.current && current === revision.current) {
+        setView(previous => (sameState(previous, value) ? previous : value));
+        setError("");
+      }
     } catch (e) { if (mounted.current && current === revision.current) setError(e.message); }
   }, []);
   const loadMarket = useCallback(async (fresh = false) => {
@@ -111,11 +117,11 @@ export function useHostPlugins(active) {
   // in the main sidebar; the market is read once the plugin views are shown.
   const browsing = active === true;
   useEffect(() => {
-    if (!active) return;
+    if (!active || !windowVisible) return;
     void refresh();
     const timer = setInterval(() => { if (!busy) void refresh(); }, browsing ? 5000 : 30000);
     return () => { revision.current++; clearInterval(timer); };
-  }, [active, browsing, busy, refresh]);
+  }, [active, browsing, busy, refresh, windowVisible]);
   useEffect(() => { if (browsing && !market.loaded && !market.loading) void loadMarket(); }, [browsing, market.loaded, market.loading, loadMarket]);
   // change sends one request; key names what is in progress, for the buttons.
   const change = useCallback(async (body, key = "change") => {
