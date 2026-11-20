@@ -29,6 +29,27 @@ async function stopChild(child) {
   });
 }
 
+let helperBinaryPromise;
+async function helperBinary() {
+  if (!helperBinaryPromise) {
+    helperBinaryPromise = (async () => {
+      // Apple Silicon macOS refuses to execute ad-hoc re-signed copies of
+      // /bin/sleep because /bin/sleep is an Apple platform arm64e binary.
+      // Compile a minimal native arm64/x86_64 pause helper once per test run.
+      const dir = await mkdtemp(path.join(os.tmpdir(), "cage-cleanup-bin-"));
+      const src = path.join(dir, "pause.c");
+      const out = path.join(dir, "pause");
+      await writeFile(src, "#include <unistd.h>\nint main(void) { for (;;) pause(); }\n");
+      execFileSync("/usr/bin/cc", ["-O2", src, "-o", out], { stdio: "ignore" });
+      process.once("exit", () => {
+        try { execFileSync("/bin/rm", ["-rf", dir], { stdio: "ignore" }); } catch {}
+      });
+      return out;
+    })();
+  }
+  return helperBinaryPromise;
+}
+
 const cageID = "io.github.lee-xeo.claude-cage";
 test("cleanup preserves a Cage executable still in use", { skip: process.platform !== "darwin" }, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "cage-cleanup-running-"));
@@ -37,8 +58,10 @@ test("cleanup preserves a Cage executable still in use", { skip: process.platfor
     const latest = await app(path.join(directory, "new.app"));
     const running = await app(path.join(directory, "running.app"));
     const executable = path.join(running, "Contents/MacOS/Cage");
-    child = spawn(executable, ["300"], { stdio: "ignore" });
+    child = spawn(executable, [], { stdio: "ignore" });
     await new Promise((resolve, reject) => { child.once("spawn", resolve); child.once("error", reject); });
+    assert.equal(child.exitCode, null);
+    assert.equal(child.signalCode, null);
     const skipped = [];
     assert.deepEqual(await cleanupApps({ keep: [latest], roots: [directory], onInUse: (bundle) => skipped.push(bundle) }), []);
     assert.deepEqual(skipped, [running]);
@@ -57,7 +80,7 @@ async function app(directory, id = cageID) {
     path.join(directory, "Contents/Info.plist"),
     `<?xml version="1.0"?><plist version="1.0"><dict><key>CFBundleIdentifier</key><string>${id}</string><key>CFBundleExecutable</key><string>Cage</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>`,
   );
-  await copyFile('/bin/sleep', path.join(directory, 'Contents/MacOS/Cage'));
+  await copyFile(await helperBinary(), path.join(directory, 'Contents/MacOS/Cage'));
   execFileSync('/usr/bin/codesign', ['--force', '--sign', '-', directory], { stdio: 'ignore' });
   return directory;
 }

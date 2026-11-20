@@ -1,3 +1,4 @@
+import contextlib
 import datetime as dt
 import concurrent.futures
 import importlib.util
@@ -137,7 +138,7 @@ class UsageTests(unittest.TestCase):
         first = self.collect()["days"]
         database = self.root / "counters.sqlite3"
         def grouped():
-            with sqlite3.connect(database) as db:
+            with contextlib.closing(sqlite3.connect(database)) as db, db:
                 cached = db.execute("SELECT value FROM summary WHERE key='daily'").fetchone()
             return json.loads(cached[0])["key"]
         key = grouped()
@@ -149,10 +150,10 @@ class UsageTests(unittest.TestCase):
         self.assertNotEqual(grouped(), key)
         # A writer that does not know about the cache (an older helper or a
         # manual repair) still invalidates it through the table triggers.
-        with sqlite3.connect(database) as db:
+        with contextlib.closing(sqlite3.connect(database)) as db, db:
             db.execute("UPDATE requests SET input=input+5")
         self.assertEqual(self.collect(scan=False)["days"][0]["input_tokens"], second[0]["input_tokens"] + 10)
-        with sqlite3.connect(database) as db:
+        with contextlib.closing(sqlite3.connect(database)) as db, db:
             db.execute("DELETE FROM requests WHERE id=(SELECT id FROM requests LIMIT 1)")
         self.assertEqual(self.collect(scan=False)["days"][0]["requests"], 1)
         if hasattr(time, "tzset"):
