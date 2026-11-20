@@ -30,7 +30,16 @@ check_destination() {
   fi
 }
 check_destination "$app_destination"
-if [[ "${1:-}" == --install ]]; then check_destination "$installed_app"; fi
+if [[ "${1:-}" == --install ]]; then
+  # The App declares LSMinimumSystemVersion 14.0; stop before downloading
+  # dependencies when it could not open on this Mac.
+  host_version="$(sw_vers -productVersion 2>/dev/null || true)"
+  if [[ ! "$host_version" =~ ^([0-9]+)(\.[0-9]+)*$ ]] || (( BASH_REMATCH[1] < 14 )); then
+    printf 'Cage requires macOS 14.0 or later; this Mac runs %s. Run scripts/build-app.sh without --install to only build the App.\n' "${host_version:-an unknown version}" >&2
+    exit 1
+  fi
+  check_destination "$installed_app"
+fi
 version="$(tr -d '\n\r' < VERSION)"
 if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then echo 'Invalid VERSION.' >&2; exit 1; fi
 short_version="${version%%-*}"
