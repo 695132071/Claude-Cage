@@ -16,6 +16,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/miekg/dns"
@@ -178,17 +179,31 @@ func queryExitIPService(ctx context.Context, client *http.Client, service exitPr
 }
 
 func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service exitProbeService) (string, exitProbeStageTiming, error) {
+	// The transport may still be dialing in the background after Do returns
+	// (a canceled or timed-out request leaves its dial running), and the trace
+	// callbacks then run on that goroutine. Every field the callbacks touch is
+	// guarded, and the result is read as a snapshot under the same lock.
 	var (
+		mu                                                   sync.Mutex
 		timing                                               exitProbeStageTiming
 		connectStart, tlsStart, wroteRequest                 time.Time
 		connected, tlsDone, gotFirstByte, connectFailedEarly bool
 	)
 	timing.stage = "proxy_connect"
+	snapshot := func() exitProbeStageTiming {
+		mu.Lock()
+		defer mu.Unlock()
+		return timing
+	}
 	trace := &httptrace.ClientTrace{
 		ConnectStart: func(_, _ string) {
+			mu.Lock()
+			defer mu.Unlock()
 			connectStart = time.Now()
 		},
 		ConnectDone: func(_, _ string, err error) {
+			mu.Lock()
+			defer mu.Unlock()
 			if !connectStart.IsZero() {
 				timing.dialMS = time.Since(connectStart).Milliseconds()
 			}
@@ -200,10 +215,14 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 			timing.stage = "tls"
 		},
 		TLSHandshakeStart: func() {
+			mu.Lock()
+			defer mu.Unlock()
 			tlsStart = time.Now()
 			timing.stage = "tls"
 		},
 		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+			mu.Lock()
+			defer mu.Unlock()
 			if !tlsStart.IsZero() {
 				timing.tlsMS = time.Since(tlsStart).Milliseconds()
 			}
@@ -213,12 +232,16 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 			}
 		},
 		WroteRequest: func(info httptrace.WroteRequestInfo) {
+			mu.Lock()
+			defer mu.Unlock()
 			wroteRequest = time.Now()
 			if info.Err == nil && tlsDone {
 				timing.stage = "response"
 			}
 		},
 		GotFirstResponseByte: func() {
+			mu.Lock()
+			defer mu.Unlock()
 			gotFirstByte = true
 			if !wroteRequest.IsZero() {
 				timing.ttfbMS = time.Since(wroteRequest).Milliseconds()
@@ -237,28 +260,31 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 		}
 		var netErr net.Error
 		timedOut := errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout())
+		mu.Lock()
+		result := timing
 		if !connected || connectFailedEarly {
-			timing.stage = "proxy_connect"
+			result.stage = "proxy_connect"
 			if !timedOut {
-				timing.proxyError = true
+				result.proxyError = true
 			}
 		} else if !tlsDone && !gotFirstByte {
-			timing.stage = "tls"
+			result.stage = "tls"
 		} else {
-			timing.stage = "response"
+			result.stage = "response"
 		}
-		return "", timing, usererror.Display("通过所选代理查询出口 IP", err, "请检查网络与代理，再重新检测。")
+		mu.Unlock()
+		return "", result, usererror.Display("通过所选代理查询出口 IP", err, "请检查网络与代理，再重新检测。")
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", timing, fmt.Errorf("查询出口 IP 失败：检测服务返回 HTTP %d。请检查所选代理，稍后重新检测；外网保持关闭。", resp.StatusCode)
+		return "", snapshot(), fmt.Errorf("查询出口 IP 失败：检测服务返回 HTTP %d。请检查所选代理，稍后重新检测；外网保持关闭。", resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 4097))
 	if err != nil {
-		return "", timing, usererror.Wrap("读取出口检测响应", err, "请稍后重新检测。")
+		return "", snapshot(), usererror.Wrap("读取出口检测响应", err, "请稍后重新检测。")
 	}
 	if len(body) > 4096 {
-		return "", timing, errors.New("查询出口 IP 失败：检测服务没有返回有效的 IP 记录。请更换可用节点或稍后重新检测；外网保持关闭。")
+		return "", snapshot(), errors.New("查询出口 IP 失败：检测服务没有返回有效的 IP 记录。请更换可用节点或稍后重新检测；外网保持关闭。")
 	}
 	text := strings.TrimSpace(string(body))
 	if service.trace {
@@ -266,9 +292,9 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 	}
 	ip, err := netip.ParseAddr(text)
 	if err != nil || !ip.Is4() || !ip.IsGlobalUnicast() || ip.IsPrivate() {
-		return "", timing, errors.New("出口检测结果不是有效公网 IPv4 地址")
+		return "", snapshot(), errors.New("出口检测结果不是有效公网 IPv4 地址")
 	}
-	return ip.String(), timing, nil
+	return ip.String(), snapshot(), nil
 }
 
 // traceIP returns the value of the single "ip=" line, or "" when the line is
