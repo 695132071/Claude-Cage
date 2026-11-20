@@ -1,6 +1,7 @@
 package cage
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha256"
 	"encoding/pem"
@@ -69,12 +70,12 @@ func TestToolParallelDownloadFallbackAndHash(t *testing.T) {
 					if bounded.Add(1) == 4 {
 						close(ready)
 					}
+					// Hold every range until all four are open at once. A downloader
+					// that is not concurrent never gets here and fails on peak below,
+					// without a wall-clock window that a loaded host can miss.
 					select {
 					case <-ready:
 					case <-r.Context().Done():
-						return
-					case <-time.After(3 * time.Second):
-						t.Error("ranges not concurrent")
 						return
 					}
 					if mode == "ignored" {
@@ -139,7 +140,6 @@ func TestToolParallelCancellationAndResume(t *testing.T) {
 	interrupted.Store(true)
 	var calls atomic.Int32
 	var resumed atomic.Bool
-	ready := make(chan struct{})
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodHead {
 			w.Header().Set("Content-Length", fmt.Sprint(len(data)))
@@ -156,9 +156,7 @@ func TestToolParallelCancellationAndResume(t *testing.T) {
 			w.WriteHeader(206)
 			w.Write(data[start : start+4096])
 			w.(http.Flusher).Flush()
-			if calls.Add(1) == 4 {
-				close(ready)
-			}
+			calls.Add(1)
 			<-r.Context().Done()
 			return
 		}
@@ -177,35 +175,53 @@ func TestToolParallelCancellationAndResume(t *testing.T) {
 	}
 	first := run()
 	var output bytes.Buffer
-	first.Stdout, first.Stderr = &output, &output
+	first.Stdout = &output
+	progress, err := first.StderrPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := first.Start(); err != nil {
 		t.Fatal(err)
 	}
+	// Cancel only after the downloader reports the first 4096 bytes of every
+	// range. Its progress lines count bytes already written by curl, so this
+	// does not depend on how quickly a loaded host schedules the workers.
+	received := make(chan struct{})
+	var stderr bytes.Buffer
+	copied := make(chan struct{})
+	go func() {
+		defer close(copied)
+		scanner := bufio.NewScanner(progress)
+		signalled := false
+		for scanner.Scan() {
+			line := scanner.Text()
+			stderr.WriteString(line + "\n")
+			var count int
+			if _, err := fmt.Sscanf(line, "CAGE_TOOL_BYTES package %d", &count); err == nil && count >= 4*4096 && !signalled {
+				signalled = true
+				close(received)
+			}
+		}
+	}()
 	select {
-	case <-ready:
-	case <-time.After(10 * time.Second):
-		first.Process.Kill()
+	case <-received:
+	case <-copied:
 		first.Wait()
-		t.Fatal("no parallel requests")
+		t.Fatalf("downloader exited before every range started: %s%s", &output, &stderr)
 	}
-	time.Sleep(150 * time.Millisecond)
+	if calls.Load() != 4 {
+		t.Fatalf("parallel requests=%d", calls.Load())
+	}
 	if err := first.Process.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
-	go func() { done <- first.Wait() }()
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("canceled transfer succeeded")
-		}
-	case <-time.After(3 * time.Second):
-		first.Process.Kill()
-		t.Fatal("cancellation did not join workers")
+	<-copied
+	if err := first.Wait(); err == nil {
+		t.Fatal("canceled transfer succeeded")
 	}
 	info, err := os.Stat(target)
 	if err != nil || info.Size() != 4096 {
-		t.Fatalf("prefix=%v err=%v output=%s", info, err, &output)
+		t.Fatalf("prefix=%v err=%v output=%s%s", info, err, &output, &stderr)
 	}
 	interrupted.Store(false)
 	if out, err := run().CombinedOutput(); err != nil {
