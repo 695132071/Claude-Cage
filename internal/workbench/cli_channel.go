@@ -96,7 +96,21 @@ type terminalConversation struct {
 	Active              bool          `json:"active"`
 	ConnectionNotice    string        `json:"connection_notice"`
 	HistoryTruncated    bool          `json:"history_truncated"`
+	// Token identifies the guest inputs of this view; Unchanged answers a
+	// request that already held the view for that token.
+	Token     string `json:"token"`
+	Unchanged bool   `json:"unchanged"`
 }
+
+// conversationView is the last full view read for a record. Terminal monitors
+// and open session views poll every few seconds; an unchanged transcript and
+// state reuse it instead of the guest reparsing the whole transcript.
+type conversationView struct {
+	cliID, connection, config string
+	current                   terminalConversation
+}
+
+const conversationViewLimit = 32
 
 func cliChannelCommand(mode, argument string) string {
 	// Versioned helpers let an open terminal keep its original protocol while a
@@ -342,8 +356,34 @@ func (s *Server) readTerminalConversation(ctx context.Context, id string, observ
 	if observation != nil && record.Launcher == "claude" {
 		input["login_stamp"] = observation.stamp
 	}
+	cached, known := s.conversationViews[id]
+	known = known && cached.cliID == record.CLIID && cached.connection == record.Connection && cached.config == record.GuestConfig
+	if known {
+		input["known"] = cached.current.Token
+	}
 	if err := s.runCLIChannel(ctx, "view", input, &current); err != nil {
 		return mobileSession{}, err
+	}
+	if current.Unchanged {
+		if !known || current.Token != cached.current.Token {
+			return mobileSession{}, errors.New("电脑未能读取会话状态，聊天记录已保留。")
+		}
+		hint := current.LoginHint
+		current = cached.current
+		current.LoginHint = hint
+	} else if current.Token != "" {
+		if s.conversationViews == nil {
+			s.conversationViews = map[string]conversationView{}
+		}
+		if _, ok := s.conversationViews[id]; !ok && len(s.conversationViews) >= conversationViewLimit {
+			for other := range s.conversationViews {
+				delete(s.conversationViews, other)
+				break
+			}
+		}
+		cachedView := current
+		cachedView.LoginHint = codeLoginHint{}
+		s.conversationViews[id] = conversationView{cliID: record.CLIID, connection: record.Connection, config: record.GuestConfig, current: cachedView}
 	}
 	root := guestPath(record.Workspace)
 	if current.Workspace == "" && !current.HasHistory && record.TerminalID != "" {

@@ -403,6 +403,44 @@ class ChannelTests(unittest.TestCase):
             channel.discover(request)
         self.assertEqual(calls.call_count, 3)
 
+    def test_view_token_changes_with_every_view_input(self):
+        config = self.home / ".claude"
+        path = self.history(self.session, self.project, [{"type":"user", "message":{"content":"hello"}}])
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(lambda: (child.kill(), child.wait()))
+        connection = str(uuid.uuid4())
+        with channel.state_file(connection) as state:
+            state.update(cli_id=self.session, config=str(config), workspace=self.project, pid=child.pid)
+        token, running = channel.view_token(config, self.session)
+        self.assertTrue(running)
+        self.assertEqual(channel.view_token(config, self.session), (token, True), "token is not stable")
+        tokens = {token}
+        def changed(step):
+            current, _ = channel.view_token(config, self.session)
+            self.assertNotIn(current, tokens, step + " kept the previous token")
+            tokens.add(current)
+        with path.open("a") as stream:
+            stream.write(json.dumps({"type":"assistant", "uuid":str(uuid.uuid4()), "message":{"content":"reply"}}) + "\n")
+        changed("an appended transcript")
+        info = path.stat()
+        time.sleep(0.05)  # change times advance at the kernel clock tick
+        rewritten = path.read_text().replace("reply", "REPLY")
+        path.write_text(rewritten)
+        os.utime(path, ns=(info.st_atime_ns, info.st_mtime_ns))
+        changed("an in-place rewrite with the same size and time")
+        with channel.state_file(connection) as state:
+            state["busy"] = True
+        changed("a connection state change")
+        child.kill(); child.wait()
+        changed("a process exit")
+        self.assertFalse(channel.view_token(config, self.session)[1])
+        other = str(uuid.uuid4())
+        with channel.state_file(other) as state:
+            state.update(cli_id=self.session, config=str(config), workspace=self.project)
+        changed("another connection for the session")
+        path.unlink()
+        changed("a removed transcript")
+
     def test_discovery_summary_cache_follows_transcript_changes(self):
         path = self.history(self.session, self.project, [{"type":"user", "message":{"content":"first title"}}])
         request = {"accounts":["default"], "workspaces":{self.project:self.project}}

@@ -96,7 +96,8 @@ type Server struct {
 	terminals                                        terminalManager
 	mobileCLI                                        mobileCLIStore
 	conversationMu                                   sync.Mutex
-	conversationDiscovered                           conversationDiscovery // guarded by conversationMu
+	conversationDiscovered                           conversationDiscovery       // guarded by conversationMu
+	conversationViews                                map[string]conversationView // guarded by conversationMu
 	conversationGeneration                           atomic.Uint64
 	mobileConnectMu                                  sync.Mutex
 	audioClients                                     int

@@ -291,6 +291,27 @@ def view(config, session_id, path=None):
             "resume_pending": bool(state.get("resume_task")), "native_history": native_history}
 
 
+def view_token(config, session_id):
+    """Identify every input of view(): the session's connection states, process
+    liveness and transcript files. An unchanged token means an unchanged view."""
+    states = [(name, state) for name, state in connection_states()
+              if state.get("cli_id") == session_id and state.get("config") == str(config)]
+    connection, state = connection_for(session_id, config, states)
+    path = next((config / "projects").glob("*/" + session_id + ".jsonl"), None)
+
+    def stat(target):
+        try:
+            info = target.stat()
+            return [str(target), info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+        except (OSError, AttributeError, TypeError):
+            return [str(target or "")]
+    frozen = state.get("resume_transcript")
+    parts = [str(config), session_id, connection, stat(path), stat(Path(frozen)) if isinstance(frozen, str) and frozen else None,
+             [[name, value, live(value.get("pid")), live(value.get("channel_pid"))] for name, value in states]]
+    running = bool(live(state.get("pid")) and not state.get("closed"))
+    return hashlib.sha256(json.dumps(parts, sort_keys=True, default=str).encode()).hexdigest(), running
+
+
 def history_summary(path):
     workspace, title = "", ""
     with path.open() as stream:
@@ -348,10 +369,15 @@ def read_cache(path):
 AGENTS_REFRESH = 30
 
 
+def stamp(info):
+    # The change time also moves when a write keeps the size and modification time.
+    return [info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino]
+
+
 def registry_signature(config):
     try:
         with os.scandir(Path(config) / "sessions") as entries:
-            return sorted([entry.name, entry.stat().st_size, entry.stat().st_mtime_ns] for entry in entries if entry.name.endswith(".json"))
+            return sorted([entry.name, *stamp(entry.stat())] for entry in entries if entry.name.endswith(".json"))
     except FileNotFoundError:
         return []
 
@@ -376,10 +402,10 @@ def running_sessions_cached(config):
 def cached_summary(cache, path, stat):
     key = str(path)
     entry = cache.get(key)
-    if isinstance(entry, list) and len(entry) == 4 and entry[:2] == [stat.st_size, stat.st_mtime_ns]:
-        return entry[2], entry[3], False
+    if isinstance(entry, list) and len(entry) == 3 and entry[0] == stamp(stat):
+        return entry[1], entry[2], False
     workspace, title = history_summary(path)
-    cache[key] = [stat.st_size, stat.st_mtime_ns, workspace, title]
+    cache[key] = [stamp(stat), workspace, title]
     return workspace, title, True
 
 
@@ -1063,7 +1089,14 @@ def main():
             state = read_json(ROOT / identifier(request.get("connection") or request["cli_id"]) / "state.json", {})
             if state.get("cli_id") == request["cli_id"] and state.get("config"):
                 config = Path(state["config"])
-            result = view(config, identifier(request["cli_id"]))
+            session_id = identifier(request["cli_id"])
+            token, running = view_token(config, session_id)
+            if request.get("known") == token:
+                # The caller holds this exact view; skip reading the transcript.
+                result = {"unchanged": True, "token": token, "running": running}
+            else:
+                result = view(config, session_id)
+                result["token"] = token
             if "login_stamp" in request and result["running"]:
                 observe = client_runtime().get("changed_login")
                 if observe:

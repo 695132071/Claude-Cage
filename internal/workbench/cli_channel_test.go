@@ -322,6 +322,78 @@ func TestCachedDiscoveryReuseIsBoundedAndInvalidatedByWrites(t *testing.T) {
 	}
 }
 
+// A view whose guest inputs are unchanged reuses the last full view instead
+// of transferring and parsing the transcript again; a new token replaces it.
+func TestTerminalViewReusesUnchangedGuestView(t *testing.T) {
+	s, id, project := metadataFixture(t)
+	home, _ := filepath.EvalSymlinks(t.TempDir())
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin:/usr/local/bin"})
+	helper := filepath.Join(home, ".local/share/cage/cli-channel-code", fmt.Sprintf("%x.py", sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt))))
+	if err := os.MkdirAll(filepath.Dir(helper), 0700); err != nil {
+		t.Fatal(err)
+	}
+	observation, requests := filepath.Join(home, "view.json"), filepath.Join(home, "requests")
+	code := fmt.Sprintf(`import json,sys
+request=json.load(sys.stdin)
+open(%q,"a").write(json.dumps(request)+"\n")
+view=json.load(open(%q))
+if request.get("known")==view["token"]:
+    view={"unchanged":True,"token":view["token"],"running":view["running"]}
+print(json.dumps(view))
+`, requests, observation)
+	if err := os.WriteFile(helper, []byte(code), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.ready = true
+	record, err := s.mobileCLI.record(s.profile, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write := func(token, title string) {
+		t.Helper()
+		view := terminalConversation{CLIID: record.CLIID, Workspace: guestPath(project), Config: record.GuestConfig, Connection: record.Connection, Title: title, HasHistory: true, Token: token,
+			Turns: []mobileTurn{{ID: "turn", Prompt: "hello", Text: title, Status: "completed"}}}
+		if err := writePrivate(observation, view); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read := func() mobileSession {
+		t.Helper()
+		view, err := s.terminalConversationView(context.Background(), id)
+		if err != nil {
+			data, _ := os.ReadFile(requests)
+			logs, _ := os.ReadFile(filepath.Join(s.profile, "logs", "events.jsonl"))
+			t.Fatalf("%v; requests: %s; logs: %s", err, data, logs)
+		}
+		return view
+	}
+	known := func() []string {
+		data, _ := os.ReadFile(requests)
+		var tokens []string
+		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+			var request map[string]any
+			_ = json.Unmarshal([]byte(line), &request)
+			value, _ := request["known"].(string)
+			tokens = append(tokens, value)
+		}
+		return tokens
+	}
+	write("token-1", "first")
+	if view := read(); view.Title != "first" || len(view.Turns) != 1 || view.Turns[0].Text != "first" {
+		t.Fatalf("first view: %+v", view)
+	}
+	if view := read(); view.Title != "first" || len(view.Turns) != 1 || view.Turns[0].Text != "first" {
+		t.Fatalf("reused view changed: %+v", view)
+	}
+	write("token-2", "second")
+	if view := read(); view.Title != "second" || view.Turns[0].Text != "second" {
+		t.Fatalf("changed guest inputs were not read: %+v", view)
+	}
+	if got := known(); len(got) != 3 || got[0] != "" || got[1] != "token-1" || got[2] != "token-1" {
+		t.Fatalf("known tokens sent: %q", got)
+	}
+}
+
 func installClaudeTestHelpers(t *testing.T, bin string) {
 	t.Helper()
 	for source, dest := range map[string]string{"claude-account.py": "cage-claude-account", "client_runtime.py": "client_runtime.py"} {
