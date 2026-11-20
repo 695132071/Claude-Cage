@@ -66,17 +66,23 @@ def identifier(value):
 
 def read_json(path, default=None):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return default
 
 
 def save(path, value):
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
         json.dump(value, stream, ensure_ascii=False)
+        stream.flush()
+        os.fsync(stream.fileno())
         temporary = stream.name
-    os.replace(temporary, path)
+    try:
+        os.replace(temporary, path)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 @contextlib.contextmanager
@@ -180,7 +186,7 @@ def transcript(path):
     turns, seen, workspace, title = [], set(), "", ""
     if not path or not path.is_file() or path.is_symlink():
         return turns, workspace, title, seen
-    with path.open() as stream:
+    with path.open(encoding="utf-8") as stream:
         for line in stream:
             if len(line) > 4 * 1024 * 1024:
                 continue
@@ -313,7 +319,7 @@ def view_token(config, session_id):
 
 def history_summary(path):
     workspace, title = "", ""
-    with path.open() as stream:
+    with path.open(encoding="utf-8") as stream:
         for _ in range(64):
             line = stream.readline(4 << 20)
             if not line:
@@ -529,7 +535,7 @@ if value == {"permissions": {"defaultMode": "bypassPermissions"}, "tui": "fullsc
         backup.write_bytes(old)
         backup.chmod(0o600)
     value['channelsEnabled'] = True
-    with tempfile.NamedTemporaryFile(dir=p.parent, mode='w', delete=False) as f:
+    with tempfile.NamedTemporaryFile(dir=p.parent, mode='w', encoding='utf-8', delete=False) as f:
         json.dump(value, f)
         name = f.name
     os.chmod(name, 0o644)
@@ -570,7 +576,7 @@ def session_entrypoint(row, config):
     if not isinstance(pid, int) or pid <= 0:
         return ""
     try:
-        with (config / "sessions" / (str(pid) + ".json")).open() as stream:
+        with (config / "sessions" / (str(pid) + ".json")).open(encoding="utf-8") as stream:
             state = json.loads(stream.read(64 << 10))
         if (state.get("pid") == pid and state.get("sessionId") == row.get("sessionId")
                 and row.get("startedAt") is not None and state.get("startedAt") == row["startedAt"]):
@@ -701,7 +707,7 @@ def prepare_account_switch(request):
     if path is None or path.is_symlink():
         raise ValueError("原会话历史不可用，未切换账号")
     pending = set()
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding="utf-8").splitlines():
         row = json.loads(line)
         if row.get("isSidechain"):
             continue
@@ -842,7 +848,7 @@ def launch(request):
         account = runpy.run_path(_controller_context["CAGE_CLI_ACCOUNT_HELPER"])
         if not account["has_status_line"](account["profile"](account_id)):
             status_command = _runtime["command_text"](_controller_context["CAGE_CLI_ACCOUNT_HELPER"], ["statusline", account_id])
-            settings["statusLine"] = {"type": "command", "command": status_command}
+            settings["statusLine"] = account["status_line"](status_command) if "status_line" in account else {"type": "command", "command": status_command}
     elif len(prefix) == 5 and Path(prefix[2]).name == "cage-claude-account" and prefix[3] == "run":
         account = runpy.run_path(prefix[2])
         if not account["has_status_line"](account["profile"](prefix[4])):

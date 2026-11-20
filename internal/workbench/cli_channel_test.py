@@ -628,6 +628,27 @@ class ChannelTests(unittest.TestCase):
         self.assertEqual(resumed["params"]["meta"], {"resume":"true"})
         self.assertFalse(select.select([process.stdout], [], [], 0.1)[0], "resume was injected twice")
 
+    def test_launch_preserves_status_line_padding_and_utf8_state(self):
+        utf8_path = self.root / "utf8.json"
+        channel.save(utf8_path, {"title": "中文会话🚀"})
+        self.assertEqual(channel.read_json(utf8_path)["title"], "中文会话🚀")
+        fake_account = self.home / "cage-claude-account"
+        fake_account.write_text(
+            "def profile(name): return name\n"
+            "def has_status_line(base): return False\n"
+            "def status_line(command): return {'type': 'command', 'command': command, 'padding': 2}\n",
+            encoding="utf-8",
+        )
+        connection = str(uuid.uuid4())
+        account_id = "1" * 24
+        with patch.object(channel, "migrate_cage_policy"), patch.object(channel, "active_session", return_value=False), \
+                patch.object(channel.os, "execvpe") as execute:
+            channel.launch({"id": connection, "session_id": self.session,
+                            "prefix": ["env", "CAGE_CLAUDE_SUBJECT=" + "a" * 64, str(fake_account), "run", account_id]})
+        self.assertTrue(execute.called)
+        settings = channel.read_json(self.root / connection / "settings.json")
+        self.assertEqual(settings["statusLine"]["padding"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
