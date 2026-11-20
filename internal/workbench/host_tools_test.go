@@ -336,6 +336,20 @@ func TestMissingProgramMessageAndProjectPlaceholderHelpers(t *testing.T) {
 	if got := s.guestActiveProjectDir(); got == "" {
 		t.Fatal("guestActiveProjectDir returned empty")
 	}
+	// The current workspace is not shared: no other shared folder stands in.
+	s.preferences.Workspace = "/env/default"
+	if got := s.hostActiveProjectDir(); got != "" {
+		t.Fatalf("hostActiveProjectDir for an unshared workspace = %q, want empty", got)
+	}
+	if got := s.guestActiveProjectDir(); got != "" {
+		t.Fatalf("guestActiveProjectDir for an unshared workspace = %q, want empty", got)
+	}
+	s.preferences.Workspace = "/p/main"
+	s.clientWorkspace = "/mnt/client/demo"
+	if host, guest := s.hostActiveProjectDir(), s.guestActiveProjectDir(); host != "" || guest != "/mnt/client/demo" {
+		t.Fatalf("client workspace: host %q guest %q", host, guest)
+	}
+	s.clientWorkspace = ""
 	blenderDir := filepath.Join(s.hostPluginDir(), "blender")
 	if err := os.MkdirAll(blenderDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -344,9 +358,6 @@ func TestMissingProgramMessageAndProjectPlaceholderHelpers(t *testing.T) {
 		`{"name":"blender","version":"0.1.0","description":"Blender","permissions":["files"],"command":["uv","run","--with","blender-mcp==1.3.1","python","server.py","--root","${PROJECT_DIR}"]}`,
 	), 0o644); err != nil {
 		t.Fatal(err)
-	}
-	if !s.hostToolsUsesProjectDir() {
-		t.Fatal("hostToolsUsesProjectDir = false, want true")
 	}
 	view := s.hostToolsView()
 	found := false
