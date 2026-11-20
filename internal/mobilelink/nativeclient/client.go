@@ -77,17 +77,20 @@ func Fingerprint(device DeviceSigner) (string, error) {
 }
 
 type Client struct {
-	link        *mobilelink.Client
-	recoverLink func(context.Context) (*mobilelink.Client, error)
-	recovery    singleflight.Group
-	lifetime    context.Context
-	cancel      context.CancelFunc
-	mu          sync.Mutex
-	closed      bool
-	server      *http.Server
-	listener    net.Listener
-	listenAddr  string
-	browser     *mobilelink.Browser
+	link          *mobilelink.Client
+	recoverLink   func(context.Context) (*mobilelink.Client, error)
+	recovery      singleflight.Group
+	lifetime      context.Context
+	cancel        context.CancelFunc
+	mu            sync.Mutex
+	closed        bool
+	suspended     bool
+	generation    uint64
+	recoverCancel context.CancelFunc
+	server        *http.Server
+	listener      net.Listener
+	listenAddr    string
+	browser       *mobilelink.Browser
 }
 
 // Open connects to a pre-provisioned room. The native app owns relay trust,
@@ -183,26 +186,43 @@ func (c *Client) reconnect(ctx context.Context, failed *mobilelink.Client) (*mob
 	}
 	result := c.recovery.DoChan("link", func() (any, error) {
 		c.mu.Lock()
-		current, closed := c.link, c.closed
-		c.mu.Unlock()
-		if closed {
+		current, closed, suspended, gen := c.link, c.closed, c.suspended, c.generation
+		if closed || suspended {
+			c.mu.Unlock()
 			return nil, net.ErrClosed
 		}
 		if current != nil && current != failed && !current.Disconnected() {
+			c.mu.Unlock()
 			return current, nil
 		}
+		parent := c.lifetime
+		if parent == nil {
+			parent = context.Background()
+		}
+		dialCtx, dialCancel := context.WithCancel(parent)
+		c.recoverCancel = dialCancel
+		c.mu.Unlock()
+		defer func() {
+			dialCancel()
+			c.mu.Lock()
+			if c.generation == gen {
+				c.recoverCancel = nil
+			}
+			c.mu.Unlock()
+		}()
+
 		// Close the broken socket first so the relay releases the old room slot
 		// promptly if it was half-open.
 		if failed != nil {
 			_ = failed.Close()
 		}
-		next, err := c.recoverLink(c.lifetime)
+		next, err := c.recoverLink(dialCtx)
 		if err != nil {
 			return nil, err
 		}
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if c.closed {
+		if c.closed || c.suspended || c.generation != gen {
 			_ = next.Close()
 			return nil, net.ErrClosed
 		}
@@ -225,13 +245,14 @@ func (c *Client) reconnect(ctx context.Context, failed *mobilelink.Client) (*mob
 }
 
 // Do keeps the local WebView and pending draft alive across transport loss.
-// Only a read may reopen the saved pairing. Never resend or silently carry a
-// mutation across a replacement connection.
+// Only a read may reopen the saved pairing on transport failure or an already
+// disconnected link. Never resend or silently carry a mutation across a
+// replacement connection.
 func (c *Client) Do(ctx context.Context, method, path string, body []byte) (*mobilelink.Reply, error) {
 	c.mu.Lock()
-	link, closed, recoverLink := c.link, c.closed, c.recoverLink
+	link, closed, suspended, recoverLink := c.link, c.closed, c.suspended, c.recoverLink
 	c.mu.Unlock()
-	if closed {
+	if closed || suspended {
 		return nil, net.ErrClosed
 	}
 	if method == http.MethodGet && recoverLink != nil && (link == nil || link.Disconnected()) {
@@ -243,6 +264,9 @@ func (c *Client) Do(ctx context.Context, method, path string, body []byte) (*mob
 	}
 	reply, err := link.Do(ctx, method, path, body)
 	if err == nil || method != http.MethodGet || recoverLink == nil || ctx.Err() != nil {
+		return reply, err
+	}
+	if !mobilelink.IsTransportError(err) && !link.Disconnected() {
 		return reply, err
 	}
 	next, rerr := c.reconnect(ctx, link)
@@ -321,35 +345,51 @@ func (c *Client) ensureUI() bool {
 
 // Suspend closes a persistent relay tunnel cleanly when the mobile app enters
 // background so the relay frees the room slot immediately instead of holding a
-// half-open room until idle timeout. Temporary one-use invitations are kept as-is.
+// half-open room until idle timeout. In-flight and new recoveries are blocked
+// until Resume. Temporary one-use invitations are kept as-is.
 func (c *Client) Suspend() {
 	c.mu.Lock()
 	if c.closed || c.recoverLink == nil {
 		c.mu.Unlock()
 		return
 	}
+	c.suspended = true
+	c.generation++
+	cancelDial := c.recoverCancel
+	c.recoverCancel = nil
 	link := c.link
 	c.mu.Unlock()
+	if cancelDial != nil {
+		cancelDial()
+	}
 	if link != nil {
 		_ = link.Close()
 	}
 }
 
-// Resume restores the local loopback UI listener if iOS reclaimed it while
-// suspended and proactively reopens a disconnected persistent tunnel.
-// Returns false only if the loopback listener cannot be restored.
+// Resume clears suspension, restores the local loopback UI listener if iOS
+// reclaimed it while suspended, and proactively reopens a disconnected
+// persistent tunnel. Returns false only if the loopback listener cannot be
+// restored.
 func (c *Client) Resume() bool {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return false
+	}
+	c.suspended = false
+	c.generation++
+	link, recoverLink := c.link, c.recoverLink
+	c.mu.Unlock()
 	if !c.ensureUI() {
 		return false
 	}
-	c.mu.Lock()
-	link, closed, recoverLink := c.link, c.closed, c.recoverLink
-	c.mu.Unlock()
-	if closed {
-		return false
-	}
 	if recoverLink != nil && (link == nil || link.Disconnected()) {
-		ctx, cancel := context.WithTimeout(c.lifetime, 20*time.Second)
+		parent := c.lifetime
+		if parent == nil {
+			parent = context.Background()
+		}
+		ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 		defer cancel()
 		_, _ = c.reconnect(ctx, link)
 	}
