@@ -2443,5 +2443,15 @@
   "节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）": "Résolution des noms de nœuds (un DoH à IP numérique par ligne ; vide pour la valeur par défaut)",
   "经主机网络解析节点服务器域名，下次应用代理时生效。": "Résout les noms des serveurs de nœuds via le réseau de l’hôte ; prend effet à la prochaine application du proxy.",
   "安装与工具下载兼容模式（限制 curl 最高使用 TLS 1.2）": "Mode de compatibilité pour l’installation et les téléchargements (limiter curl à TLS 1.2)",
-  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Désactivé par défaut. À activer uniquement si la sortie proxy sélectionnée interrompt la négociation TLS 1.3 de curl et bloque l’installation ou les téléchargements ; sans effet sur la navigation ni les conversations."
+  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Désactivé par défaut. À activer uniquement si la sortie proxy sélectionnée interrompt la négociation TLS 1.3 de curl et bloque l’installation ou les téléchargements ; sans effet sur la navigation ni les conversations.",
+  "控制服务器": "Serveur de contrôle",
+  "Tailscale 官方": "Tailscale officiel",
+  "留空使用 Tailscale 官方服务；如需接入自建 Headscale，请填写 HTTPS 根地址（例如 https://headscale.example.com）。各控制服务器的设备身份分别保存在独立目录，切换不会覆盖原有身份。": "Laissez vide pour utiliser le service officiel Tailscale ; pour rejoindre un Headscale auto-hébergé, saisissez l’origine HTTPS (par exemple https://headscale.example.com). L’identité de l’appareil pour chaque serveur est conservée dans un dossier distinct afin que le changement n’écrase aucune identité existante.",
+  "自建控制服务器地址（HTTPS，留空为官方）": "Adresse du serveur de contrôle personnalisé (HTTPS, vide pour l’officiel)",
+  "保存并切换": "Enregistrer et basculer",
+  "恢复官方服务": "Rétablir le service officiel",
+  "切换控制服务器？": "Changer de serveur de contrôle ?",
+  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "La connexion au réseau privé actuel sera interrompue et vous devrez vous reconnecter au serveur cible. Les identités d’appareil et les clés SSH de chaque serveur sont conservées séparément.",
+  "已保存自建控制服务器地址": "Adresse du serveur de contrôle personnalisé enregistrée",
+  "已恢复使用 Tailscale 官方控制服务器": "Serveur de contrôle officiel Tailscale rétabli"
 }

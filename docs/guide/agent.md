@@ -276,7 +276,7 @@ cage agent call settings.get --scope selected --connection 当前连接代次
 | Claude 账号、额度、分组、启停、调度与排序 | claude-accounts.get/change，动作与字段类型由 capabilities 给出；业务 action 与界面相同。 |
 | 密码保险箱 | vault.get 列元数据；vault.change 的 action 为 save/delete/unblock/reveal；reveal 仍需 account_password，再次验证后返回真实密码；vault.browser 提供页面填充和保存。 |
 | 手机配对 | mobile.get/pair/remove；自建中继输入 admin/relay，配对结果是私密邀请码。 |
-| Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/add-key/remove-key；公钥字段为 key。 |
+| Tailscale 与 SSH 公钥 | tailscale.get，以及 install/connect/login/disconnect/logout/control-server/add-key/remove-key；自建控制服务器字段为 control_url（空字符串恢复官方），公钥字段为 key。 |
 | 浏览器首页 | browser.preferences.get/set；set 立即更新浏览器，失败保留旧值，长度限制与界面一致。settings.patch 单独修改首页时复用同一保存流程。 |
 | Cookie、权限、扩展、收藏 | browser.cookies/settings/extensions；favorites.get/change。Cookie 的 mode、scope、id、cookieKey 与界面相同。 |
 | SSH 主机与部署、指纹核对、连接与切换 | desktop 范围 client.hosts、client.hosts.create、client.candidate/commit/cancel/disconnect/local-stop；更新/删除主机使用 PUT/DELETE /api/client/hosts/主机ID。保留同一连接代次、候选、指纹和本机任务去留规则。 |

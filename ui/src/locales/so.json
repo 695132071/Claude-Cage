@@ -2443,5 +2443,15 @@
   "节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）": "Xallinta domain-ka node-ka (DoH IP lambar ah xariiq kasta; banee si loo isticmaalo caadiga)",
   "经主机网络解析节点服务器域名，下次应用代理时生效。": "Wuxuu ku xalliyaa domain-ada server-ada node-ka shabakadda martigeliyaha; wuxuu dhaqan galayaa marka xigta ee proxy la dabaqo.",
   "安装与工具下载兼容模式（限制 curl 最高使用 TLS 1.2）": "Habka iswaafajinta rakibaadda iyo soo dejinta qalabka (ku xaddid curl ilaa TLS 1.2)",
-  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Sida caadiga ah wuu dansan yahay. Daar oo keliya haddii proxy-ga la doortay uu jaro gacan-qaadka TLS 1.3 ee curl oo rakibaadda ama soo dejintu fashilanto; ma saameeyo baarista caadiga ah ama wada-hadalka."
+  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Sida caadiga ah wuu dansan yahay. Daar oo keliya haddii proxy-ga la doortay uu jaro gacan-qaadka TLS 1.3 ee curl oo rakibaadda ama soo dejintu fashilanto; ma saameeyo baarista caadiga ah ama wada-hadalka.",
+  "控制服务器": "Server-ka maamulka",
+  "Tailscale 官方": "Tailscale rasmiga ah",
+  "留空使用 Tailscale 官方服务；如需接入自建 Headscale，请填写 HTTPS 根地址（例如 https://headscale.example.com）。各控制服务器的设备身份分别保存在独立目录，切换不会覆盖原有身份。": "Bannaan u daa si aad u isticmaasho adeegga rasmiga ah ee Tailscale; si aad ugu xirto Headscale aad adigu maamusho, geli cinwaanka salka HTTPS (tusaale https://headscale.example.com). Aqoonsiga qalabka ee server kasta waxaa lagu kaydiyaa gal u gaar ah si beddeliddu aysan u tirtirin aqoonsigii hore.",
+  "自建控制服务器地址（HTTPS，留空为官方）": "Cinwaanka server-ka maamulka gaarka ah (HTTPS, bannaan u daa kan rasmiga ah)",
+  "保存并切换": "Kaydi oo beddel",
+  "恢复官方服务": "Ku celi adeegga rasmiga ah",
+  "切换控制服务器？": "Ma la beddelaa server-ka maamulka?",
+  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Xiriirka shabakadda gaarka ah ee hadda jira wuu go’i doonaa waxaadna u baahan doontaa inaad mar kale ka gasho server-ka cusub. Aqoonsiga qalabka iyo furayaasha SSH ee server kasta si gaar ah ayaa loo ilaaliyaa.",
+  "已保存自建控制服务器地址": "Cinwaanka server-ka maamulka gaarka ah waa la kaydiyay",
+  "已恢复使用 Tailscale 官方控制服务器": "Waxaa lagu celiyay server-ka maamulka rasmiga ah ee Tailscale"
 }

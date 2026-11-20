@@ -2443,5 +2443,15 @@
   "节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）": "Resolución de dominios de nodos (un DoH con IP numérica por línea; vacío para usar el predeterminado)",
   "经主机网络解析节点服务器域名，下次应用代理时生效。": "Resuelve los dominios de los servidores de nodos por la red del host; se aplica la próxima vez que apliques el proxy.",
   "安装与工具下载兼容模式（限制 curl 最高使用 TLS 1.2）": "Modo de compatibilidad para instalación y descargas (limitar curl a TLS 1.2)",
-  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Desactivado por defecto. Actívalo solo si la salida proxy seleccionada interrumpe el saludo TLS 1.3 de curl e impide instalar o descargar herramientas; no afecta la navegación ni las conversaciones."
+  "默认关闭。仅当所选代理出口会中断 curl 的 TLS 1.3 握手、导致安装或工具下载失败时开启；不影响正常浏览与对话连接。": "Desactivado por defecto. Actívalo solo si la salida proxy seleccionada interrumpe el saludo TLS 1.3 de curl e impide instalar o descargar herramientas; no afecta la navegación ni las conversaciones.",
+  "控制服务器": "Servidor de control",
+  "Tailscale 官方": "Tailscale oficial",
+  "留空使用 Tailscale 官方服务；如需接入自建 Headscale，请填写 HTTPS 根地址（例如 https://headscale.example.com）。各控制服务器的设备身份分别保存在独立目录，切换不会覆盖原有身份。": "Déjalo vacío para usar el servicio oficial de Tailscale; para conectar con un Headscale propio, introduce la URL HTTPS raíz (por ejemplo, https://headscale.example.com). La identidad de dispositivo de cada servidor se guarda en un directorio independiente, por lo que cambiar no sobrescribe la identidad anterior.",
+  "自建控制服务器地址（HTTPS，留空为官方）": "Dirección del servidor de control propio (HTTPS; vacío para el oficial)",
+  "保存并切换": "Guardar y cambiar",
+  "恢复官方服务": "Restaurar servicio oficial",
+  "切换控制服务器？": "¿Cambiar de servidor de control?",
+  "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Se desconectará la red privada actual y tendrás que volver a iniciar sesión en el servidor de destino. Las identidades de dispositivo y las claves SSH de cada servidor se conservan por separado.",
+  "已保存自建控制服务器地址": "Dirección del servidor de control propio guardada",
+  "已恢复使用 Tailscale 官方控制服务器": "Se restauró el servidor de control oficial de Tailscale"
 }

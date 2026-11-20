@@ -31,14 +31,16 @@ import (
 const version = "1.104.5"
 
 type settings struct {
-	Enabled bool     `json:"enabled"`
-	Keys    []string `json:"keys"`
+	Enabled    bool     `json:"enabled"`
+	Keys       []string `json:"keys"`
+	ControlURL string   `json:"control_url,omitempty"`
 }
 type request struct {
-	Action string `json:"action"`
-	Key    string `json:"key,omitempty"`
-	Host   string `json:"host,omitempty"`
-	Port   int    `json:"port,omitempty"`
+	Action     string  `json:"action"`
+	Key        string  `json:"key,omitempty"`
+	Host       string  `json:"host,omitempty"`
+	Port       int     `json:"port,omitempty"`
+	ControlURL *string `json:"control_url,omitempty"`
 }
 type peer struct {
 	ID       string     `json:"id,omitempty"`
@@ -50,11 +52,12 @@ type peer struct {
 	LastSeen *time.Time `json:"last_seen,omitempty"`
 }
 type state struct {
-	Installed bool           `json:"installed"`
-	Version   string         `json:"version"`
-	Enabled   bool           `json:"enabled"`
-	Backend   string         `json:"backend"`
-	URL       string         `json:"auth_url,omitempty"`
+	Installed  bool           `json:"installed"`
+	Version    string         `json:"version"`
+	Enabled    bool           `json:"enabled"`
+	Backend    string         `json:"backend"`
+	ControlURL string         `json:"control_url,omitempty"`
+	URL        string         `json:"auth_url,omitempty"`
 	ReturnID  string         `json:"return_id,omitempty"`
 	Name      string         `json:"name,omitempty"`
 	Hostname  string         `json:"hostname,omitempty"`
@@ -102,6 +105,13 @@ func newNode(dir string) (*node, error) {
 	if err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
+	// Fail closed on a corrupt or non-HTTPS control_url; never fall back to
+	// the official service silently.
+	controlURL, err := normalizeControlURL(n.config.ControlURL)
+	if err != nil {
+		return nil, err
+	}
+	n.config.ControlURL = controlURL
 	return n, nil
 }
 func (n *node) save() error {
@@ -116,9 +126,13 @@ func (n *node) start() error {
 	if n.server != nil {
 		return nil
 	}
+	dir, err := n.stateDir()
+	if err != nil {
+		return err
+	}
 	hostname, _ := os.Hostname()
 	hostname = "cage-" + strings.TrimPrefix(hostname, "cage-")
-	s := &tsnet.Server{Dir: n.dir, Hostname: hostname, UserLogf: func(string, ...any) {}}
+	s := &tsnet.Server{Dir: dir, Hostname: hostname, ControlURL: n.config.ControlURL, UserLogf: func(string, ...any) {}}
 	return n.startServer(s)
 }
 
@@ -175,7 +189,7 @@ func (n *node) stop() {
 }
 func (n *node) snapshot(ctx context.Context) (state, error) {
 	username := currentUser()
-	out := state{Installed: true, Version: version, Enabled: n.config.Enabled, Backend: "Stopped", IPs: []string{}, Peers: []peer{}, Keys: n.config.Keys, User: username, SSHPort: 22}
+	out := state{Installed: true, Version: version, Enabled: n.config.Enabled, Backend: "Stopped", ControlURL: n.config.ControlURL, IPs: []string{}, Peers: []peer{}, Keys: n.config.Keys, User: username, SSHPort: 22}
 	if out.Keys == nil {
 		out.Keys = []string{}
 	}
@@ -258,7 +272,39 @@ func (n *node) run(ctx context.Context, r request) (state, error) {
 		if _, err := n.openForward(ctx, r.Host, r.Port); err != nil {
 			return state{}, err
 		}
+	case "set-control-url":
+		raw := ""
+		if r.ControlURL != nil {
+			raw = *r.ControlURL
+		}
+		normalized, err := normalizeControlURL(raw)
+		if err != nil {
+			return state{}, err
+		}
+		if normalized != n.config.ControlURL {
+			n.stop()
+			_ = n.writeSSHConfig(nil)
+			n.config.ControlURL = normalized
+			n.config.Enabled = false
+			if err := n.save(); err != nil {
+				return state{}, err
+			}
+		}
 	case "connect", "login":
+		if r.ControlURL != nil {
+			normalized, err := normalizeControlURL(*r.ControlURL)
+			if err != nil {
+				return state{}, err
+			}
+			if normalized != n.config.ControlURL {
+				n.stop()
+				_ = n.writeSSHConfig(nil)
+				n.config.ControlURL = normalized
+				if err := n.save(); err != nil {
+					return state{}, err
+				}
+			}
+		}
 		if err := n.start(); err != nil {
 			return state{}, err
 		}
@@ -530,8 +576,8 @@ func main() {
 	if err != nil {
 		os.Exit(1)
 	}
-	// Never inherit a host or environment auth key. Enrollment is interactive.
-	for _, key := range []string{"TS_AUTHKEY", "TS_AUTH_KEY", "TS_CLIENT_SECRET", "TS_CLIENT_ID", "TSNET_FORCE_LOGIN"} {
+	// Never inherit a host or environment auth key or control server override.
+	for _, key := range []string{"TS_AUTHKEY", "TS_AUTH_KEY", "TS_CLIENT_SECRET", "TS_CLIENT_ID", "TSNET_FORCE_LOGIN", "TS_CONTROL_URL"} {
 		_ = os.Unsetenv(key)
 	}
 	asMCP := len(os.Args) == 2 && os.Args[1] == "mcp"
