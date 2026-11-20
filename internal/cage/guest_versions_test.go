@@ -20,37 +20,117 @@ import (
 )
 
 func TestGuestManifestIsPublishedOnlyAfterSuccessfulServiceStart(t *testing.T) {
-	for _, body := range []string{"printf started; exit 0", "printf broken; exit 7"} {
-		t.Run(body, func(t *testing.T) {
-			dir := t.TempDir()
-			marker := filepath.Join(dir, "published")
-			// Observe privileged actions without touching the host's /etc or running services.
-			sudo := `#!/bin/sh
-case "$1" in
- rm) rm -f "$AUDIT_MARKER";;
- python3) cat >/dev/null; printf published > "$AUDIT_MARKER";;
- *) exit 91;;
-esac
-`
-			if err := os.WriteFile(filepath.Join(dir, "sudo"), []byte(sudo), 0755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(marker, []byte("old"), 0600); err != nil {
-				t.Fatal(err)
-			}
-			cmd := exec.Command("bash", "-c", markGuestStart(body))
-			cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "AUDIT_MARKER="+marker)
-			_, err := cmd.CombinedOutput()
-			data, readErr := os.ReadFile(marker)
-			if strings.Contains(body, "exit 0") {
-				if err != nil || readErr != nil || string(data) != "published" {
-					t.Fatal("successful startup did not publish manifest", err, readErr)
+	for _, initial := range []string{"missing", "old", "current"} {
+		for _, failure := range []string{"none", "body", "publish"} {
+			t.Run(initial+"/"+failure, func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "components.json")
+				pending := filepath.Join(dir, "components.updating")
+				previous := RequiredGuestManifest()
+				if initial == "old" {
+					previous.Revision = "previous"
 				}
-			} else if err == nil || !os.IsNotExist(readErr) {
-				t.Fatal("failed startup retained or published a manifest", err, readErr)
-			}
-		})
+				old, _ := json.Marshal(previous)
+				if initial != "missing" {
+					if err := os.WriteFile(path, old, 0644); err != nil {
+						t.Fatal(err)
+					}
+				}
+				body := `test -f "$MANIFEST_DIR/components.updating"
+if [ "$INITIAL" != missing ]; then test -f "$MANIFEST_DIR/components.json"; fi
+printf applied > "$MANIFEST_DIR/applied"
+`
+				startBody := body
+				if failure == "body" {
+					startBody += "exit 7\n"
+				}
+				out, err := runGuestManifestStart(t, dir, startBody, initial, failure == "publish")
+				if (err != nil) != (failure != "none") {
+					t.Fatalf("start: %v\n%s", err, out)
+				}
+				data, readErr := os.ReadFile(path)
+				if failure == "none" {
+					var manifest GuestManifest
+					if readErr != nil || json.Unmarshal(data, &manifest) != nil || !manifest.Current() {
+						t.Fatalf("manifest not published: %s, %v", data, readErr)
+					}
+					if _, err := os.Stat(pending); !os.IsNotExist(err) {
+						t.Fatal("successful start retained the pending marker", err)
+					}
+				} else {
+					if initial == "missing" {
+						if !os.IsNotExist(readErr) {
+							t.Fatal("failed start published a manifest", readErr)
+						}
+					} else if readErr != nil || string(data) != string(old) {
+						t.Fatalf("failed start damaged the previous manifest: %s, %v", data, readErr)
+					}
+					if _, err := os.Stat(pending); err != nil {
+						t.Fatal("failed start lost the recovery marker", err)
+					}
+					// Replaying the start body recovers without downloading anything.
+					if out, err := runGuestManifestStart(t, dir, body, initial, false); err != nil {
+						t.Fatalf("recovery failed: %v\n%s", err, out)
+					}
+					var manifest GuestManifest
+					data, err := os.ReadFile(path)
+					if err != nil || json.Unmarshal(data, &manifest) != nil || !manifest.Current() {
+						t.Fatalf("recovery did not publish manifest: %s, %v", data, err)
+					}
+				}
+				if entries, _ := filepath.Glob(filepath.Join(dir, ".components-*")); len(entries) != 0 {
+					t.Fatal("temporary manifests left behind", entries)
+				}
+			})
+		}
 	}
+}
+
+func runGuestManifestStart(t *testing.T, dir, body, initial string, failPublish bool) ([]byte, error) {
+	t.Helper()
+	python := "python3"
+	if runtime.GOOS == "windows" {
+		python = "python"
+	}
+	python, err := exec.LookPath(python)
+	if err != nil {
+		t.Fatal("Python 3 is required", err)
+	}
+	// Execute the generated shell and Python against real files. Instrument the
+	// replace boundary to check that readers still see the previous complete file.
+	bootstrap := `import os,sys,json
+from pathlib import Path
+root=Path(os.environ['MANIFEST_DIR'])
+original_replace=os.replace
+def replace(src,dst):
+ assert Path(src).parent==Path(dst).parent==root
+ assert (root/'components.updating').exists()
+ assert (root/'applied').exists()
+ json.loads(Path(src).read_text())
+ if os.environ['INITIAL']!='missing': json.loads(Path(dst).read_text())
+ if os.environ['FAIL_PUBLISH']=='true': raise OSError('injected replace failure')
+ original_replace(src,dst)
+os.replace=replace
+# Windows cannot fsync directories. Keep real file fsync/replace operations,
+# and emulate only the guest's directory handles on this test host.
+if os.name=='nt':
+ original_open,original_fsync,original_close=os.open,os.fsync,os.close
+ os.open=lambda path,flags,*args,**kwargs: -99 if Path(path)==root else original_open(path,flags,*args,**kwargs)
+ os.fsync=lambda fd: None if fd==-99 else original_fsync(fd)
+ os.close=lambda fd: None if fd==-99 else original_close(fd)
+exec(sys.stdin.read())
+`
+	prelude := `sudo() {
+ case "$1" in
+  python3) "$TEST_PYTHON" -c "$TEST_BOOTSTRAP";;
+  rm) rm -f "$MANIFEST_DIR/components.json";;
+  *) return 91;;
+ esac
+}
+`
+	cmd := exec.Command("bash", "-c", prelude+strings.ReplaceAll(markGuestStart(body), "/etc/claude-cage", filepath.ToSlash(dir)))
+	cmd.Env = append(os.Environ(), "TEST_PYTHON="+filepath.ToSlash(python), "TEST_BOOTSTRAP="+bootstrap, "MANIFEST_DIR="+filepath.ToSlash(dir), "INITIAL="+initial, fmt.Sprintf("FAIL_PUBLISH=%t", failPublish))
+	return cmd.CombinedOutput()
 }
 
 func TestToolDownloadWithRealCurlAndTLS(t *testing.T) {
@@ -598,7 +678,7 @@ func TestGuestManifestInterruptedStartThenRetryPublishesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := filepath.Join(dir, "body-started")
-	interrupted := strings.ReplaceAll(markGuestStart("touch \"$STARTED_FLAG\"; sleep 30"), "/etc/claude-cage/components.json", manifestPath)
+	interrupted := strings.ReplaceAll(markGuestStart("touch \"$STARTED_FLAG\"; sleep 30"), "/etc/claude-cage/", etcDir+"/")
 	cmd := exec.Command("bash", "-c", interrupted)
 	cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "STARTED_FLAG="+started)
 	if err := cmd.Start(); err != nil {
@@ -619,10 +699,14 @@ func TestGuestManifestInterruptedStartThenRetryPublishesManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = cmd.Wait()
-	if _, err := os.Stat(manifestPath); !os.IsNotExist(err) {
-		t.Fatalf("manifest survived SIGKILL mid-start: %v", err)
+	// The last manifest is kept, but the durable marker says it is not current.
+	if _, err := os.Stat(manifestPath); err != nil {
+		t.Fatalf("manifest removed by SIGKILL mid-start: %v", err)
 	}
-	retry := strings.ReplaceAll(markGuestStart("printf recovered"), "/etc/claude-cage/components.json", manifestPath)
+	if _, err := os.Stat(filepath.Join(etcDir, "components.updating")); err != nil {
+		t.Fatalf("interrupted start left no updating marker: %v", err)
+	}
+	retry := strings.ReplaceAll(markGuestStart("printf recovered"), "/etc/claude-cage/", etcDir+"/")
 	retryCmd := exec.Command("bash", "-c", retry)
 	retryCmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"))
 	if out, err := retryCmd.CombinedOutput(); err != nil {

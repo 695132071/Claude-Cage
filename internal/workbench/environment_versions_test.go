@@ -78,7 +78,7 @@ subprocess.run = run
 
 func TestGuestConnectionRequiresSuccessfulMatchingManifest(t *testing.T) {
 	required := cage.RequiredGuestManifest()
-	for _, name := range []string{"current", "missing", "old-revision", "old-protocol", "broken"} {
+	for _, name := range []string{"current", "missing", "old-revision", "old-protocol", "broken", "interrupted", "interrupted-current", "interrupted-during-read"} {
 		t.Run(name, func(t *testing.T) {
 			manifest := required
 			if name == "old-revision" {
@@ -87,6 +87,12 @@ func TestGuestConnectionRequiresSuccessfulMatchingManifest(t *testing.T) {
 			if name == "old-protocol" {
 				manifest.Protocol++
 			}
+			if name == "interrupted" {
+				manifest = cage.GuestManifest{Updating: true}
+			}
+			if name == "interrupted-current" {
+				manifest.Updating = true
+			}
 			encoded, _ := json.Marshal(manifest)
 			if name == "missing" {
 				encoded = []byte("null")
@@ -94,13 +100,84 @@ func TestGuestConnectionRequiresSuccessfulMatchingManifest(t *testing.T) {
 			if name == "broken" {
 				encoded = []byte("{")
 			}
+			if name == "interrupted-during-read" {
+				encoded = append(encoded, []byte("\nupdating")...)
+			}
 			credentials, current, err := parseGuestConnection(append([]byte("{\"token\":\"guest-test\"}\npassword\n"), encoded...))
 			if name == "current" {
 				if err != nil || current == nil || credentials.Token != "guest-test" || credentials.VNCPassword != "password" {
 					t.Fatal(current, err)
 				}
-			} else if !errors.Is(err, errGuestUpdateRequired) {
+			} else if name == "old-revision" || name == "old-protocol" {
+				if !errors.Is(err, errGuestUpdateRequired) {
+					t.Fatalf("outdated guest did not require an update: %v", err)
+				}
+			} else if !errors.Is(err, errGuestRecoveryRequired) || errors.Is(err, errGuestUpdateRequired) || !guestComponentsUnavailable(err) {
 				t.Fatalf("stale guest accepted: %v", err)
+			}
+			if err != nil && current != nil && current.Current() {
+				t.Fatal("interrupted guest reported current")
+			}
+		})
+	}
+}
+
+func TestGuestConnectionSnapshotDetectsInterruptedStart(t *testing.T) {
+	for _, state := range []string{"current", "missing", "outdated", "interrupted", "interrupted-during-read"} {
+		t.Run(state, func(t *testing.T) {
+			dir := filepath.ToSlash(t.TempDir())
+			if err := os.MkdirAll(filepath.Join(dir, ".config", "claude-cage"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			manifest := cage.RequiredGuestManifest()
+			if state == "outdated" {
+				manifest.Revision = "previous"
+			}
+			encoded, _ := json.Marshal(manifest)
+			files := map[string][]byte{
+				"browser-control.json":                 []byte(`{"token":"fixture"}`),
+				".config/claude-cage/browser-password": []byte("password"),
+			}
+			if state != "missing" {
+				files["components.json"] = encoded
+			}
+			if state == "interrupted" {
+				files["components.updating"] = nil
+			}
+			for name, data := range files {
+				if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			prelude := `sudo() {
+ local status=0
+ "$@" || status=$?
+ if [ "$STATE" = interrupted-during-read ] && [ "$1" = cat ] && [ "$2" = "$MANIFEST_DIR/components.json" ]; then
+  touch "$MANIFEST_DIR/components.updating"
+ fi
+ return "$status"
+}
+`
+			cmd := exec.Command("bash", "-c", prelude+strings.ReplaceAll(guestConnectionSnapshot, "/etc/claude-cage", dir))
+			cmd.Env = append(os.Environ(), "HOME="+dir, "MANIFEST_DIR="+dir, "STATE="+state)
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("snapshot: %v\n%s", err, out)
+			}
+			_, current, err := parseGuestConnection(out)
+			switch state {
+			case "current":
+				if err != nil || current == nil || !current.Current() {
+					t.Fatalf("current guest: %v, %v", current, err)
+				}
+			case "outdated":
+				if !errors.Is(err, errGuestUpdateRequired) {
+					t.Fatal("outdated guest did not require an update", err)
+				}
+			default:
+				if !errors.Is(err, errGuestRecoveryRequired) || !guestComponentsUnavailable(err) {
+					t.Fatal("interrupted/missing manifest did not enter recovery", err)
+				}
 			}
 		})
 	}
@@ -366,8 +443,8 @@ func TestMissingOrTruncatedManifestFailClosesAndRecoversOnReattach(t *testing.T)
 
 			// First attach sees missing/truncated manifest from interrupted boot:
 			// must fail-closed (close proxy gate) and flag environment_update_required.
-			if err := s.attach(); !errors.Is(err, errGuestUpdateRequired) {
-				t.Fatalf("attach with %q: got %v, want errGuestUpdateRequired", corrupt, err)
+			if err := s.attach(); !guestComponentsUnavailable(err) {
+				t.Fatalf("attach with %q: got %v, want components unavailable", corrupt, err)
 			}
 			if gate.Status().Mode != cage.GateClosed {
 				t.Fatalf("proxy gate stayed open despite %q manifest", corrupt)

@@ -1,11 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
-if [[ ! -x /usr/bin/chromium ]]; then
-  echo 'Missing chromium; run cage setup first.' >&2
+missing_tool() {
+  echo "Missing $1; this environment may have been created from an older base." >&2
+  case "$1" in
+    chromium|code-server) echo 'Run cage update-tools, then cage up to install the missing tool in this VM.' >&2 ;;
+  esac
+  echo 'To rebuild from the base, run cage setup --preinstall=default, then cage up --reset (files and logins on its disk are lost).' >&2
   exit 1
+}
+if [[ ! -x /usr/bin/chromium ]]; then
+  missing_tool chromium
 fi
 for app in code-server Xtigervnc openbox websockify; do
-  command -v "$app" >/dev/null || { echo "Missing $app; run cage setup first." >&2; exit 1; }
+  command -v "$app" >/dev/null || missing_tool "$app"
 done
 # English text keeps its requested fonts. For missing Han glyphs, prefer the
 # Simplified Chinese face of the installed Noto collection.

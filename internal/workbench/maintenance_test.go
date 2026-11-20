@@ -43,9 +43,17 @@ func TestMaintenanceRequiresAuthenticationAndSoftwareSource(t *testing.T) {
 	server := httptest.NewServer(proxy)
 	defer server.Close()
 	defer proxy.close()
-	gate, err := cage.NewEgressGate(cage.DefaultConfig())
-	if err != nil {
+	s, gate := grantedToolUpdateServer(t)
+	_, _, recoveryErr := parseGuestConnection([]byte("{\"token\":\"fixture\"}\npassword\n{\"updating\":true}"))
+	if !errors.Is(recoveryErr, errGuestRecoveryRequired) || !guestComponentsUnavailable(recoveryErr) {
+		t.Fatal("interrupted start did not enter the component recovery path", recoveryErr)
+	}
+	if err := s.closeProxyGate(recoveryErr.Error()); err != nil {
 		t.Fatal(err)
+	}
+	if conn, err := gate.DialContext(context.Background(), "tcp", "example.com:443"); err == nil {
+		conn.Close()
+		t.Fatal("component recovery allowed agent traffic")
 	}
 	for _, test := range []struct {
 		target, method string
