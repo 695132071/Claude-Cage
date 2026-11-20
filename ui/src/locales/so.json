@@ -2468,5 +2468,18 @@
   "{0} · 点击返回终端": "{0} · Guji si aad ugu laabato terminal-ka",
   "本轮回复已结束，点击返回终端": "Jawaabtu way dhammaatay, guji si aad ugu laabato terminal-ka",
   "系统通知服务不可用": "Adeegga ogeysiisyada nidaamka lama heli karo",
-  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Adeegga ogeysiisyada nidaamka lama helin. Hubi in ogeysiisyadu ka shaqeynayaan deegaanka desktop-ka, kadibna isku day mar kale."
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Adeegga ogeysiisyada nidaamka lama helin. Hubi in ogeysiisyadu ka shaqeynayaan deegaanka desktop-ka, kadibna isku day mar kale.",
+  "从已有代理软件导入节点": "Ka soo deji noodhadhka barnaamij kale oo wakiil ah",
+  "导入节点": "Soo deji noodhadhka",
+  "这里需要节点服务器地址。本机代理端口无法用作节点。": "Geli cinwaanka seerfarka noodhka. Dekedda wakiilka maxalliga ah looma adeegsan karo noodh ahaan.",
+  "粘贴 v2rayN 导出的节点分享链接（每行一个），或导入 Clash/Mihomo YAML。": "Ku dheji xiriirrada wadaagga noodhadhka ee laga soo saaray v2rayN (midkiiba sadar), ama soo deji faylka YAML ee Clash/Mihomo.",
+  "{0}（需迁移）": "{0} (wuxuu u baahan yahay guurin)",
+  "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "Habayntii hore waxay isticmaashaa deked wakiil maxalli ah. Soo deji noodhadhka silsiladdii hore oo ku dabaq isla siday u kala horreeyeen.",
+  "节点配置": "Habaynta noodhadhka",
+  "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Soo deji noodhadhka mid mid. Si aad silsilad u samayso, Cage ka dooro noodhadhka dhexe siday u kala horreeyaan, dabadeed noodhka bixitaanka.",
+  "代理链需要迁移": "Silsiladda wakiilladu waxay u baahan tahay guurin",
+  "Cage 官方 · {0}": "Rasmi ah oo Cage ah · {0}",
+  "社区作者 · {0}": "Qoraa ka tirsan bulshada · {0}",
+  "作者未注明": "Qoraaga lama sheegin",
+  "市场署名：{0}": "Qoraaga ku qoran suuqa: {0}"
 }

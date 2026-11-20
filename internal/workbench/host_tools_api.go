@@ -458,14 +458,15 @@ func (s *Server) hostMarketEntries(ctx context.Context, refresh bool) ([]hostbri
 }
 
 type hostMarketEntryView struct {
-	Name        string               `json:"name"`
-	DisplayName string               `json:"display_name,omitempty"`
-	Version     string               `json:"version"`
-	Description string               `json:"description,omitempty"`
-	Permissions []string             `json:"permissions"`
-	Categories  []string             `json:"categories,omitempty"`
-	Kind        string               `json:"kind,omitempty"`
-	Contributes *hostContributesView `json:"contributes,omitempty"`
+	Name        string                   `json:"name"`
+	DisplayName string                   `json:"display_name,omitempty"`
+	Version     string                   `json:"version"`
+	Description string                   `json:"description,omitempty"`
+	Author      *hostbridge.MarketAuthor `json:"author,omitempty"`
+	Permissions []string                 `json:"permissions"`
+	Categories  []string                 `json:"categories,omitempty"`
+	Kind        string                   `json:"kind,omitempty"`
+	Contributes *hostContributesView     `json:"contributes,omitempty"`
 	// Problem is why the plugin cannot be used with this application.
 	Problem   string `json:"problem,omitempty"`
 	Supported bool   `json:"supported"`
@@ -539,7 +540,7 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, entry := range entries {
 		unavailable := hostbridge.Manifest{Kind: entry.Kind, Engines: entry.Engines, Contributes: entry.Contributes}.Unavailable(version.Version, true)
-		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description,
+		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description, Author: entry.Author,
 			Permissions: entry.Permissions, Categories: hostbridge.ShownCategories(entry.Categories), Kind: entry.Kind, Contributes: hostContributes(entry.Contributes), Problem: hostPluginUnavailable(unavailable),
 			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != "", Source: entry.Source}
 		if manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name)); err == nil {

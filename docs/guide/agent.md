@@ -84,7 +84,7 @@ cage agent call account.unlock --input -
 
 ### 导入代理并确认出口
 
-先读 `proxy.status`。已有可用来源时复用，避免重复导入。首次导入可用用户提供的 HTTPS Clash/Mihomo 节点订阅，或私有文件中的 Clash/Mihomo YAML；内容必须包含 `proxies` 或 `payload` 节点。Base64 列表、单个 `vless://` 等分享链接、Xray/v2rayN 原生 JSON 和仅引用远程 provider 的配置不能直接导入，改文件后缀也不能完成转换。只有分享链接时，先从原客户端导出兼容 YAML；协议或握手不兼容时，可按[通过本机代理客户端转发](network.md#通过本机代理客户端转发)配置 SOCKS5 上游，再验证预期出口。
+先读 `proxy.status`。有 `blocked_reason` 的旧节点须迁移：导入真实中转与最终出口，显式调用 `proxy.route` 应用新链，并核对出口和检查结果。其他已保存的可用来源可以复用。首次导入支持含 `proxies` 或 `payload` 的 Clash/Mihomo 配置，以及受支持的 v2rayN 明文节点分享链接。Cage 的节点地址必须指向具体代理服务器。迁移步骤见[把原客户端的代理链迁到 Cage](network.md#把原客户端的代理链迁到-cage)。
 
 ```json
 {"name":"我的代理","url":"https://用户自己的订阅地址","interval_hours":0,"host_download":true}
@@ -111,7 +111,7 @@ process.stdout.write(JSON.stringify({
 cage agent call proxy.status
 ```
 
-节点内容使用网络指南中的[完整 SOCKS5 YAML 示例](network.md#通过本机代理客户端转发)或用户自己的兼容配置；不要将 YAML 文件直接作为 `--input` 的 JSON 输入。两种导入方式择一使用，避免重复创建来源。
+节点内容使用网络指南中的[完整 SOCKS5 YAML 示例](network.md#把原客户端的代理链迁到-cage)或用户自己的兼容配置；不要将 YAML 文件直接作为 `--input` 的 JSON 输入。两种导入方式择一使用，避免重复创建来源。
 
 从返回的来源和节点列表选择用户要求的出口；不要把订阅中的第一个节点当成用户已经同意的出口。
 

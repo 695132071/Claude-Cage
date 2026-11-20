@@ -245,6 +245,12 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 				return err
 			}
 		}
+		if e := s.retireLocalProxyCore(); e != nil {
+			// Revoke the gate even if the old process cannot be stopped.
+			// Keep the workbench available for importing its replacement.
+			s.safety.monitorError = "旧代理核心尚未停止，请迁移到远程节点后重新应用；外网保持关闭"
+			diagnostics.Log("error", "proxy", "停止旧代理核心失败："+e.Error())
+		}
 		// A previously running VM cannot keep an unmanaged endpoint online.
 		if cfg, e := loadConfig(configPath); e != nil || cfg.RequireManagedProxy(profile) != nil {
 			_ = s.closeProxyGate("尚未配置有效节点，外网保持关闭")

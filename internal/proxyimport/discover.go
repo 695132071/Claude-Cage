@@ -129,6 +129,9 @@ func Scan(locations []Location, key []byte) []Config {
 				var preview managedproxy.Store
 				if err := preview.Import(c.Name, "", c.Data, "preview", 0, ""); err != nil {
 					c.Error = "这份配置没有可导入的节点；请从原软件导出含节点的 Clash/Mihomo 配置"
+					if errors.Is(err, managedproxy.ErrLocalProxyNode) {
+						c.Error = err.Error()
+					}
 				} else {
 					c.Nodes = len(preview.Sources[0].Nodes)
 					c.Skipped = len(preview.Sources[0].Skipped)

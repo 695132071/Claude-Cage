@@ -2468,5 +2468,18 @@
   "{0} · 点击返回终端": "{0} · Cliquez pour revenir au terminal",
   "本轮回复已结束，点击返回终端": "La réponse est terminée ; cliquez pour revenir au terminal",
   "系统通知服务不可用": "Service de notifications système indisponible",
-  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Aucun service de notifications système n'a été détecté. Vérifiez que les notifications sont activées dans l'environnement de bureau, puis réessayez."
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Aucun service de notifications système n'a été détecté. Vérifiez que les notifications sont activées dans l'environnement de bureau, puis réessayez.",
+  "从已有代理软件导入节点": "Importer des nœuds depuis un autre client proxy",
+  "导入节点": "Importer des nœuds",
+  "这里需要节点服务器地址。本机代理端口无法用作节点。": "Saisissez l’adresse du serveur du nœud. Un port proxy local ne peut pas servir de nœud.",
+  "粘贴 v2rayN 导出的节点分享链接（每行一个），或导入 Clash/Mihomo YAML。": "Collez les liens de partage de nœuds exportés depuis v2rayN (un par ligne) ou importez un fichier YAML Clash/Mihomo.",
+  "{0}（需迁移）": "{0} (migration requise)",
+  "旧配置使用本机代理端口。请导入原代理链中的节点，再按原顺序应用。": "L’ancienne configuration utilise un port proxy local. Importez les nœuds de la chaîne et appliquez-les dans leur ordre initial.",
+  "节点配置": "Configuration des nœuds",
+  "导入具体节点。使用代理链时，在 Cage 中依次选择中转和最终出口。": "Importez les nœuds individuellement. Pour une chaîne, sélectionnez dans Cage les relais dans l’ordre, puis le nœud de sortie.",
+  "代理链需要迁移": "La chaîne de proxys doit être migrée",
+  "Cage 官方 · {0}": "Cage officiel · {0}",
+  "社区作者 · {0}": "Auteur communautaire · {0}",
+  "作者未注明": "Auteur non indiqué",
+  "市场署名：{0}": "Auteur sur le marché : {0}"
 }
