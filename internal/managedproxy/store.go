@@ -348,7 +348,8 @@ func (s Store) Route() ([]string, error) {
 }
 
 func (s Store) Runtime(profile string) ([]byte, error) {
-	if _, err := s.Route(); err != nil {
+	route, err := s.Route()
+	if err != nil {
 		return nil, err
 	}
 	dialers := map[string]string{}
@@ -383,11 +384,15 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	}
 	// Infrastructure DNS bootstraps only the core's server domains. Guest DNS
 	// remains behind Cage Egress, and there is no host-system resolver fallback.
-	// Top-level ipv6 is enabled only when a loaded node uses a literal IPv6
-	// server address so the core can dial that proxy hop; dns.ipv6 stays false,
-	// and Cage Egress continues blocking all guest IPv6 and enforcing IPv4 exits.
+	// Top-level ipv6 (mihomo v1.19.33: resolver.DisableIPv6 = !ipv6, global to
+	// the core) also makes every proxy server domain resolve AAAA and dial over
+	// IPv6. It is enabled only when a node on the selected route uses a
+	// literal IPv6 server address, so the core can dial that hop; other loaded
+	// nodes never turn it on. dns.ipv6 only controls AAAA answers of the core's
+	// own DNS listener (none is configured) and stays false. Cage Egress keeps
+	// blocking all guest IPv6 and enforcing IPv4 exits.
 	dns := map[string]any{"enable": true, "ipv6": false, "use-hosts": false, "use-system-hosts": false, "default-nameserver": s.NodeResolvers(), "proxy-server-nameserver": s.NodeResolvers(), "nameserver": s.coreNameservers()}
-	config := map[string]any{"mixed-port": s.Port, "bind-address": "127.0.0.1", "allow-lan": false, "skip-auth-prefixes": []string{}, "mode": "rule", "ipv6": hasIPv6Server(proxies), "log-level": "warning", "find-process-mode": "off", "external-controller-unix": Socket(profile), "tun": map[string]any{"enable": false}, "dns": dns, "geo-auto-update": false, "profile": map[string]any{"store-selected": false}, "proxy-groups": []any{map[string]any{"name": Group, "type": "select", "proxies": []string{s.Selected}}}}
+	config := map[string]any{"mixed-port": s.Port, "bind-address": "127.0.0.1", "allow-lan": false, "skip-auth-prefixes": []string{}, "mode": "rule", "ipv6": routeHasIPv6Server(route, originals), "log-level": "warning", "find-process-mode": "off", "external-controller-unix": Socket(profile), "tun": map[string]any{"enable": false}, "dns": dns, "geo-auto-update": false, "profile": map[string]any{"store-selected": false}, "proxy-groups": []any{map[string]any{"name": Group, "type": "select", "proxies": []string{s.Selected}}}}
 	// An explicit environment chain can override imported dialers. Named
 	// account routes retain the node's imported chain, including dependent hops.
 	targets := map[string]string{}
@@ -434,9 +439,9 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	return yaml.Marshal(config)
 }
 
-func hasIPv6Server(proxies []map[string]any) bool {
-	for _, p := range proxies {
-		server, _ := p["server"].(string)
+func routeHasIPv6Server(route []string, nodes map[string]map[string]any) bool {
+	for _, id := range route {
+		server, _ := nodes[id]["server"].(string)
 		server = strings.TrimSpace(server)
 		if strings.HasPrefix(server, "[") && strings.HasSuffix(server, "]") {
 			server = server[1 : len(server)-1]

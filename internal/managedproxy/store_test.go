@@ -379,3 +379,46 @@ func TestRuntimeEnablesTopLevelIPv6OnlyForIPv6LiteralNodes(t *testing.T) {
 		})
 	}
 }
+
+// Top-level ipv6 is global to the core (domain-named nodes then resolve AAAA
+// and may dial over the host's IPv6), so only the selected route may turn it on.
+func TestRuntimeIPv6FollowsSelectedRouteOnly(t *testing.T) {
+	topIPv6 := func(t *testing.T, s Store) bool {
+		t.Helper()
+		b, err := s.Runtime(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := yaml.Unmarshal(b, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := cfg["ipv6"].(bool)
+		return got
+	}
+	s, _ := Load(t.TempDir())
+	raw := `proxies: [{name: v4, type: socks5, server: node.example.com, port: 1080}, {name: v6, type: socks5, server: "2001:db8::10", port: 1080}, {name: via, type: socks5, server: 203.0.113.10, port: 1080, dialer-proxy: v6}]`
+	if err := s.Import("r", "", []byte(raw), "r", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, n := range s.Sources[0].Nodes {
+		ids[n.Name] = n.ID
+	}
+	s.Selected = ids["v4"]
+	if topIPv6(t, s) {
+		t.Fatal("an unselected IPv6-literal node enabled IPv6 for the domain-named selected node")
+	}
+	s.Selected = ids["v6"]
+	if !topIPv6(t, s) {
+		t.Fatal("selected IPv6-literal node needs top-level ipv6")
+	}
+	s.Selected = ids["via"]
+	if !topIPv6(t, s) {
+		t.Fatal("an IPv6-literal hop on the selected route needs top-level ipv6")
+	}
+	s.Selected, s.Chain = ids["v4"], []string{ids["v4"]}
+	if topIPv6(t, s) {
+		t.Fatal("explicit chain without IPv6 literals must keep ipv6 off")
+	}
+}
