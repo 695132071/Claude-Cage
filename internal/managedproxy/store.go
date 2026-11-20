@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -363,8 +364,11 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	}
 	// Infrastructure DNS bootstraps only the core's server domains. Guest DNS
 	// remains behind Cage Egress, and there is no host-system resolver fallback.
+	// Top-level ipv6 is enabled only when a loaded node uses a literal IPv6
+	// server address so the core can dial that proxy hop; dns.ipv6 stays false,
+	// and Cage Egress continues blocking all guest IPv6 and enforcing IPv4 exits.
 	dns := map[string]any{"enable": true, "ipv6": false, "use-hosts": false, "use-system-hosts": false, "default-nameserver": s.NodeResolvers(), "proxy-server-nameserver": s.NodeResolvers(), "nameserver": s.coreNameservers()}
-	config := map[string]any{"mixed-port": s.Port, "bind-address": "127.0.0.1", "allow-lan": false, "skip-auth-prefixes": []string{}, "mode": "rule", "ipv6": false, "log-level": "warning", "find-process-mode": "off", "external-controller-unix": Socket(profile), "tun": map[string]any{"enable": false}, "dns": dns, "geo-auto-update": false, "profile": map[string]any{"store-selected": false}, "proxy-groups": []any{map[string]any{"name": Group, "type": "select", "proxies": []string{s.Selected}}}}
+	config := map[string]any{"mixed-port": s.Port, "bind-address": "127.0.0.1", "allow-lan": false, "skip-auth-prefixes": []string{}, "mode": "rule", "ipv6": hasIPv6Server(proxies), "log-level": "warning", "find-process-mode": "off", "external-controller-unix": Socket(profile), "tun": map[string]any{"enable": false}, "dns": dns, "geo-auto-update": false, "profile": map[string]any{"store-selected": false}, "proxy-groups": []any{map[string]any{"name": Group, "type": "select", "proxies": []string{s.Selected}}}}
 	// An explicit environment chain can override imported dialers. Named
 	// account routes retain the node's imported chain, including dependent hops.
 	targets := map[string]string{}
@@ -409,4 +413,18 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	// protocol and TLS setup into the node's displayed HTTP latency.
 	config["unified-delay"] = true
 	return yaml.Marshal(config)
+}
+
+func hasIPv6Server(proxies []map[string]any) bool {
+	for _, p := range proxies {
+		server, _ := p["server"].(string)
+		server = strings.TrimSpace(server)
+		if strings.HasPrefix(server, "[") && strings.HasSuffix(server, "]") {
+			server = server[1 : len(server)-1]
+		}
+		if addr, err := netip.ParseAddr(server); err == nil && addr.Is6() && !addr.Is4In6() {
+			return true
+		}
+	}
+	return false
 }

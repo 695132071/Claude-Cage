@@ -340,3 +340,42 @@ func TestRuntimeUsesConfiguredResolvers(t *testing.T) {
 		t.Fatalf("node resolvers ignore settings: %v", dns)
 	}
 }
+
+func TestRuntimeEnablesTopLevelIPv6OnlyForIPv6LiteralNodes(t *testing.T) {
+	cases := []struct {
+		name     string
+		server   string
+		wantIPv6 bool
+	}{
+		{name: "domain", server: "node.example.com", wantIPv6: false},
+		{name: "ipv4", server: "203.0.113.10", wantIPv6: false},
+		{name: "ipv4-mapped-ipv6", server: "::ffff:203.0.113.10", wantIPv6: false},
+		{name: "ipv6-literal", server: "2001:db8::10", wantIPv6: true},
+		{name: "ipv6-bracketed", server: "[2001:db8::10]", wantIPv6: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := Load(t.TempDir())
+			raw := fmt.Sprintf("proxies: [{name: a, type: socks5, server: %q, port: 1080}]", tc.server)
+			if err := s.Import("r", "", []byte(raw), "r", 0, ""); err != nil {
+				t.Fatal(err)
+			}
+			s.Selected = s.Sources[0].Nodes[0].ID
+			b, err := s.Runtime(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg map[string]any
+			if err := yaml.Unmarshal(b, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := cfg["ipv6"].(bool); got != tc.wantIPv6 {
+				t.Fatalf("top-level ipv6=%v, want %v", got, tc.wantIPv6)
+			}
+			dnsCfg, _ := cfg["dns"].(map[string]any)
+			if dnsIPv6, _ := dnsCfg["ipv6"].(bool); dnsIPv6 {
+				t.Fatalf("dns.ipv6 must always stay false, got %v", dnsCfg["ipv6"])
+			}
+		})
+	}
+}
