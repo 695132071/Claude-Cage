@@ -3,6 +3,7 @@ package workbench
 import (
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -20,6 +21,7 @@ type agentNativeQueue struct {
 	mu      sync.Mutex
 	items   []*agentNativeItem
 	windows map[string]time.Time
+	notify  chan struct{}
 }
 
 // This queue belongs to the window listener, not the selected workload. It
@@ -91,39 +93,26 @@ func (s *Server) agentNative(w http.ResponseWriter, r *http.Request) {
 		}
 		item := &agentNativeItem{ID: randomToken()[:24], Request: append(json.RawMessage(nil), in.Request...), Connection: in.Connection, Status: "pending", created: now}
 		q.items = append(q.items, item)
+		if q.notify != nil {
+			close(q.notify)
+			q.notify = nil
+		}
 		w.WriteHeader(http.StatusAccepted)
 		jsonReply(w, item)
 		return
 	}
+	if r.Method == "GET" && id == "" {
+		s.claimAgentNative(w, r)
+		return
+	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if (r.Method == "GET" && id == "") || r.Method == "POST" {
+	if r.Method == "POST" {
 		until, ok := q.windows[r.Header.Get("X-Cage-Agent-Window")]
 		if !ok || time.Now().After(until) {
 			http.Error(w, "Native window proof required", 403)
 			return
 		}
-	}
-	if r.Method == "GET" && id == "" {
-		if r.URL.Query().Get("consumer") != "window" {
-			http.Error(w, "Window consumer required", 400)
-			return
-		}
-		for _, item := range q.items {
-			if item.Status == "pending" && item.Connection == requestConnection(r) {
-				if time.Since(item.created) > 2*time.Minute {
-					item.Status = "failed"
-					item.Error = "Desktop did not claim this request in time. No native action was executed."
-					item.Request = nil
-					continue
-				}
-				item.Status = "running"
-				jsonReply(w, item)
-				return
-			}
-		}
-		jsonReply(w, map[string]any{})
-		return
 	}
 	for _, item := range q.items {
 		if item.ID == id {
@@ -167,6 +156,86 @@ func (s *Server) agentNative(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	http.Error(w, "Native request unavailable; inspect state before repeating it", 410)
+}
+
+func (s *Server) claimAgentNative(w http.ResponseWriter, r *http.Request) {
+	q := &s.agentNativeQueue
+	proof := r.Header.Get("X-Cage-Agent-Window")
+	wait := time.Duration(0)
+	if raw := r.URL.Query().Get("wait"); raw != "" {
+		if seconds, err := strconv.Atoi(raw); err == nil && seconds > 0 {
+			if seconds > 25 {
+				seconds = 25
+			}
+			wait = time.Duration(seconds) * time.Second
+		}
+	}
+	var lifeDone <-chan struct{}
+	if wait > 0 {
+		lifeDone = s.lifetimeContext().Done()
+	}
+	q.mu.Lock()
+	until, ok := q.windows[proof]
+	if !ok || time.Now().After(until) {
+		q.mu.Unlock()
+		http.Error(w, "Native window proof required", 403)
+		return
+	}
+	if r.URL.Query().Get("consumer") != "window" {
+		q.mu.Unlock()
+		http.Error(w, "Window consumer required", 400)
+		return
+	}
+	conn := requestConnection(r)
+	var deadline <-chan time.Time
+	if wait > 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		deadline = timer.C
+	}
+	for {
+		for _, item := range q.items {
+			if item.Status == "pending" && item.Connection == conn {
+				if time.Since(item.created) > 2*time.Minute {
+					item.Status = "failed"
+					item.Error = "Desktop did not claim this request in time. No native action was executed."
+					item.Request = nil
+					continue
+				}
+				item.Status = "running"
+				q.mu.Unlock()
+				jsonReply(w, item)
+				return
+			}
+		}
+		if deadline == nil {
+			q.mu.Unlock()
+			jsonReply(w, map[string]any{})
+			return
+		}
+		if q.notify == nil {
+			q.notify = make(chan struct{})
+		}
+		ch := q.notify
+		q.mu.Unlock()
+		select {
+		case <-ch:
+			q.mu.Lock()
+			if until, ok := q.windows[proof]; !ok || time.Now().After(until) {
+				q.mu.Unlock()
+				http.Error(w, "Native window proof required", 403)
+				return
+			}
+		case <-lifeDone:
+			jsonReply(w, map[string]any{})
+			return
+		case <-deadline:
+			jsonReply(w, map[string]any{})
+			return
+		case <-r.Context().Done():
+			return
+		}
+	}
 }
 
 func (s *Server) agentNativeWindow(w http.ResponseWriter, r *http.Request) {
