@@ -24,6 +24,11 @@ import (
 )
 
 var loadConfig = cage.Load
+
+// previousDNSFile keeps the DNS options of previous-profile.json, whose
+// configuration JSON does not carry them.
+const previousDNSFile = "previous-dns.json"
+
 var defaultConfig = cage.DefaultConfig
 
 type guestCredentials struct {
@@ -575,6 +580,9 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 		if err = writePrivate(filepath.Join(s.profile, "previous-profile.json"), savedProfile{old, oldPrefs}); err != nil {
 			return err
 		}
+		if err = cage.SaveDNSOptionsFile(filepath.Join(s.profile, previousDNSFile), old.DNS); err != nil {
+			return err
+		}
 		if err = s.stopEnvironment(); err != nil {
 			return err
 		}
@@ -602,11 +610,19 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 	} else {
 		err = writePrivate(s.configPath, v.Config)
 	}
+	if err == nil {
+		// Older versions reject unknown configuration fields, so the extra
+		// resolvers live in their own file beside the configuration.
+		if err = cage.SaveDNSOptions(s.configPath, v.Config.DNS); err != nil {
+			_ = writePrivate(s.configPath, old)
+		}
+	}
 	if err != nil {
 		return err
 	}
 	if err = writePrivate(filepath.Join(s.profile, "workbench.json"), v.Preferences); err != nil {
 		_ = writePrivate(s.configPath, old)
+		_ = cage.SaveDNSOptions(s.configPath, old.DNS)
 		return err
 	}
 	loginPrefsCommitted = true

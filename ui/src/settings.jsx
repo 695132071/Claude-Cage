@@ -83,6 +83,9 @@ export function SettingsPanel({
     });
   const environmentChanged = [
     "dns_url",
+    "dns_fallback_urls",
+    "dns_public_fallback",
+    "dns_bootstrap_urls",
     "timezone",
     "locale",
     "browser_language",
@@ -93,14 +96,16 @@ export function SettingsPanel({
     k === "exit_policy"
       ? JSON.stringify(canonicalExitPolicy(draft[k])) !==
         JSON.stringify(canonicalExitPolicy(current[k]))
-      : draft[k] !== current[k],
+      : Array.isArray(draft[k]) || Array.isArray(current[k])
+        ? JSON.stringify(draft[k] ?? []) !== JSON.stringify(current[k] ?? [])
+        : draft[k] !== current[k],
   );
   const busy =
     Boolean(status.job?.running) || Boolean(status.storage_recovery?.required) || probing || submitting || Boolean(jobId);
   // Project folders of the other guest systems are always read directly.
   const update = (key, value) => {
     setDraft((p) => ({ ...p, [key]: value }));
-    if (["dns_url"].includes(key)) setProbe(null);
+    if (["dns_url", "dns_fallback_urls", "dns_public_fallback"].includes(key)) setProbe(null);
     setError("");
   };
   const close = async () => {
@@ -278,6 +283,43 @@ export function SettingsPanel({
                     spellCheck="false"
                   />
                 </label>
+                <label>
+                  {tr("备用加密 DNS（每行一个，最多 4 个）")}
+                  <textarea
+                    rows={2}
+                    value={(draft.dns_fallback_urls ?? []).join("\n")}
+                    onChange={(e) => update("dns_fallback_urls", e.target.value.split(/\r?\n/))}
+                    spellCheck="false"
+                    placeholder="https://…/dns-query"
+                  />
+                </label>
+                <label className="toggle-row">
+                  <span>
+                    <strong>{tr("以上端点都不可用时改用 Google 公共 DNS（8.8.8.8）")}</strong>
+                    <small>
+                      {tr("业务 DNS、联网检查与内置核心使用同一组端点，均经所选节点发出，按顺序尝试。默认只使用上面的加密 DNS；开启公共 DNS 备用后，查询可能发给第二家服务商。")}
+                    </small>
+                  </span>
+                  <input
+                    role="switch"
+                    type="checkbox"
+                    checked={Boolean(draft.dns_public_fallback)}
+                    onChange={(e) => update("dns_public_fallback", e.target.checked)}
+                  />
+                </label>
+                <label>
+                  {tr("节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）")}
+                  <textarea
+                    rows={2}
+                    value={(draft.dns_bootstrap_urls ?? []).join("\n")}
+                    onChange={(e) => update("dns_bootstrap_urls", e.target.value.split(/\r?\n/))}
+                    spellCheck="false"
+                    placeholder="https://223.5.5.5/dns-query"
+                  />
+                </label>
+                <p className="field-help">
+                  {tr("经主机网络解析节点服务器域名，下次应用代理时生效。")}
+                </p>
                 <div className="probe-line">
                   <button disabled={busy} onClick={check}>
                     {probing ? (

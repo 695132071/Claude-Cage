@@ -305,3 +305,38 @@ func TestBootstrapDoesNotAllowPrivateDestinations(t *testing.T) {
 		}
 	}
 }
+
+func TestRuntimeUsesConfiguredResolvers(t *testing.T) {
+	s, _ := Load(t.TempDir())
+	if err := s.Import("r", "", []byte(`proxies: [{name: a, type: socks5, server: node.example.com, port: 1080}]`), "r", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	s.Selected = s.Sources[0].Nodes[0].ID
+	runtime := func() map[string]any {
+		t.Helper()
+		b, err := s.Runtime(t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var config struct {
+			DNS map[string]any `yaml:"dns"`
+		}
+		if err := yaml.Unmarshal(b, &config); err != nil {
+			t.Fatal(err)
+		}
+		return config.DNS
+	}
+	dns := runtime()
+	if fmt.Sprint(dns["nameserver"]) != "[https://1.1.1.1/dns-query#"+Group+"]" || fmt.Sprint(dns["proxy-server-nameserver"]) != fmt.Sprint(BootstrapDNSURLs()) {
+		t.Fatalf("default resolvers changed: %v", dns)
+	}
+	s.GuestDNS = []string{"https://dns.example/dns-query", "https://8.8.8.8/dns-query"}
+	s.BootstrapDNS = []string{"https://223.5.5.5/dns-query"}
+	dns = runtime()
+	if fmt.Sprint(dns["nameserver"]) != "[https://dns.example/dns-query#"+Group+" https://8.8.8.8/dns-query#"+Group+"]" {
+		t.Fatalf("core nameserver ignores guest DNS settings: %v", dns["nameserver"])
+	}
+	if fmt.Sprint(dns["default-nameserver"]) != "[https://223.5.5.5/dns-query]" || fmt.Sprint(dns["proxy-server-nameserver"]) != "[https://223.5.5.5/dns-query]" {
+		t.Fatalf("node resolvers ignore settings: %v", dns)
+	}
+}

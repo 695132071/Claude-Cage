@@ -703,6 +703,12 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()
+	// Clients predating the DNS options keep the saved ones.
+	if current, err := loadConfig(s.configPath); err == nil {
+		input.DNSFallbackURLs = current.DNS.FallbackURLs()
+		input.DNSPublicFallback = current.DNS.PublicFallback
+		input.DNSBootstrapURLs = current.DNS.BootstrapURLs()
+	}
 	if !readJSON(w, r, &input) {
 		return savedProfile{}, false
 	}
@@ -765,6 +771,10 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 	var v savedProfile
 	b, e := os.ReadFile(filepath.Join(s.profile, "previous-profile.json"))
 	if e != nil || json.Unmarshal(b, &v) != nil {
+		requestError(w, errors.New("没有可恢复的配置"))
+		return
+	}
+	if v.Config.DNS, e = cage.LoadDNSOptionsFile(filepath.Join(s.profile, previousDNSFile)); e != nil {
 		requestError(w, errors.New("没有可恢复的配置"))
 		return
 	}

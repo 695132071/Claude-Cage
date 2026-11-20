@@ -110,7 +110,7 @@ func (s *Server) proxyStatus(w http.ResponseWriter, r *http.Request) {
 	if routeErr != nil && selected {
 		routeError = routeErr.Error()
 	}
-	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(managedproxy.BootstrapDNSURLs(), "、"), "udp_blocked": true, "ipv6_blocked": true})
+	jsonReply(w, map[string]any{"route": route, "route_error": routeError, "sources": sources, "selected": p.Selected, "port": p.Port, "running": running, "active": active, "state": state, "state_label": label, "network_open": state == "ready", "core_available": coreErr == nil, "version": version.Version, "revision": p.Revision, "bootstrap_dns": strings.Join(p.NodeResolvers(), "、"), "udp_blocked": true, "ipv6_blocked": true})
 }
 func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	if r.PathValue("action") == "import-local" && !s.requireLocalConfigAccess(w, r) {
@@ -132,12 +132,12 @@ func (s *Server) proxyMutation(w http.ResponseWriter, r *http.Request) {
 	s.launch(w, "proxy", func() error { return s.changeProxy(action, input, &pauseVersion) })
 }
 func (s *Server) subscriptionClient(host bool) (*http.Client, error) {
-	if host {
-		return managedproxy.BootstrapClient(), nil
-	}
 	cfg, err := loadConfig(s.configPath)
 	if err != nil {
 		return nil, err
+	}
+	if host {
+		return managedproxy.BootstrapClientWith(cfg.BootstrapEndpoints()), nil
 	}
 	if err = cfg.RequireManagedProxy(s.profile); err != nil {
 		return nil, err
@@ -403,6 +403,8 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 		return err
 	}
 	s.setMessage("正在验证节点配置…")
+	// The core resolves with the same endpoints as guest DNS and the DNS check.
+	p.GuestDNS, p.BootstrapDNS = old.DNSEndpoints(), old.BootstrapEndpoints()
 	if err := validateProxyCore(ctx, s.profile, p); err != nil {
 		return err
 	}
@@ -636,7 +638,7 @@ func (s *Server) proxyLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	// Whitelisted lifecycle messages avoid publishing upstream raw log lines,
 	// which can contain subscription secrets, credentials and host paths.
-	lines := []string{"客机公网 UDP、IPv6、ICMP：阻断", "业务 DNS：经选定节点转发", "代理基础设施 DNS：" + strings.Join(managedproxy.BootstrapDNSURLs(), "、") + "（主机网络，并行查询）"}
+	lines := []string{"客机公网 UDP、IPv6、ICMP：阻断", "业务 DNS：经选定节点转发", "代理基础设施 DNS：" + strings.Join(p.NodeResolvers(), "、") + "（主机网络，并行查询）"}
 	if managedproxy.Running(r.Context(), s.profile, p) {
 		lines = append(lines, "内置核心运行中；已读回当前节点选择")
 	} else {

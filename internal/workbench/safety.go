@@ -167,7 +167,7 @@ func (s *Server) finishLocationProbe(cfg cage.Config, loc Location, probeErr err
 	if err != nil {
 		return err
 	}
-	if current.ProxyURL != cfg.ProxyURL || current.ProxyRevision != cfg.ProxyRevision || current.DNSURL != cfg.DNSURL {
+	if current.ProxyURL != cfg.ProxyURL || current.ProxyRevision != cfg.ProxyRevision || current.DNSURL != cfg.DNSURL || current.DNS != cfg.DNS {
 		return nil
 	}
 	observed := loc.exitLocation()

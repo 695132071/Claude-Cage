@@ -53,6 +53,32 @@ type Store struct {
 	Chain        []string                     `json:"chain,omitempty"`
 	Sources      []Source                     `json:"sources"`
 	ExitPolicies map[string]exitpolicy.Policy `json:"exit_policies,omitempty"`
+	// GuestDNS and BootstrapDNS copy the Cage DNS settings when a route is
+	// applied, so a core restarted from this store keeps using them.
+	GuestDNS     []string `json:"guest_dns,omitempty"`
+	BootstrapDNS []string `json:"bootstrap_dns,omitempty"`
+}
+
+// NodeResolvers resolve proxy server names on the host network.
+func (s Store) NodeResolvers() []string {
+	if len(s.BootstrapDNS) > 0 {
+		return append([]string(nil), s.BootstrapDNS...)
+	}
+	return BootstrapDNSURLs()
+}
+
+// coreNameservers are the core's own resolvers, queried through the selected
+// route like guest DNS. They use the same endpoints as guest DNS.
+func (s Store) coreNameservers() []string {
+	list := s.GuestDNS
+	if len(list) == 0 {
+		list = []string{"https://1.1.1.1/dns-query"}
+	}
+	out := make([]string, 0, len(list))
+	for _, endpoint := range list {
+		out = append(out, endpoint+"#"+Group)
+	}
+	return out
 }
 
 func Token() string {
@@ -337,7 +363,7 @@ func (s Store) Runtime(profile string) ([]byte, error) {
 	}
 	// Infrastructure DNS bootstraps only the core's server domains. Guest DNS
 	// remains behind Cage Egress, and there is no host-system resolver fallback.
-	dns := map[string]any{"enable": true, "ipv6": false, "use-hosts": false, "use-system-hosts": false, "default-nameserver": BootstrapDNSURLs(), "proxy-server-nameserver": BootstrapDNSURLs(), "nameserver": []string{"https://1.1.1.1/dns-query#" + Group}}
+	dns := map[string]any{"enable": true, "ipv6": false, "use-hosts": false, "use-system-hosts": false, "default-nameserver": s.NodeResolvers(), "proxy-server-nameserver": s.NodeResolvers(), "nameserver": s.coreNameservers()}
 	config := map[string]any{"mixed-port": s.Port, "bind-address": "127.0.0.1", "allow-lan": false, "skip-auth-prefixes": []string{}, "mode": "rule", "ipv6": false, "log-level": "warning", "find-process-mode": "off", "external-controller-unix": Socket(profile), "tun": map[string]any{"enable": false}, "dns": dns, "geo-auto-update": false, "profile": map[string]any{"store-selected": false}, "proxy-groups": []any{map[string]any{"name": Group, "type": "select", "proxies": []string{s.Selected}}}}
 	// An explicit environment chain can override imported dialers. Named
 	// account routes retain the node's imported chain, including dependent hops.

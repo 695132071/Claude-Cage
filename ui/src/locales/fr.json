@@ -2436,5 +2436,10 @@
   "把测速最快的节点设为待应用的出口；点击「应用代理」后才会切换并重新检查网络": "Définit le nœud le plus rapide comme sortie en attente ; le changement et la nouvelle vérification du réseau n’ont lieu qu’après un clic sur « Appliquer le proxy »",
   "修改节点地址": "Modifier l’adresse du nœud",
   "只修改服务器和端口，认证信息与协议参数保持不变；修改后需重新通过出口检查。": "Seuls le serveur et le port changent ; les identifiants et les paramètres du protocole restent inchangés. La vérification de sortie doit ensuite être réussie à nouveau.",
-  "可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。": "Collez ou choisissez un nouveau YAML pour mettre à jour cette source ; les nœuds qui gardent leur nom conservent la sélection et les règles de sortie. Laissez vide pour ne modifier que le nom."
+  "可粘贴或选择新的 YAML 更新此来源；名称不变的节点保留选择与出口规则。留空则只修改名称。": "Collez ou choisissez un nouveau YAML pour mettre à jour cette source ; les nœuds qui gardent leur nom conservent la sélection et les règles de sortie. Laissez vide pour ne modifier que le nom.",
+  "备用加密 DNS（每行一个，最多 4 个）": "DNS chiffré de secours (un par ligne, 4 au maximum)",
+  "以上端点都不可用时改用 Google 公共 DNS（8.8.8.8）": "Utiliser le DNS public de Google (8.8.8.8) si aucun des points ci-dessus ne répond",
+  "业务 DNS、联网检查与内置核心使用同一组端点，均经所选节点发出，按顺序尝试。默认只使用上面的加密 DNS；开启公共 DNS 备用后，查询可能发给第二家服务商。": "Le DNS de l’environnement, la vérification réseau et le cœur intégré utilisent les mêmes points de terminaison, tous via le nœud choisi et dans l’ordre. Par défaut, seul le DNS chiffré ci-dessus est utilisé ; avec le secours public activé, les requêtes peuvent être envoyées à un second fournisseur.",
+  "节点域名解析（每行一个数字 IP 的 DoH，留空使用默认）": "Résolution des noms de nœuds (un DoH à IP numérique par ligne ; vide pour la valeur par défaut)",
+  "经主机网络解析节点服务器域名，下次应用代理时生效。": "Résout les noms des serveurs de nœuds via le réseau de l’hôte ; prend effet à la prochaine application du proxy."
 }

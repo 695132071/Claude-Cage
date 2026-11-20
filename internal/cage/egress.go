@@ -14,6 +14,7 @@ import (
 	"net/netip"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/miekg/dns"
@@ -26,10 +27,13 @@ import (
 // outside the VM. The guest never receives the upstream credentials.
 type Egress struct {
 	upstream *url.URL
-	dnsURL   string
-	client   *http.Client
-	public   netguard.Policy
-	connect  proxy.ContextDialer
+	dnsURLs  []string
+	// dnsPreferred is the endpoint that answered last, so a blocked primary
+	// does not cost every query a timeout.
+	dnsPreferred atomic.Int32
+	client       *http.Client
+	public       netguard.Policy
+	connect      proxy.ContextDialer
 }
 
 // The SOCKS handshake runs on our socket so TCP half-close remains available
@@ -43,7 +47,7 @@ func NewEgress(c Config) (*Egress, error) {
 		return nil, err
 	}
 	u, _ := url.Parse(c.ProxyURL)
-	e := &Egress{upstream: u, dnsURL: c.DNSURL, connect: &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}}
+	e := &Egress{upstream: u, dnsURLs: c.DNSEndpoints(), connect: &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second}}
 	e.client = &http.Client{Timeout: 20 * time.Second, Transport: &http.Transport{Proxy: nil, DialContext: e.DialContext, ForceAttemptHTTP2: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return errors.New("DNS redirect refused") }}
 	return e, nil
 }
@@ -185,34 +189,52 @@ func (e *Egress) ExchangeDNS(ctx context.Context, q *dns.Msg) (*dns.Msg, error) 
 	}
 	// Keep the original total deadline, but allow a fresh connection after an
 	// intermittent EOF or overloaded DoH server. Every attempt uses this same
-	// proxy-only transport and the configured endpoint.
+	// proxy-only transport. A retryable failure moves to the next configured
+	// endpoint; with one endpoint every attempt reuses it.
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	for attempt := 0; attempt < 3; attempt++ {
+	endpoints := e.dnsURLs
+	start := int(e.dnsPreferred.Load())
+	attempts := max(3, len(endpoints))
+	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
-			return nil, ctx.Err()
+			return nil, e.dnsUnavailable(ctx.Err())
 		}
+		index := (start + attempt) % len(endpoints)
 		attemptCtx, done := context.WithTimeout(ctx, 6*time.Second)
 		var answer *dns.Msg
 		var retry bool
-		answer, retry, err = e.exchangeDNSOnce(attemptCtx, q, wire)
+		answer, retry, err = e.exchangeDNSOnce(attemptCtx, endpoints[index], q, wire)
 		done()
-		if err == nil || !retry {
+		if err == nil {
+			e.dnsPreferred.Store(int32(index))
+			return answer, nil
+		}
+		if !retry {
 			return answer, err
 		}
 		if attempt < 2 {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return nil, e.dnsUnavailable(ctx.Err())
 			case <-time.After(time.Duration(attempt+1) * 150 * time.Millisecond):
 			}
 		}
 	}
-	return nil, err
+	return nil, e.dnsUnavailable(err)
 }
 
-func (e *Egress) exchangeDNSOnce(ctx context.Context, q *dns.Msg, wire []byte) (*dns.Msg, bool, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.dnsURL, bytes.NewReader(wire))
+// dnsUnavailable names the endpoints (hosts only) and where to change them.
+func (e *Egress) dnsUnavailable(cause error) error {
+	hosts := make([]string, 0, len(e.dnsURLs))
+	for _, endpoint := range e.dnsURLs {
+		hosts = append(hosts, DNSHost(endpoint))
+	}
+	return fmt.Errorf("经所选节点无法使用加密 DNS（%s）；可在“设置 → 网络与代理 → 加密 DNS”改用其他端点、添加备用端点，或开启公共 DNS 备用：%w", strings.Join(hosts, "、"), cause)
+}
+
+func (e *Egress) exchangeDNSOnce(ctx context.Context, endpoint string, q *dns.Msg, wire []byte) (*dns.Msg, bool, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(wire))
 	if err != nil {
 		return nil, false, errors.New("invalid DNS request")
 	}
