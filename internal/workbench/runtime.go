@@ -531,6 +531,7 @@ func (s *Server) stopEnvironment() (returned error) {
 	s.mobileCLI.stopAll()
 	s.closeProjectShares()
 	s.closeHostTools()
+	s.notifications.stopWatcher()
 	if _, err := os.Stat(filepath.Join(s.instanceDir(), "lima.yaml")); !containerenv.Configured(s.profile) && os.IsNotExist(err) {
 		return nil
 	}

@@ -63,7 +63,13 @@ import { networkState, isGuestLocalURL } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
 import { NetworkSpeed } from "./network-speed";
-import { useWindowVisibility } from "./window-visibility";
+import { isWindowFocused, useWindowVisibility } from "./window-visibility";
+import {
+  createNotificationDeduplicator,
+  defaultNotificationPreferences,
+  dispatchDesktopNotification,
+  normalizeNotificationPreferences,
+} from "./notifications.mjs";
 import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
@@ -912,6 +918,99 @@ function App() {
     acknowledge();
     return () => { live = false; clearTimeout(timer); };
   }, [settings, statusLoaded, fatal, connectionError]);
+  const notificationPrefsRef = useRef(defaultNotificationPreferences);
+  const notificationDedupRef = useRef(null);
+  if (!notificationDedupRef.current) notificationDedupRef.current = createNotificationDeduplicator();
+  const notificationViewRef = useRef({});
+  notificationViewRef.current = {
+    settingsOpen,
+    managementPage,
+    desktopOpen,
+    viewingAccountDesktop,
+    showHome,
+    safetyOpen,
+    dialog,
+    layout,
+    tabs,
+    select,
+    accountDesktops,
+    tr,
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    api("/client/notifications", undefined, undefined, {}, { signal: controller.signal })
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          notificationPrefsRef.current = normalizeNotificationPreferences(value);
+        }
+      })
+      .catch(() => {});
+    const onUpdated = (event) => {
+      notificationPrefsRef.current = normalizeNotificationPreferences(event.detail);
+    };
+    const onClicked = (event) => {
+      const detail = event.detail || {};
+      if (!detail.terminal_id) return;
+      if (detail.connection_id && detail.connection_id !== getClientContext().connection_id) return;
+      const state = notificationViewRef.current;
+      const tabId = "terminal:" + detail.terminal_id;
+      if (!state.tabs.some((item) => item.id === tabId)) return;
+      state.accountDesktops.clear();
+      setSettingsOpen(false);
+      setSafetyOpen(false);
+      setManagementPage("");
+      setDesktopOpen(false);
+      setHome(false);
+      void state.select(tabId, true);
+    };
+    window.addEventListener("cage-notification-preferences", onUpdated);
+    window.addEventListener("cage-notification-click", onClicked);
+    return () => {
+      controller.abort();
+      window.removeEventListener("cage-notification-preferences", onUpdated);
+      window.removeEventListener("cage-notification-click", onClicked);
+    };
+  }, []);
+  useEffect(() => {
+    if (!status?.ready) return;
+    const stream = new EventSource(runtimeURL("/notifications/events"));
+    stream.addEventListener("notification", (event) => {
+      let detail;
+      try {
+        detail = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const state = notificationViewRef.current;
+      const overlayOpen = Boolean(
+        state.settingsOpen ||
+        state.managementPage ||
+        state.desktopOpen ||
+        state.viewingAccountDesktop ||
+        state.showHome ||
+        state.safetyOpen ||
+        state.dialog,
+      );
+      const viewingTerminal = !overlayOpen && Boolean(
+        detail.tab_id && (state.layout.active === detail.tab_id || state.layout.other === detail.tab_id),
+      );
+      void dispatchDesktopNotification(detail, {
+        prefs: notificationPrefsRef.current,
+        viewState: { windowFocused: isWindowFocused(), viewingTerminal },
+        nativeAvailable,
+        native,
+        tr: state.tr,
+        connectionId: getClientContext().connection_id,
+        dedup: notificationDedupRef.current,
+        onFocus: (target) => {
+          window.dispatchEvent(new CustomEvent("cage-notification-click", { detail: target }));
+        },
+      }).catch(() => {});
+    });
+    return () => {
+      stream.close();
+    };
+  }, [status?.ready, clipboardConnection]);
   useEffect(() => {
     if (!status?.ready) return;
     const stream = new EventSource(runtimeURL("/browser/events"));

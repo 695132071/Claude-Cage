@@ -23,11 +23,13 @@ internal sealed class MainWindow : Form
     private string smokePhase = "starting";
     private readonly CancellationTokenSource lifetime = new();
     private readonly Dictionary<string, (string[] Paths, DateTime Expires)> fileSelections = new();
+    private (string TerminalID, string ConnectionID)? pendingNotification;
 
     public MainWindow()
     {
         nativeInput = new NativeInput(value => Script("window.dispatchEvent(new CustomEvent('cage-native-input',{detail:" + JsonSerializer.Serialize(value) + "}));"));
-        Deactivate += (_, _) => Script("window.dispatchEvent(new Event('cage-window-deactivated'));");
+        Activated += (_, _) => PublishFocus(true);
+        Deactivate += (_, _) => { PublishFocus(false); Script("window.dispatchEvent(new Event('cage-window-deactivated'));"); };
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new SizeF(96, 96);
         Text = "Cage";
         StartPosition = FormStartPosition.CenterScreen; BackColor = Color.FromArgb(247, 247, 247);
@@ -57,6 +59,13 @@ internal sealed class MainWindow : Form
         };
         tray = new NotifyIcon { Icon = Icon, Text = "Cage", Visible = true, ContextMenuStrip = trayMenu };
         tray.DoubleClick += (_, _) => RestoreWindow();
+        tray.BalloonTipClicked += (_, _) => {
+            RestoreWindow();
+            var target = pendingNotification;
+            pendingNotification = null;
+            if (target != null && target.Value.TerminalID.Length > 0)
+                Script("window.dispatchEvent(new CustomEvent('cage-notification-click',{detail:" + JsonSerializer.Serialize(new { terminal_id = target.Value.TerminalID, connection_id = target.Value.ConnectionID }) + "}));");
+        };
         updater = new AppUpdater(PublishUpdate, () => { allowQuit = true; Close(); }, () => _ = Bootstrap());
         Shown += async (_, _) => {
             if (Program.SmokeOutput != null) _ = SmokeDeadline();
@@ -147,7 +156,13 @@ internal sealed class MainWindow : Form
         else { allowQuit = true; Close(); }
     }
     private void Action(string name) => Script("window.cageNativeAction?.(" + JsonSerializer.Serialize(name) + ")");
-    private void PublishVisibility() => Script($"window.cageWindowVisible = {(Visible && WindowState != FormWindowState.Minimized ? "true" : "false")}; window.dispatchEvent(new Event('cage-window-visibility'));");
+    private void PublishFocus(bool focused) => Script($"window.cageWindowFocused = {(focused ? "true" : "false")}; window.dispatchEvent(new Event('cage-window-focus'));");
+    private void PublishVisibility()
+    {
+        var visible = Visible && WindowState != FormWindowState.Minimized;
+        Script($"window.cageWindowVisible = {(visible ? "true" : "false")}; window.dispatchEvent(new Event('cage-window-visibility'));");
+        PublishFocus(visible && Form.ActiveForm == this);
+    }
     private void PublishUpdate(Dictionary<string, object?> state) {
         if (state.TryGetValue("phase", out var phase) && phase as string == "failed") _ = Backend.Report("App update failed: " + state.GetValueOrDefault("message"));
         Script("window.dispatchEvent(new CustomEvent('cage-app-update',{detail:" + JsonSerializer.Serialize(state) + "}));");
@@ -566,6 +581,28 @@ internal sealed class MainWindow : Form
                 case "accountDevice":
                     if (request.Text("operation") != "status") throw new InvalidDataException("此平台暂不支持快捷登录");
                     result = new { supported = false }; break;
+                case "notificationStatus":
+                case "requestNotificationPermission":
+                    result = new { supported = true, permission = "authorized", canOpenSettings = true }; break;
+                case "showNotification":
+                {
+                    var notifTitle = request.Text("title");
+                    var notifBody = request.Text("body");
+                    var terminalID = request.Text("terminal_id");
+                    var connectionID = request.Text("connection_id");
+                    if (notifTitle.Length is 0 or > 200) throw new InvalidDataException("通知标题无效");
+                    if (notifBody.Length > 500) throw new InvalidDataException("通知内容过长");
+                    if (terminalID.Length > 0 && !System.Text.RegularExpressions.Regex.IsMatch(terminalID, "^[a-f0-9]{16}$"))
+                        throw new InvalidDataException("通知目标终端无效");
+                    if (connectionID.Length > 128) throw new InvalidDataException("通知连接标识无效");
+                    pendingNotification = (terminalID, connectionID);
+                    tray.ShowBalloonTip(5000, notifTitle, notifBody.Length > 0 ? notifBody : notifTitle, ToolTipIcon.None);
+                    result = new { delivered = true, permission = "authorized" };
+                    break;
+                }
+                case "openNotificationSettings":
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("ms-settings:notifications") { UseShellExecute = true });
+                    result = true; break;
                 case "refreshSession":
                     var (exit, data) = await Backend.Json(controllerNeedsUpdate ? ["desktop", "--json", "--existing"] : ["desktop", "--json"], lifetime.Token);
                     if (exit != 0) throw new IOException("工作台会话恢复失败");
