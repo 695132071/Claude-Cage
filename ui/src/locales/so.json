@@ -2453,5 +2453,9 @@
   "切换控制服务器？": "Ma la beddelaa server-ka maamulka?",
   "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Xiriirka shabakadda gaarka ah ee hadda jira wuu go’i doonaa waxaadna u baahan doontaa inaad mar kale ka gasho server-ka cusub. Aqoonsiga qalabka iyo furayaasha SSH ee server kasta si gaar ah ayaa loo ilaaliyaa.",
   "已保存自建控制服务器地址": "Cinwaanka server-ka maamulka gaarka ah waa la kaydiyay",
-  "已恢复使用 Tailscale 官方控制服务器": "Waxaa lagu celiyay server-ka maamulka rasmiga ah ee Tailscale"
+  "已恢复使用 Tailscale 官方控制服务器": "Waxaa lagu celiyay server-ka maamulka rasmiga ah ee Tailscale",
+  "SSH agent 套接字（可选）": "Socket-ka SSH agent (ikhtiyaari)",
+  "/Users/你的名字/.ssh/agent.sock": "/Users/Magacaaga/.ssh/agent.sock",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK. Haddii maamulaha erayada sirta ah uu bixiyo agent u gaar ah, geli waddada buuxda ee socket-kiisa. Cage ma akhriyo faylasha dejinta SSH.",
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK ama Windows OpenSSH agent. Agent kale, geli tuubbada magacaaban (named pipe) ee ku bilaabanta \\\\.\\pipe\\."
 }

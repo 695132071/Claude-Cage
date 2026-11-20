@@ -2453,5 +2453,9 @@
   "切换控制服务器？": "제어 서버를 전환할까요?",
   "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "현재 사설망 연결이 끊어지며 대상 서버에 다시 로그인해야 합니다. 공식 서비스와 각 자체 서버의 기기 신원 및 SSH 공개 키는 각각 유지됩니다.",
   "已保存自建控制服务器地址": "자체 제어 서버 주소를 저장했습니다",
-  "已恢复使用 Tailscale 官方控制服务器": "Tailscale 공식 제어 서버로 복원했습니다"
+  "已恢复使用 Tailscale 官方控制服务器": "Tailscale 공식 제어 서버로 복원했습니다",
+  "SSH agent 套接字（可选）": "SSH agent 소켓(선택)",
+  "/Users/你的名字/.ssh/agent.sock": "/Users/사용자이름/.ssh/agent.sock",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "비워 두면 SSH_AUTH_SOCK을 사용합니다. 비밀번호 관리자가 별도의 agent를 제공하면 해당 소켓의 절대 경로를 입력하세요. Cage는 SSH 설정 파일을 읽지 않습니다.",
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "비워 두면 SSH_AUTH_SOCK 또는 Windows OpenSSH agent를 사용합니다. 다른 agent를 쓰려면 \\\\.\\pipe\\로 시작하는 명명된 파이프를 입력하세요."
 }

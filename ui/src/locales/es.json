@@ -2453,5 +2453,9 @@
   "切换控制服务器？": "¿Cambiar de servidor de control?",
   "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "Se desconectará la red privada actual y tendrás que volver a iniciar sesión en el servidor de destino. Las identidades de dispositivo y las claves SSH de cada servidor se conservan por separado.",
   "已保存自建控制服务器地址": "Dirección del servidor de control propio guardada",
-  "已恢复使用 Tailscale 官方控制服务器": "Se restauró el servidor de control oficial de Tailscale"
+  "已恢复使用 Tailscale 官方控制服务器": "Se restauró el servidor de control oficial de Tailscale",
+  "SSH agent 套接字（可选）": "Socket del SSH agent (opcional)",
+  "/Users/你的名字/.ssh/agent.sock": "/Users/su-nombre/.ssh/agent.sock",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Déjelo vacío para usar SSH_AUTH_SOCK. Si un gestor de contraseñas ofrece su propio agent, introduzca la ruta absoluta de su socket. Cage no lee los archivos de configuración de SSH.",
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Déjelo vacío para usar SSH_AUTH_SOCK o el agent de Windows OpenSSH. Para otro agent, introduzca su canalización con nombre que empieza por \\\\.\\pipe\\."
 }

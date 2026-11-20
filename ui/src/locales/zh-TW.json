@@ -2453,5 +2453,9 @@
   "切换控制服务器？": "切換控制伺服器？",
   "当前私网连接会断开，需要重新登录目标服务器。官方服务与各处自建服务器的设备身份和 SSH 公钥分别保留。": "目前私網連線會中斷，需要重新登入目標伺服器。官方服務與各處自建伺服器的裝置身分和 SSH 公鑰分別保留。",
   "已保存自建控制服务器地址": "已儲存自建控制伺服器位址",
-  "已恢复使用 Tailscale 官方控制服务器": "已恢復使用 Tailscale 官方控制伺服器"
+  "已恢复使用 Tailscale 官方控制服务器": "已恢復使用 Tailscale 官方控制伺服器",
+  "SSH agent 套接字（可选）": "SSH agent 通訊端（選填）",
+  "/Users/你的名字/.ssh/agent.sock": "/Users/你的名字/.ssh/agent.sock",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "留空時使用 SSH_AUTH_SOCK。密碼管理器提供獨立 agent 時，填寫其通訊端的絕對路徑。Cage 不讀取 SSH 設定檔。",
+  "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "留空時使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 時，填寫以 \\\\.\\pipe\\ 開頭的具名管道。"
 }
