@@ -587,8 +587,8 @@ printf '%s\\n' "$@"
             memory=Path(json.loads(Path(flags[1]).read_text())["autoMemoryDirectory"])
             self.assertEqual((memory/"MEMORY.md").read_text(),"account learning")
             self.assertTrue(original.is_symlink())
-            backup=self.home/".local/share/cage/claude-shared/backups"/FIRST/"projects"/key/"memory/MEMORY.md"
-            self.assertEqual(backup.read_text(),"account learning")
+            backups=list((self.home/".local/share/cage/claude-shared/backups"/FIRST/"projects"/key).glob("memory-*"))
+            self.assertEqual([(path/"MEMORY.md").read_text() for path in backups],["account learning"])
             self.assertTrue(Path(flags[1]).resolve().is_relative_to(base.resolve()))
 
     def test_mobile_settings_remain_anonymous_when_adding_shared_defaults(self):
@@ -1027,59 +1027,78 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         self.assertTrue(marker.exists())
         self.assertNotIn("lint@team", self.read(self.common / "plugins/installed_plugins.json")["plugins"])
 
-    def test_backups_prune_by_count_and_age_without_deleting_sole_migration_backup(self):
+    def test_backups_prune_by_creation_time_and_always_keep_the_newest(self):
         backups = self.home / ".local/share/cage/claude-shared/backups" / FIRST
         backups.mkdir(parents=True)
         now = 1_800_000_000.0
+        ns = lambda seconds: int(seconds * 1e9)
         old = now - (helper.BACKUP_MAX_AGE + 10 * 86400)
         recent = now - 3600
-        # Count pruning: 25 recent timestamped backups -> keep newest 20.
+        # Count pruning: 25 recent backups -> keep newest 20 by their names.
         prefix = backups / "settings.json"
         for i in range(25):
-            entry = backups / f"settings.json-{1_700_000_000_000_000_000 + i}"
+            entry = backups / f"settings.json-{ns(recent) + i}"
             entry.write_text(f"v{i}")
-            os.utime(entry, (recent + i, recent + i))
+            # Copies keep their source's time; it must not decide the order.
+            os.utime(entry, (old - i, old - i))
         unrelated = backups / "settings.json.keep"
         unrelated.write_text("untouched")
         helper.prune_backup_series(prefix, now=now)
         kept = sorted(p.name for p in backups.glob("settings.json-*"))
         self.assertEqual(len(kept), helper.BACKUP_MAX_COUNT)
-        self.assertEqual(kept[0], f"settings.json-{1_700_000_000_000_000_000 + 5}")
-        self.assertEqual(kept[-1], f"settings.json-{1_700_000_000_000_000_000 + 24}")
+        self.assertEqual(kept[0], f"settings.json-{ns(recent) + 5}")
+        self.assertEqual(kept[-1], f"settings.json-{ns(recent) + 24}")
         self.assertTrue(unrelated.exists())
-        # Age pruning: old replaced backups are removed, recent one stays.
+        # Age pruning by creation time, even when the copied mtime is recent.
         aged_prefix = backups / "claude.json"
         for i in range(3):
-            entry = backups / f"claude.json-{1_700_000_000_000_000_100 + i}"
+            entry = backups / f"claude.json-{ns(old) + i}"
             entry.write_text(f"old{i}")
-            os.utime(entry, (old + i, old + i))
-        fresh = backups / f"claude.json-{1_700_000_000_000_000_200}"
+            os.utime(entry, (now, now))
+        fresh = backups / f"claude.json-{ns(recent)}"
         fresh.write_text("fresh")
-        os.utime(fresh, (recent, recent))
+        os.utime(fresh, (old, old))
         helper.prune_backup_series(aged_prefix, now=now)
         self.assertEqual([p.name for p in backups.glob("claude.json-*")], [fresh.name])
-        # Sole unreplaced migration backup (directory, > 30 days old): NEVER deleted.
+        # The newest backup of a series is kept regardless of age.
+        lone = backups / f"lone.json-{ns(old)}"
+        lone.write_text("lone")
+        helper.prune_backup_series(backups / "lone.json", now=now)
+        self.assertTrue(lone.exists())
+        newer_old = backups / f"lone.json-{ns(old) + 60}"
+        newer_old.write_text("newer-old")
+        helper.prune_backup_series(backups / "lone.json", now=now)
+        self.assertEqual([p.name for p in backups.glob("lone.json-*")], [newer_old.name])
+        # A backup at the bare name (older versions) has no known creation
+        # time: never removed by age, only beyond the count, oldest first.
         sole_dir = backups / "projects/demo/memory"
         sole_dir.mkdir(parents=True)
         (sole_dir / "MEMORY.md").write_text("original note")
         os.utime(sole_dir, (old, old))
         helper.prune_backup_series(sole_dir, now=now)
         self.assertTrue((sole_dir / "MEMORY.md").is_file())
-        # Sole timestamped backup (> 30 days old): NEVER deleted.
-        os.utime(fresh, (old, old))
-        helper.prune_backup_series(aged_prefix, now=now)
-        self.assertTrue(fresh.exists())
-        # Two old backups (> 30 days old): older is pruned, newest single copy remains.
-        newer_old = backups / f"claude.json-{1_700_000_000_000_000_300}"
-        newer_old.write_text("newer-old")
-        os.utime(newer_old, (old + 60, old + 60))
-        helper.prune_backup_series(aged_prefix, now=now)
-        self.assertEqual([p.name for p in backups.glob("claude.json-*")], [newer_old.name])
+        later = backups / f"projects/demo/memory-{ns(recent)}"
+        later.mkdir()
+        helper.prune_backup_series(sole_dir, now=now)
+        self.assertTrue((sole_dir / "MEMORY.md").is_file())
+        helper.prune_backup_series(sole_dir, now=now, keep_count=1)
+        self.assertFalse(sole_dir.exists())
+        self.assertTrue(later.is_dir())
+        # A real backup is named by when it was made, so a copy of an old file
+        # is not pruned the moment it is created.
+        source_file = self.home / "old-source.md"
+        source_file.write_text("old content")
+        os.utime(source_file, (old, old))
+        earlier = backups / f"rules-{ns(time.time() - helper.BACKUP_MAX_AGE - 86400)}"
+        earlier.write_text("earlier")
+        created = helper.unique_backup_path(backups / "rules")
+        shutil.copy2(source_file, created)
+        helper.prune_backup_series(backups / "rules")
+        self.assertEqual([p.name for p in backups.glob("rules-*")], [created.name])
         # Outside backups root: ignored.
-        outside = self.home / "outside-settings.json-1700000000000000001"
-        outside2 = self.home / "outside-settings.json-1700000000000000002"
+        outside = self.home / f"outside-settings.json-{ns(old)}"
+        outside2 = self.home / f"outside-settings.json-{ns(old) + 10}"
         outside.write_text("a"); outside2.write_text("b")
-        os.utime(outside, (old, old)); os.utime(outside2, (old + 10, old + 10))
         helper.prune_backup_series(self.home / "outside-settings.json", now=now)
         self.assertTrue(outside.exists() and outside2.exists())
 

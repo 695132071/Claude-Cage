@@ -560,7 +560,14 @@ def write_backup_bytes(prefix, data):
 
 
 def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=BACKUP_MAX_AGE):
-    """Bound backup growth by count and age while keeping at least one backup."""
+    """Bound backup growth by count and age while always keeping the newest backup.
+
+    Age is the creation time in each backup's name (nanoseconds). Copies keep
+    their source's modification time, so that time says nothing about when the
+    backup was made. A backup at the bare prefix comes from an older version
+    that did not name the time: it sorts as the oldest and is removed only when
+    the series exceeds its count, never by an age it cannot know.
+    """
     backups_root = (shared_root() / "backups").resolve()
     parent = prefix.parent
     if not parent.is_dir():
@@ -580,25 +587,20 @@ def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=B
         if linked(child):
             continue
         if child.name == prefix.name:
-            stamp = 0
+            created = None
         elif child.name.startswith(head) and child.name[len(head):].isdigit() and len(child.name[len(head):]) >= 15:
-            stamp = int(child.name[len(head):])
+            created = int(child.name[len(head):]) / 1e9
         else:
             continue
-        try:
-            mtime = child.lstat().st_mtime
-        except OSError:
-            continue
-        entries.append((mtime, stamp, child))
-    # Always retain the newest entry so a sole unreplaced migration backup is
-    # never deleted regardless of age.
+        entries.append((created is not None, created or 0, child))
     if len(entries) <= 1:
         return
     entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
     cutoff = (time.time() if now is None else now) - max_age
     limit = max(1, keep_count)
-    for index, (mtime, _, child) in enumerate(entries):
-        if index == 0 or (index < limit and mtime >= cutoff):
+    for index, (named, created, child) in enumerate(entries):
+        # The newest backup of a series is kept regardless of its age.
+        if index == 0 or (index < limit and (not named or created >= cutoff)):
             continue
         try:
             if child.is_dir():
@@ -1450,11 +1452,7 @@ def shared_profile_resources(base, desktop=False):
                     shared.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
                     local.rename(shared)
                 elif local.is_file() and shared.is_file() and local.read_bytes() == shared.read_bytes():
-                    # Keep a recoverable copy before replacing a local resource.
-                    backup = lock_dir / "backups" / base.name / local.relative_to(config)
-                    backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-                    if not backup.exists():
-                        shutil.copy2(local, backup)
+                    # An identical copy; the caller backed up the whole entry first.
                     local.unlink()
                 else:
                     # Never choose which conflicting instruction or skill wins.
@@ -1501,10 +1499,7 @@ def shared_profile_resources(base, desktop=False):
             backup_prefix = None
             if source.exists() and not linked(source) and not same_path(source, destination):
                 backup_prefix = lock_dir / "backups" / base.name / source.relative_to(config)
-                backup = backup_prefix
-                if backup.exists() or linked(backup):
-                    backup = unique_backup_path(backup_prefix)
-                backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+                backup = unique_backup_path(backup_prefix)
                 if source.is_dir():
                     shutil.copytree(source, backup, symlinks=True)
                 else:
@@ -1585,9 +1580,7 @@ def link_project_memory(own, memory, backup):
             if not destination.exists():
                 shutil.copy2(source, destination)
         backup_prefix = backup
-        backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        if backup.exists() or linked(backup):
-            backup = unique_backup_path(backup_prefix)
+        backup = unique_backup_path(backup_prefix)
         own.rename(backup)
     resource_link(own, memory)
     if backup_prefix is not None:
