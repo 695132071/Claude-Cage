@@ -7,6 +7,7 @@ import json
 import os
 import runpy
 import shlex
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -29,6 +30,9 @@ class ClaudeAccountTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name)
+        temp_patch = patch.object(tempfile, "tempdir", str(self.home))
+        temp_patch.start()
+        self.addCleanup(temp_patch.stop)
         fake = self.home / ".local/bin/claude"
         fake.parent.mkdir(parents=True)
         # Emulate the documented status shape of the official CLI. Its response
@@ -735,6 +739,9 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.home = Path(tmp.name).resolve()
+        temp_patch = patch.object(tempfile, "tempdir", str(self.home))
+        temp_patch.start()
+        self.addCleanup(temp_patch.stop)
         fake = self.home / ".local/bin/claude"
         fake.parent.mkdir(parents=True)
         fake.write_text("#!/bin/sh\nexit 0\n")
@@ -1072,6 +1079,260 @@ class SharedPluginsMcpAndMemoryTests(unittest.TestCase):
         os.utime(outside, (old, old)); os.utime(outside2, (old + 10, old + 10))
         helper.prune_backup_series(self.home / "outside-settings.json", now=now)
         self.assertTrue(outside.exists() and outside2.exists())
+
+    def test_private_plugin_registries_and_credentials_never_leak_across_accounts(self):
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        plugins = config / "plugins"
+        self.install(plugins, "team", "example/team", "lint")
+        # Add private claude.ai/org marketplace, credentialed URL marketplace,
+        # synced/arbitrary/traversal installPaths, and header-authenticated extra marketplace.
+        known = self.read(plugins / "known_marketplaces.json")
+        known["org-mkt"] = {"source": {"source": "url", "url": "https://claude.ai/api/marketplace", "claudeaiPluginId": "pid-1"},
+                            "installLocation": str(plugins / "synced/org_uuid/org-mkt"), "marketplaceId": "org-mkt-id"}
+        known["token-mkt"] = {"source": {"source": "git", "url": "https://ghp_secret@github.com/org/private.git"},
+                              "installLocation": str(plugins / "marketplaces/token-mkt")}
+        self.write(plugins / "known_marketplaces.json", known)
+        installed = self.read(plugins / "installed_plugins.json")
+        installed["plugins"]["secret@org-mkt"] = [{"scope": "user", "installPath": str(plugins / "synced/org_uuid/secret/1.0.0"), "version": "1.0.0"}]
+        installed["plugins"]["priv@token-mkt"] = [{"scope": "user", "installPath": str(plugins / "cache/token-mkt/priv/1.0.0"), "version": "1.0.0"}]
+        installed["plugins"]["outside@team"] = [{"scope": "user", "installPath": "/tmp/outside/plugin", "version": "1.0.0"}]
+        installed["plugins"]["escape@team"] = [{"scope": "user", "installPath": str(plugins / "cache") + "/../synced/x", "version": "1.0.0"}]
+        self.write(plugins / "installed_plugins.json", installed)
+        self.write(config / "settings.json", {
+            "enabledPlugins": {"lint@team": True, "secret@org-mkt": True, "priv@token-mkt": True, "ext@cred-extra": True, "outside@team": True},
+            "extraKnownMarketplaces": {
+                "pub-extra": {"source": {"source": "github", "repo": "example/pub"}},
+                "cred-extra": {"source": {"source": "url", "url": "https://example.com/mkt.json", "headers": {"Authorization": "Bearer topsecret"}}},
+            },
+        })
+        self.share(FIRST)
+        self.share(SECOND)
+        # Public plugin & public extra marketplace sync across accounts.
+        self.assertIn("lint@team", self.read(other / "plugins/installed_plugins.json")["plugins"])
+        self.assertIn("pub-extra", self.read(other / "settings.json")["extraKnownMarketplaces"])
+        self.assertEqual(self.read(other / "settings.json")["enabledPlugins"], {"lint@team": True})
+        # None of the private/credentialed/org/synced/arbitrary entries ever leak to common or SECOND.
+        for target_root in (self.common, other):
+            combined = "\n".join(p.read_text(encoding="utf-8") for p in (
+                target_root / "plugins/known_marketplaces.json",
+                target_root / "plugins/installed_plugins.json",
+                target_root / "settings.json",
+            ) if p.exists())
+            for secret in ("org-mkt", "token-mkt", "cred-extra", "secret@org-mkt", "priv@token-mkt",
+                           "outside@team", "escape@team", "ext@cred-extra", "topsecret", "ghp_secret",
+                           "claudeaiPluginId", "org_uuid", "marketplaceId"):
+                self.assertNotIn(secret, combined, f"leaked {secret} into {target_root}")
+        # Account A retains all of its own private entries untouched.
+        first_known = self.read(plugins / "known_marketplaces.json")
+        self.assertIn("org-mkt", first_known)
+        self.assertIn("token-mkt", first_known)
+        self.assertIn("secret@org-mkt", self.read(plugins / "installed_plugins.json")["plugins"])
+        self.assertIn("cred-extra", self.read(config / "settings.json")["extraKnownMarketplaces"])
+        # share_plugin_folders refuses to link when local/marketplaces contains a private/org directory.
+        third = "3" * 24
+        base3, cfg3 = self.profile(third)
+        (cfg3 / "plugins/marketplaces/org-dir").mkdir(parents=True)
+        self.write(cfg3 / "plugins/known_marketplaces.json", {
+            "org-dir": {"source": {"source": "url", "url": "https://claude.ai/api/org"}, "installLocation": str(cfg3 / "plugins/marketplaces/org-dir")}
+        })
+        self.assertFalse(helper.share_plugin_folders(base3, helper.shared_root()))
+        self.assertFalse((cfg3 / "plugins/marketplaces").is_symlink())
+        self.assertFalse((self.common / "plugins/marketplaces/org-dir").exists())
+
+    def test_malformed_settings_and_corrupt_record_subkeys_do_not_block_launch(self):
+        first, config = self.profile(FIRST)
+        project = self.home / "proj"
+        (project / ".claude").mkdir(parents=True)
+        for bad in (self.common / "settings.json", config / "settings.json",
+                    project / ".claude/settings.json", project / ".claude/settings.local.json"):
+            bad.write_text("{broken json", encoding="utf-8")
+        (first / "shared-settings.json").write_text(json.dumps({"plugins": "not-a-dict", "links": ["bad"]}), encoding="utf-8")
+        with patch.object(helper.Path, "cwd", return_value=project):
+            flags = helper.shared_launch_arguments(first, [])
+        self.assertEqual(flags[0], "--settings")
+        self.assertIn("autoMemoryDirectory", json.loads(Path(flags[1]).read_text(encoding="utf-8")))
+        helper.shared_profile_resources(first, desktop=True)
+        stored = helper.read_record(first)
+        self.assertIsInstance(stored["plugins"], dict)
+        self.assertIsInstance(stored["links"], dict)
+
+    def test_plugin_root_forms_uses_runtime_path_and_utf8_and_junction_removal(self):
+        first, config = self.profile(FIRST)
+        # Simulate _remote_windows where _runtime["path"] returns the real path directly.
+        with patch.dict(helper._runtime, {"path": lambda p: str(p)}):
+            self.assertEqual(helper.plugin_root_forms(config), [str(config / "plugins") + os.sep])
+        # Non-ASCII UTF-8 round-trip through write_record and replace_json.
+        helper.write_record(first, {"note": "中文配置"})
+        self.assertEqual(helper.read_record(first)["note"], "中文配置")
+        target = config / "utf8.json"
+        self.assertTrue(helper.replace_json(target, {"title": "测试🚀"}, None, helper.shared_root() / "backups" / FIRST / "utf8.json"))
+        self.assertEqual(helper.json_file(target)["title"], "测试🚀")
+        # remove_link uses rmdir() for Windows junctions and unlink() otherwise.
+        class FakeJunction:
+            def __init__(self): self.calls = []
+            def is_junction(self): return True
+            def rmdir(self): self.calls.append("rmdir")
+            def unlink(self): self.calls.append("unlink")
+        fake = FakeJunction()
+        with patch.object(helper.os, "name", "nt"):
+            helper.remove_link(fake)
+        self.assertEqual(fake.calls, ["rmdir"])
+
+    def test_self_aliased_skills_symlink_never_wipes_shared_skills(self):
+        first, config = self.profile(FIRST)
+        skill = self.common / "skills/my-skill/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("precious skill", encoding="utf-8")
+        (config / "skills").symlink_to(self.common / "skills", target_is_directory=True)
+        self.share(FIRST)
+        helper.shared_profile_resources(first, desktop=False)
+        self.assertTrue(skill.is_file() and not skill.is_symlink())
+        self.assertEqual(skill.read_text(encoding="utf-8"), "precious skill")
+
+    def test_pending_mcp_popped_and_raced_writes_preserve_pending_and_common_baseline(self):
+        self.write(self.home / ".claude.json", {"mcpServers": {"notes": {"command": "notes-srv"}}})
+        first, config = self.profile(FIRST)
+        self.share(FIRST)
+        self.assertNotIn("pending_mcp", helper.read_record(first))
+        # Pre-existing pending_mcp survives a raced replace_json failure.
+        record = helper.read_record(first)
+        record["pending_mcp"] = {"prior": {"command": "old-srv"}}
+        helper.write_record(first, record)
+        self.write(self.home / ".claude.json", {"mcpServers": {"notes": {"command": "notes-srv"}, "new": {"command": "new-srv"}}})
+        with patch.object(helper, "replace_json", return_value=False):
+            helper.sync_profile_mcp(first, helper.shared_root(), record, True)
+        self.assertEqual(helper.read_record(first).get("pending_mcp"), {"prior": {"command": "old-srv"}})
+        # Common-side plugin baseline persists immediately after common write even if local write races.
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True}, "theme": "dark"})
+        self.share(FIRST)
+        # Account disables lint@team while common adds a new setting (language) that triggers a local write.
+        self.write(config / "settings.json", {"enabledPlugins": {"lint@team": False}, "theme": "dark"})
+        self.write(self.common / "settings.json", {"enabledPlugins": {"lint@team": True}, "theme": "dark", "language": "zh"})
+        real_replace = helper.replace_json
+        def fail_local(path, data, original, backup):
+            if path == config / "settings.json":
+                return False
+            return real_replace(path, data, original, backup)
+        with patch.object(helper, "replace_json", side_effect=fail_local):
+            helper.shared_profile_resources(first, desktop=True)
+        # common already received lint@team=False and record persisted that baseline.
+        self.assertEqual(self.read(self.common / "settings.json")["enabledPlugins"], {"lint@team": False})
+        self.assertEqual(helper.read_record(first)["plugins"]["enabledPlugins"]["lint@team"], False)
+        # Subsequent sync must NOT resurrect lint@team=True in common.
+        self.share(FIRST)
+        self.assertEqual(self.read(self.common / "settings.json")["enabledPlugins"], {"lint@team": False})
+
+    def test_stale_mcp_cleanup_no_leaked_backup_unique_names_and_desktop_conflict_isolation(self):
+        first, config = self.profile(FIRST)
+        # Stale launch-settings/mcp-*.json cleanup on rotation and removal.
+        self.write(self.home / ".claude.json", {"mcpServers": {"srv": {"command": "v1", "env": {"TOKEN": "s1"}}}})
+        flags1 = helper.shared_mcp_arguments(first, ["--settings", "x"])
+        mcp1 = Path(flags1[1]).resolve()
+        self.assertTrue(mcp1.exists())
+        self.write(self.home / ".claude.json", {"mcpServers": {"srv": {"command": "v2", "env": {"TOKEN": "s2"}}}})
+        flags2 = helper.shared_mcp_arguments(first, ["--settings", "x"])
+        mcp2 = Path(flags2[1]).resolve()
+        self.assertFalse(mcp1.exists())
+        self.assertTrue(mcp2.exists())
+        self.write(self.home / ".claude.json", {"mcpServers": {}})
+        helper.shared_mcp_arguments(first, ["--settings", "x"])
+        self.assertEqual(list((first / "launch-settings").glob("mcp-*.json")), [])
+        # Aborted replace_json (current != original) leaks zero backups.
+        settings_path = config / "settings.json"
+        settings_path.write_text('{"a":1}\n', encoding="utf-8")
+        backup_dir = helper.shared_root() / "backups" / FIRST
+        before_backups = set(backup_dir.glob("settings.json-*")) if backup_dir.exists() else set()
+        self.assertFalse(helper.replace_json(settings_path, {"a": 2}, b'{"a":0}\n', backup_dir / "settings.json"))
+        after_backups = set(backup_dir.glob("settings.json-*")) if backup_dir.exists() else set()
+        self.assertEqual(before_backups, after_backups)
+        # Unique backup filenames under identical time_ns().
+        with patch.object(helper.time, "time_ns", return_value=1_700_000_000_000_000_000):
+            b1 = helper.write_backup_bytes(backup_dir / "collision.json", b"one")
+            b2 = helper.write_backup_bytes(backup_dir / "collision.json", b"two")
+        self.assertNotEqual(b1, b2)
+        self.assertEqual((b1.read_bytes(), b2.read_bytes()), (b"one", b"two"))
+        # share_plugin_folders rejects non-dir shared cache even when local cache is absent,
+        # and rejects overlapping marketplace when source metadata is missing.
+        second, other = self.profile(SECOND)
+        (self.common / "plugins/cache").write_text("not a dir", encoding="utf-8")
+        self.assertFalse(helper.share_plugin_folders(second, helper.shared_root()))
+        (self.common / "plugins/cache").unlink()
+        (self.common / "plugins/marketplaces/mystery").mkdir(parents=True)
+        (other / "plugins/marketplaces/mystery").mkdir(parents=True)
+        self.assertFalse(helper.share_plugin_folders(second, helper.shared_root()))
+        shutil.rmtree(self.common / "plugins/marketplaces/mystery")
+        shutil.rmtree(other / "plugins/marketplaces/mystery")
+        # heal_shared_file never destroys a user dotfiles symlink at ~/.claude/CLAUDE.md,
+        # and Desktop isolates a conflicting CLAUDE.md so settings/MCP still sync.
+        dotfile = self.home / "dotfiles-CLAUDE.md"
+        dotfile.write_text("dotfile", encoding="utf-8")
+        (self.common / "CLAUDE.md").symlink_to(dotfile)
+        (config / "CLAUDE.md").write_text("different local", encoding="utf-8")
+        self.write(self.common / "settings.json", {"theme": "dark"})
+        self.write(self.home / ".claude.json", {"mcpServers": {"notes": {"command": "srv"}}})
+        res = self.share(FIRST)
+        self.assertIn("同名冲突", res.stderr)
+        self.assertTrue((self.common / "CLAUDE.md").is_symlink())
+        self.assertEqual(dotfile.read_text(encoding="utf-8"), "dotfile")
+        # Despite the CLAUDE.md conflict, Desktop still synced settings and MCP!
+        self.assertEqual(self.read(config / "settings.json").get("theme"), "dark")
+        self.assertIn("notes", self.read(config / ".claude.json")["mcpServers"])
+        # Preflight ordering: in terminal mode, if AGENTS.md conflicts, a healable
+        # CLAUDE.md must NOT mutate ~/.claude/CLAUDE.md before preflight fails.
+        (self.common / "CLAUDE.md").unlink()
+        (self.common / "CLAUDE.md").write_text("v1", encoding="utf-8")
+        (self.common / "AGENTS.md").write_text("shared-agents", encoding="utf-8")
+        third = "4" * 24
+        base3, cfg3 = self.profile(third)
+        helper.shared_profile_resources(base3, desktop=False)
+        (cfg3 / "CLAUDE.md").unlink()
+        (cfg3 / "CLAUDE.md").write_text("v2-edited", encoding="utf-8")
+        (cfg3 / "AGENTS.md").unlink()
+        (cfg3 / "AGENTS.md").write_text("conflicting-agents", encoding="utf-8")
+        (self.common / "AGENTS.md").write_text("other-agents", encoding="utf-8")
+        with self.assertRaises(helper.SharedResourceConflict):
+            helper.shared_profile_resources(base3, desktop=False)
+        self.assertEqual((self.common / "CLAUDE.md").read_text(encoding="utf-8"), "v1")
+
+    def test_volatile_last_updated_merges_memory_rejects_symlinks_and_statusline_hardening(self):
+        first, config = self.profile(FIRST)
+        second, other = self.profile(SECOND)
+        self.install(self.common / "plugins", "team", "example/team", "lint")
+        self.share(FIRST)
+        self.share(SECOND)
+        # Both accounts independently auto-refresh lastUpdated to different timestamps.
+        k1 = self.read(config / "plugins/known_marketplaces.json")
+        k1["team"]["lastUpdated"] = "2026-11-10T00:00:00.000Z"
+        self.write(config / "plugins/known_marketplaces.json", k1)
+        k2 = self.read(other / "plugins/known_marketplaces.json")
+        k2["team"]["lastUpdated"] = "2026-11-18T00:00:00.000Z"
+        self.write(other / "plugins/known_marketplaces.json", k2)
+        self.share(SECOND)
+        self.share(FIRST)
+        self.assertEqual(self.read(config / "plugins/known_marketplaces.json")["team"]["lastUpdated"], "2026-11-18T00:00:00.000Z")
+        self.assertEqual(self.read(self.common / "plugins/known_marketplaces.json")["team"]["lastUpdated"], "2026-11-18T00:00:00.000Z")
+        # link_project_memory rejects symlinks inside own memory directory.
+        own_mem = config / "projects/p-sym/memory"
+        own_mem.mkdir(parents=True)
+        (own_mem / "evil.md").symlink_to(self.home / "outside.txt")
+        shared_mem = self.common / "projects/p-sym/memory"
+        shared_mem.mkdir(parents=True)
+        with self.assertRaisesRegex(helper.SharedResourceConflict, "异常链接"):
+            helper.link_project_memory(own_mem, shared_mem, helper.shared_root() / "backups" / FIRST / "projects/p-sym/memory")
+        # has_status_line checks common ~/.claude/settings.json even when cwd is outside HOME.
+        self.write(self.common / "settings.json", {"statusLine": None})
+        outside_cwd = Path("/tmp")
+        with patch.object(helper.Path, "cwd", return_value=outside_cwd):
+            self.assertTrue(helper.has_status_line(first))
+        # statusline mode tolerates malformed and non-dict JSON on stdin without crashing.
+        self.write(self.common / "settings.json", {})
+        for bad_input in ("not-json", "[1, 2, 3]", "null"):
+            shown = subprocess.run([sys.executable, str(source), "statusline", FIRST], env=self.env, cwd=self.home,
+                                   input=bad_input, text=True, capture_output=True)
+            self.assertEqual(shown.returncode, 0, shown.stderr)
+            self.assertEqual(shown.stdout.strip(), "Claude")
 
 
 def numpy_base36(value):

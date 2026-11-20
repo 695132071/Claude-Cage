@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 
 _controller_context = {**os.environ, **globals().get("_controller_context", {})}
 runtime_source = Path(__file__).resolve()
@@ -164,7 +165,7 @@ def recover_login(binary, target, source_id, expected, *, archive=False):
             raise ValueError("unexpected login metadata")
         account = json_file(metadata).get("oauthAccount")
         if isinstance(account, dict):
-            with (config_directory(target) / ".claude.json").open("x") as output:
+            with (config_directory(target) / ".claude.json").open("x", encoding="utf-8") as output:
                 json.dump({"oauthAccount": account}, output)
         with credential.open("rb") as stream, destination.open("xb") as output:
             shutil.copyfileobj(stream, output)
@@ -187,7 +188,7 @@ def recover_login(binary, target, source_id, expected, *, archive=False):
 
 def json_file(path):
     try:
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
 
@@ -268,9 +269,16 @@ def save_usage(base, data, expected, confirm_subject, query_started=None, deadli
         if changed and expected and confirm_subject() == expected:
             windows["observed_at"] = now
             windows["identity"] = expected
-            with tempfile.NamedTemporaryFile(mode="w", dir=base, delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=base, delete=False) as tmp:
                 json.dump(windows, tmp, separators=(",", ":"))
-            os.replace(tmp.name, path)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+                temporary = tmp.name
+            try:
+                os.replace(temporary, path)
+            except BaseException:
+                Path(temporary).unlink(missing_ok=True)
+                raise
 
 
 def reported_window(percent, stamp, now):
@@ -403,12 +411,12 @@ def has_status_line(base):
         policy = Path("/Library/Application Support/ClaudeCode")
     else:
         policy = Path("/etc/claude-code")
-    paths = [config_directory(base) / "settings.json", policy / "managed-settings.json"]
+    common = Path.home() / ".claude/settings.json"
+    paths = [config_directory(base) / "settings.json", common, policy / "managed-settings.json"]
     if os.name != "nt":
         paths.extend((policy / "managed-settings.d").glob("*.json"))
     for folder in (Path.cwd(), *Path.cwd().parents):
         paths += [folder / ".claude/settings.json", folder / ".claude/settings.local.json"]
-    common = Path.home() / ".claude/settings.json"
     for path in paths:
         try:
             settings = json_file(path)
@@ -478,16 +486,30 @@ def read_record(base):
     """Cage's private bookkeeping for one profile, outside its configuration."""
     try:
         record = json_file(base / "shared-settings.json")
-    except ValueError:
+    except (ValueError, OSError):
         record = {}
     return record if isinstance(record, dict) else {}
 
 
+def dict_field(record, key):
+    value = record.get(key)
+    if not isinstance(value, dict):
+        value = {}
+        record[key] = value
+    return value
+
+
 def write_record(base, record):
-    with tempfile.NamedTemporaryFile(mode="w", dir=base, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=base, delete=False) as stream:
         json.dump(record, stream, separators=(",", ":"))
+        stream.flush()
+        os.fsync(stream.fileno())
         temporary = stream.name
-    os.replace(temporary, base / "shared-settings.json")
+    try:
+        os.replace(temporary, base / "shared-settings.json")
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
 
 
 def json_snapshot(path):
@@ -498,6 +520,8 @@ def json_snapshot(path):
         raw = path.read_bytes()
     except FileNotFoundError:
         return None, {}
+    except OSError:
+        return b"", None
     try:
         data = json.loads(raw)
     except ValueError:
@@ -508,6 +532,31 @@ def json_snapshot(path):
 
 BACKUP_MAX_COUNT = 20
 BACKUP_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def unique_backup_path(prefix):
+    prefix.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+    stamp = time.time_ns()
+    while True:
+        candidate = prefix.with_name(f"{prefix.name}-{stamp}")
+        if not candidate.exists() and not linked(candidate):
+            return candidate
+        stamp += 1
+
+
+def write_backup_bytes(prefix, data):
+    prefix.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+    stamp = time.time_ns()
+    while True:
+        candidate = prefix.with_name(f"{prefix.name}-{stamp}")
+        try:
+            with candidate.open("xb") as output:
+                output.write(data)
+                output.flush()
+                os.fsync(output.fileno())
+            return candidate
+        except FileExistsError:
+            stamp += 1
 
 
 def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=BACKUP_MAX_AGE):
@@ -562,16 +611,20 @@ def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=B
 
 def replace_json(path, data, original, backup):
     """Atomically publish JSON unless another writer changed the file since it was read."""
+    try:
+        current = path.read_bytes()
+    except FileNotFoundError:
+        current = None
+    if current != original:
+        return False
     backup_prefix = backup
-    if original is not None:
-        backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
-        backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        with backup.open("xb") as output:
-            output.write(original)
+    created_backup = write_backup_bytes(backup_prefix, original) if original is not None else None
     path.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, delete=False) as stream:
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent, delete=False) as stream:
         json.dump(data, stream, indent=2, ensure_ascii=False)
         stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
         temporary = stream.name
     try:
         # The official CLI may save its own change meanwhile. Keep that one and
@@ -582,12 +635,16 @@ def replace_json(path, data, original, backup):
             current = None
         if current != original:
             Path(temporary).unlink(missing_ok=True)
+            if created_backup is not None:
+                created_backup.unlink(missing_ok=True)
             return False
         os.replace(temporary, path)
         prune_backup_series(backup_prefix)
         return True
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
+        if created_backup is not None:
+            created_backup.unlink(missing_ok=True)
         raise
 
 
@@ -635,6 +692,27 @@ def linked(path):
     return path.is_symlink() or os.name == "nt" and path.is_junction()
 
 
+def remove_link(path):
+    if os.name == "nt" and path.is_junction():
+        path.rmdir()
+    else:
+        path.unlink()
+
+
+def same_path(first, second):
+    try:
+        return first.exists() and second.exists() and os.path.samefile(first, second)
+    except OSError:
+        return False
+
+
+def safe_resolve(path):
+    try:
+        return path.resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
 # Entries below a profile's plugins folder that hold account identity (synced
 # from claude.ai, named by account and organization), per-account plugin data or
 # per-account bookkeeping. They never become links; tests pin this list.
@@ -646,6 +724,178 @@ PRIVATE_PLUGIN_ENTRIES = frozenset({"synced", "store", "data", "installed_plugin
 SHARED_PLUGIN_FOLDERS = (("marketplaces", 0), ("cache", 2))
 PLUGIN_SETTINGS = ("enabledPlugins", "extraKnownMarketplaces")
 PLUGIN_REGISTRIES = (("known_marketplaces.json", None), ("installed_plugins.json", "plugins"))
+PRIVATE_PLUGIN_KEYS = frozenset({
+    "headers", "authorization", "auth", "token", "accesstoken", "refreshtoken",
+    "apikey", "secret", "password", "credentials",
+    "claudeaipluginid", "marketplaceid", "organizationid", "orgid",
+    "organizationuuid", "accountid", "accountuuid", "userid", "synced",
+})
+PRIVATE_PLUGIN_HOSTS = ("claude.ai", "anthropic.com")
+PRIVATE_MARKETPLACE_SOURCES = frozenset({"claude.ai", "claudeai", "synced", "org", "organization", "enterprise", "managed"})
+
+
+def has_private_plugin_marker(value):
+    """True if a plugin/marketplace config carries credentials, URL userinfo, or claude.ai/org identity."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            lowered = str(key).lower()
+            if lowered in PRIVATE_PLUGIN_KEYS or "claudeai" in lowered:
+                return True
+            if lowered == "source" and isinstance(item, str) and item.strip().lower() in PRIVATE_MARKETPLACE_SOURCES:
+                return True
+            if has_private_plugin_marker(item):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(has_private_plugin_marker(item) for item in value)
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return False
+        parsed = urlsplit(text)
+        if parsed.scheme in ("http", "https", "ssh", "git", "ftp", "ftps"):
+            if parsed.username or parsed.password:
+                return True
+            host = (parsed.hostname or "").lower()
+            if any(host == blocked or host.endswith("." + blocked) for blocked in PRIVATE_PLUGIN_HOSTS):
+                return True
+        lower = text.lower()
+        if any(host in lower for host in ("claude.ai/", "claude.ai:", ".claude.ai", "anthropic.com/", ".anthropic.com")):
+            return True
+        if "@" in text and ":" in text.split("@", 1)[0] and "://" not in text:
+            return True
+    return False
+
+
+def valid_plugin_name(name):
+    return (isinstance(name, str) and bool(name) and name not in PRIVATE_PLUGIN_ENTRIES
+            and "/" not in name and "\\" not in name and ".." not in name
+            and "claude.ai" not in name.lower())
+
+
+def valid_neutral_plugin_subpath(value, folder):
+    """Verify a neutralized plugin path resolves strictly under <plugins>/<folder>/ and never private entries."""
+    if not isinstance(value, str) or not value.startswith(NEUTRAL_PLUGINS):
+        return False
+    rest = value[len(NEUTRAL_PLUGINS):].replace("\\", "/")
+    parts = [part for part in rest.split("/") if part != ""]
+    if len(parts) < 2 or parts[0] != folder:
+        return False
+    if any(part in (".", "..") for part in parts):
+        return False
+    if parts[1] in PRIVATE_PLUGIN_ENTRIES:
+        return False
+    return True
+
+
+def shareable_marketplace_entry(name, entry):
+    if not valid_plugin_name(name) or not isinstance(entry, dict):
+        return False
+    if has_private_plugin_marker(entry):
+        return False
+    source = entry.get("source")
+    if not isinstance(source, dict) or not source or has_private_plugin_marker(source):
+        return False
+    for key in ("path", "directory", "location"):
+        loc = source.get(key)
+        if isinstance(loc, str):
+            segments = {part.lower() for part in loc.replace("\\", "/").split("/") if part}
+            if segments & {"synced", "store", "data"}:
+                return False
+    location = entry.get("installLocation")
+    if location is not None and not valid_neutral_plugin_subpath(location, "marketplaces"):
+        return False
+    return True
+
+
+def shareable_extra_marketplace(name, entry):
+    if not valid_plugin_name(name) or not isinstance(entry, dict):
+        return False
+    if has_private_plugin_marker(entry):
+        return False
+    source = entry.get("source")
+    if source is not None and (not isinstance(source, dict) or not source or has_private_plugin_marker(source)):
+        return False
+    return True
+
+
+def shareable_installed_plugin(plugin_id, records, private_marketplaces):
+    if not isinstance(plugin_id, str) or "@" not in plugin_id or not isinstance(records, list) or not records:
+        return False
+    plugin_name, _, marketplace = plugin_id.rpartition("@")
+    if not valid_plugin_name(plugin_name) or not valid_plugin_name(marketplace) or marketplace in private_marketplaces:
+        return False
+    for entry in records:
+        if not isinstance(entry, dict) or has_private_plugin_marker(entry):
+            return False
+        scope = entry.get("scope")
+        if isinstance(scope, str) and scope.lower() in PRIVATE_MARKETPLACE_SOURCES:
+            return False
+        if not valid_neutral_plugin_subpath(entry.get("installPath"), "cache"):
+            return False
+    return True
+
+
+def shareable_enabled_plugin(plugin_id, private_marketplaces, private_plugins):
+    if not isinstance(plugin_id, str) or plugin_id in private_plugins:
+        return False
+    if "@" in plugin_id:
+        plugin_name, _, marketplace = plugin_id.rpartition("@")
+        if not valid_plugin_name(plugin_name) or not valid_plugin_name(marketplace) or marketplace in private_marketplaces:
+            return False
+    elif not valid_plugin_name(plugin_id):
+        return False
+    return True
+
+
+def without_last_updated(entry):
+    if not isinstance(entry, dict):
+        return entry
+    return {key: value for key, value in entry.items() if key != "lastUpdated"}
+
+
+def three_way_marketplaces(account, base, common):
+    """Three-way merge for known_marketplaces.json ignoring volatile lastUpdated refreshes."""
+    account_result, common_result, base_result = dict(account), dict(common), {}
+    for key in set(account) | set(base) | set(common):
+        a, b, c = (mapping.get(key, MISSING) for mapping in (account, base, common))
+        if a is not MISSING and c is not MISSING and without_last_updated(a) == without_last_updated(c):
+            value = dict(a)
+            stamps = [item["lastUpdated"] for item in (a, c) if isinstance(item, dict) and isinstance(item.get("lastUpdated"), str)]
+            if stamps:
+                value["lastUpdated"] = max(stamps)
+        elif a == c:
+            value = a
+        elif a == b or (a is not MISSING and b is not MISSING and without_last_updated(a) == without_last_updated(b)):
+            value = c
+        elif c == b or (c is not MISSING and b is not MISSING and without_last_updated(c) == without_last_updated(b)):
+            value = a
+        else:
+            if b is not MISSING:
+                base_result[key] = b
+            continue
+        for result in (account_result, common_result):
+            if value is MISSING:
+                result.pop(key, None)
+            else:
+                result[key] = value
+        if value is not MISSING:
+            base_result[key] = value
+    return account_result, common_result, base_result
+
+
+def committed_common_baseline(previous, local_before, common_after):
+    """Advance baseline only for keys where local and the newly written common now agree."""
+    updated = dict(previous)
+    for key in set(previous) | set(local_before) | set(common_after):
+        a = local_before.get(key, MISSING)
+        c = common_after.get(key, MISSING)
+        if a == c:
+            if c is MISSING:
+                updated.pop(key, None)
+            else:
+                updated[key] = c
+    return updated
 
 
 def share_plugin_folders(base, lock_dir):
@@ -655,38 +905,55 @@ def share_plugin_folders(base, lock_dir):
     local_root.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     shared_root_dir.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     known = []
+    private_marketplaces = set()
     for root in (local_root, shared_root_dir):
         _, data = json_snapshot(root / "known_marketplaces.json")
         if data is None:
             return False
-        known.append(data)
+        neutral = plugin_paths(data, plugin_root_forms(root.parent), NEUTRAL_PLUGINS)
+        known.append(neutral)
+        for mkt_name, entry in neutral.items():
+            if not shareable_marketplace_entry(mkt_name, entry):
+                private_marketplaces.add(mkt_name)
     def source(index, name):
         entry = known[index].get(name)
         return entry.get("source") if isinstance(entry, dict) else None
     def conflicting(local, shared, depth, marketplace):
         for child in local.iterdir():
             target, name = shared / child.name, marketplace or child.name
-            if linked(child):
+            if linked(child) or name in PRIVATE_PLUGIN_ENTRIES or name in private_marketplaces:
                 return True
             if not (target.exists() or linked(target)):
                 continue
             # A cached copy is reproducible from its marketplace. Two different
-            # marketplaces under one name are not, so nothing is chosen for them.
-            if None not in (source(0, name), source(1, name)) and source(0, name) != source(1, name):
+            # marketplaces under one name (or an unverified source at leaf overlap)
+            # are not, so nothing is chosen for them.
+            s0, s1 = source(0, name), source(1, name)
+            if None not in (s0, s1) and s0 != s1:
+                return True
+            if depth == 0 and (s0 is None or s1 is None or s0 != s1):
                 return True
             if child.is_dir() != target.is_dir() or linked(target):
                 return True
             if depth and child.is_dir() and conflicting(child, target, depth - 1, name):
                 return True
         return False
+    def has_private_directory(local):
+        return any(linked(child) or child.name in PRIVATE_PLUGIN_ENTRIES or child.name in private_marketplaces
+                   for child in local.iterdir())
     plan = []
     for name, depth in SHARED_PLUGIN_FOLDERS:
         local, shared = local_root / name, shared_root_dir / name
+        if (shared.exists() or linked(shared)) and not shared.is_dir():
+            return False
         if linked(local):
-            if local.resolve() != shared.resolve():
+            local_resolved, shared_resolved = safe_resolve(local), safe_resolve(shared)
+            if local_resolved is None or shared_resolved is None or local_resolved != shared_resolved:
                 return False
             continue
-        if local.exists() and (not local.is_dir() or shared.exists() and not shared.is_dir()):
+        if local.exists() and not local.is_dir():
+            return False
+        if local.exists() and has_private_directory(local):
             return False
         if local.exists() and shared.exists() and conflicting(local, shared, depth, None):
             return False
@@ -702,8 +969,7 @@ def share_plugin_folders(base, lock_dir):
             else:
                 # Keep the profile's own copy recoverable instead of deleting it.
                 backup_prefix = lock_dir / "backups" / base.name / "plugins" / relative / child.name
-                backup = backup_prefix.with_name(child.name + "-" + str(time.time_ns()))
-                backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+                backup = unique_backup_path(backup_prefix)
                 child.rename(backup)
                 prune_backup_series(backup_prefix)
         local.rmdir()
@@ -722,16 +988,18 @@ NEUTRAL_PLUGINS = "\0plugins" + os.sep
 def plugin_root_forms(config):
     """Spellings under which the CLI may record a profile's plugins folder.
 
-    The client runtime hands the CLI a stable alias of configuration paths that
-    name the product (client_runtime.path); the CLI records locations in the form
-    it was given. The first form is the one a new record uses.
+    Derives the alias directly from client_runtime.path so platforms without
+    path aliasing (such as _remote_windows) never emit non-existent alias paths.
     """
     real = str(config / "plugins") + os.sep
-    if "cage" not in str(config).lower() or config == Path.home() / ".claude":
+    if config == Path.home() / ".claude":
         return [real]
-    owner = hashlib.sha256(str(Path.home()).encode()).hexdigest()[:16]
-    alias = Path(tempfile.gettempdir()) / ("runtime-" + owner) / "paths" / hashlib.sha256(str(config.absolute()).encode()).hexdigest()[:32]
-    return [str(alias / "plugins") + os.sep, real]
+    try:
+        aliased = _runtime["path"](config)
+    except (OSError, ValueError):
+        return [real]
+    alias_root = str(Path(aliased) / "plugins") + os.sep
+    return [alias_root, real] if alias_root != real else [real]
 
 
 def plugin_paths(value, old, new):
@@ -798,7 +1066,11 @@ def clear_active_plugin_orphans(common_root, installed_plugins):
 
 
 def sync_plugin_registries(base, lock_dir, record):
-    """Merge installed plugins and known marketplaces in both directions.
+    """Merge public installed plugins and known marketplaces in both directions.
+
+    Private/org/claude.ai/credentialed entries and entries whose paths do not
+    resolve strictly under <plugins>/cache/ or <plugins>/marketplaces/ stay
+    private on their owning side. Returns (private_marketplaces, private_plugins).
 
     Uninstalls and marketplace removals must synchronize alongside installs:
     accounts share plugins/cache and plugins/marketplaces, and the official CLI
@@ -810,7 +1082,8 @@ def sync_plugin_registries(base, lock_dir, record):
     config, common = config_directory(base), Path.home() / ".claude"
     local_root, common_root = config / "plugins", common / "plugins"
     local_forms, common_forms = plugin_root_forms(config), plugin_root_forms(common)
-    bases = record.setdefault("plugins", {})
+    bases = dict_field(record, "plugins")
+    private_marketplaces, private_plugins = set(), set()
     for name, field in PLUGIN_REGISTRIES:
         local_raw, local = json_snapshot(local_root / name)
         common_raw, shared = json_snapshot(common_root / name)
@@ -822,23 +1095,53 @@ def sync_plugin_registries(base, lock_dir, record):
         common_map = shared.get(field, {}) if field else shared
         if not isinstance(local_map, dict) or not isinstance(common_map, dict):
             continue
-        previous = bases.get(name) if isinstance(bases.get(name), dict) else {}
+        previous_raw = bases.get(name) if isinstance(bases.get(name), dict) else {}
         local_form, common_form = plugin_form(local_map, local_forms), plugin_form(common_map, common_forms)
-        merged_local, merged_common, merged_base = three_way(plugin_paths(local_map, local_forms, NEUTRAL_PLUGINS), previous,
-                                                             plugin_paths(common_map, common_forms, NEUTRAL_PLUGINS))
-        merged_common = plugin_paths(merged_common, [NEUTRAL_PLUGINS], common_form)
+        local_neutral = plugin_paths(local_map, local_forms, NEUTRAL_PLUGINS)
+        common_neutral = plugin_paths(common_map, common_forms, NEUTRAL_PLUGINS)
+        if name == "known_marketplaces.json":
+            allow = shareable_marketplace_entry
+            merger = three_way_marketplaces
+        else:
+            allow = lambda key, value: shareable_installed_plugin(key, value, private_marketplaces)
+            merger = three_way
+        excluded = set()
+        for mapping in (local_neutral, common_neutral):
+            for key, value in mapping.items():
+                if not allow(key, value):
+                    excluded.add(key)
+        if name == "known_marketplaces.json":
+            private_marketplaces |= excluded
+        else:
+            private_plugins |= excluded
+        local_shareable = {k: v for k, v in local_neutral.items() if k not in excluded}
+        common_shareable = {k: v for k, v in common_neutral.items() if k not in excluded}
+        previous = {k: v for k, v in previous_raw.items() if k not in excluded and allow(k, v)}
+        local_private = {k: v for k, v in local_map.items() if k in excluded}
+        common_private = {k: v for k, v in common_map.items() if k in excluded}
+        merged_local_n, merged_common_n, merged_base = merger(local_shareable, previous, common_shareable)
+        merged_common = {**common_private, **plugin_paths(merged_common_n, [NEUTRAL_PLUGINS], common_form)}
+        common_written = False
         if merged_common != common_map:
             data = {**shared, "version": 2, field: merged_common} if field else merged_common
             if not replace_json(common_root / name, data, common_raw, lock_dir / "backups" / "common" / "plugins" / name):
                 continue
-        merged_local = plugin_paths(merged_local, [NEUTRAL_PLUGINS], local_form)
+            common_written = True
+            # Persist common-side agreement immediately so a local race below
+            # cannot resurrect a removed or modified entry on the next launch.
+            bases[name] = committed_common_baseline(previous, local_shareable, merged_common_n)
+            write_record(base, record)
+        merged_local = {**local_private, **plugin_paths(merged_local_n, [NEUTRAL_PLUGINS], local_form)}
         if merged_local != local_map:
             data = {**local, "version": 2, field: merged_local} if field else merged_local
             if not replace_json(local_root / name, data, local_raw, lock_dir / "backups" / base.name / "plugins" / name):
+                if name == "installed_plugins.json" and common_written:
+                    clear_active_plugin_orphans(common_root, merged_common)
                 continue
         if name == "installed_plugins.json":
             clear_active_plugin_orphans(common_root, merged_common)
         bases[name] = merged_base
+    return private_marketplaces, private_plugins
 
 
 def withdraw_additions(result, additions):
@@ -860,13 +1163,14 @@ def withdraw_additions(result, additions):
             del result["hooks"]
 
 
-def sync_profile_settings(base, lock_dir, record, plugins_shared):
+def sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces=frozenset(), private_plugins=frozenset()):
     """Copy shared settings into a profile for clients that take no flags.
 
     Only keys the profile does not set are added, and hook groups are appended
     per event. The record lists the additions, so later runs refresh or withdraw
-    exactly those entries and never a value the user changed. Plugin choices are
-    merged in both directions. Callers hold resources.lock.
+    exactly those entries and never a value the user changed. Public plugin
+    choices are merged in both directions; private/credentialed entries stay
+    local to each side. Callers hold resources.lock.
     """
     config = config_directory(base)
     path, common_path = config / "settings.json", Path.home() / ".claude/settings.json"
@@ -878,7 +1182,8 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared):
     previous = {key: record.get(key) for key in ("keys", "hooks", "hooks_created") if key in record}
     if not all(isinstance(previous.get(name, {}), dict) for name in ("keys", "hooks")):
         previous = {}
-    pending = record.get("pending") if isinstance(record.get("pending"), dict) else {}
+    previous_pending = record.get("pending")
+    pending = previous_pending if isinstance(previous_pending, dict) else {}
     # An interrupted earlier run may have written its additions without
     # completing the record; its intent lists them, so they are ours too.
     withdraw_additions(result, previous)
@@ -902,30 +1207,59 @@ def sync_profile_settings(base, lock_dir, record, plugins_shared):
         if created and not target:
             del result["hooks"]
     additions = {"keys": added, "hooks": added_hooks, "hooks_created": created and bool(added_hooks)}
-    common_result, plugin_bases = dict(common), dict(record.get("plugins") or {})
+    common_result = dict(common)
+    plugin_record = dict_field(record, "plugins")
+    plugin_bases = dict(plugin_record)
+    common_baselines = {}
     if plugins_shared:
-        for key in PLUGIN_SETTINGS:
+        excluded_marketplaces = set(private_marketplaces)
+        # Process extraKnownMarketplaces first so any credentialed or org
+        # marketplace excluded here also blocks its entries in enabledPlugins.
+        for key in ("extraKnownMarketplaces", "enabledPlugins"):
             mine, theirs = result.get(key, {}), common.get(key, {})
             if not isinstance(mine, dict) or not isinstance(theirs, dict):
                 continue
-            known = plugin_bases.get(key) if isinstance(plugin_bases.get(key), dict) else {}
-            mine, theirs, plugin_bases[key] = three_way(mine, known, theirs)
-            for target, value, original_map in ((result, mine, current), (common_result, theirs, common)):
+            known_raw = plugin_bases.get(key) if isinstance(plugin_bases.get(key), dict) else {}
+            if key == "extraKnownMarketplaces":
+                allow = shareable_extra_marketplace
+            else:
+                allow = lambda name, _val: shareable_enabled_plugin(name, excluded_marketplaces, private_plugins)
+            excluded = {k for mapping in (mine, theirs) for k, v in mapping.items() if not allow(k, v)}
+            if key == "extraKnownMarketplaces":
+                excluded_marketplaces |= excluded
+            mine_shareable = {k: v for k, v in mine.items() if k not in excluded}
+            theirs_shareable = {k: v for k, v in theirs.items() if k not in excluded}
+            known = {k: v for k, v in known_raw.items() if k not in excluded and allow(k, v)}
+            mine_private = {k: v for k, v in mine.items() if k in excluded}
+            theirs_private = {k: v for k, v in theirs.items() if k in excluded}
+            merged_mine, merged_theirs, plugin_bases[key] = three_way(mine_shareable, known, theirs_shareable)
+            common_baselines[key] = committed_common_baseline(known, mine_shareable, merged_theirs)
+            final_mine = {**mine_private, **merged_mine}
+            final_theirs = {**theirs_private, **merged_theirs}
+            for target, value, original_map in ((result, final_mine, current), (common_result, final_theirs, common)):
                 if value or key in original_map:
                     target[key] = value
     if common_result != common:
         # Publish plugin choices first: if this is refused, nothing else moves.
         if not replace_json(common_path, common_result, common_raw, lock_dir / "backups" / "common" / "settings.json"):
             return
+        # Persist common-side baselines immediately so a local race below
+        # cannot resurrect a disabled plugin on the next launch.
+        if common_baselines:
+            plugin_record.update(common_baselines)
+            write_record(base, record)
     if result != current:
         write_record(base, {**record, "pending": additions})
         if not replace_json(path, result, original, lock_dir / "backups" / base.name / "settings.json"):
-            record.pop("pending", None)
+            if previous_pending is None:
+                record.pop("pending", None)
+            else:
+                record["pending"] = previous_pending
             write_record(base, record)
             return
     record.pop("pending", None)
     record.update(additions)
-    record["plugins"] = {**(record.get("plugins") or {}), **{key: plugin_bases[key] for key in PLUGIN_SETTINGS if key in plugin_bases}}
+    plugin_record.update({key: plugin_bases[key] for key in PLUGIN_SETTINGS if key in plugin_bases})
 
 
 def global_config_path(base):
@@ -951,7 +1285,8 @@ def sync_profile_mcp(base, lock_dir, record, add_missing):
         return
     servers = dict(current.get("mcpServers") or {})
     ours = record.get("mcp") if isinstance(record.get("mcp"), dict) else {}
-    pending = record.get("pending_mcp") if isinstance(record.get("pending_mcp"), dict) else {}
+    previous_pending = record.get("pending_mcp")
+    pending = previous_pending if isinstance(previous_pending, dict) else {}
     for added in (ours, pending):
         for name, value in added.items():
             if servers.get(name) == value:
@@ -966,8 +1301,13 @@ def sync_profile_mcp(base, lock_dir, record, add_missing):
     if result != current:
         write_record(base, {**record, "pending_mcp": additions})
         if not replace_json(path, result, original, lock_dir / "backups" / base.name / "claude.json"):
+            if previous_pending is None:
+                record.pop("pending_mcp", None)
+            else:
+                record["pending_mcp"] = previous_pending
             write_record(base, record)
             return
+    record.pop("pending_mcp", None)
     record["mcp"] = additions
 
 
@@ -981,23 +1321,42 @@ def launch_mcp_servers(base):
     return {name: value for name, value in shared_mcp_servers().items() if name not in present}
 
 
+def prune_stale_mcp_launch_files(folder, keep=None):
+    if not folder.is_dir():
+        return
+    for candidate in folder.glob("mcp-*.json"):
+        if candidate != keep:
+            try:
+                candidate.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def shared_mcp_arguments(base, args):
     """Offer the shared user-scope MCP servers to a terminal through --mcp-config."""
     options = args[:args.index("--")] if "--" in args else args
     if "--strict-mcp-config" in options:
         return args
+    folder = base / "launch-settings"
     servers = launch_mcp_servers(base)
     if not servers:
+        prune_stale_mcp_launch_files(folder)
         return args
     data = json.dumps({"mcpServers": servers}, separators=(",", ":")).encode()
-    folder = base / "launch-settings"
     folder.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     path = folder / ("mcp-" + hashlib.sha256(data).hexdigest() + ".json")
     if not path.exists():
         with tempfile.NamedTemporaryFile(dir=folder, delete=False) as stream:
             stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
             temporary = stream.name
-        os.replace(temporary, path)
+        try:
+            os.replace(temporary, path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
+    prune_stale_mcp_launch_files(folder, keep=path)
     value = _runtime["path"](path)
     # --mcp-config takes several space-separated files. Add this one to an
     # existing flag rather than relying on how repeated flags combine.
@@ -1008,29 +1367,40 @@ def shared_mcp_arguments(base, args):
     return ["--mcp-config", value, *args]
 
 
+def can_heal_shared_file(base, local, shared, record):
+    """True when an atomic save replaced a link with a newer edit and shared is unchanged."""
+    links = dict_field(record, "links")
+    name = str(local.relative_to(config_directory(base)))
+    if linked(local) or linked(shared):
+        return False
+    if not (local.is_file() and shared.is_file()) or local.read_bytes() == shared.read_bytes():
+        return False
+    return links.get(name) == file_digest(shared)
+
+
 def heal_shared_file(base, local, shared, record):
     """Fold back a linked instruction file that an atomic save turned into a copy."""
-    links = record.setdefault("links", {})
+    links = dict_field(record, "links")
     name = str(local.relative_to(config_directory(base)))
     if linked(local):
-        if local.resolve() == shared.resolve() and shared.is_file():
+        if not linked(shared) and safe_resolve(local) == safe_resolve(shared) and shared.is_file():
             links[name] = file_digest(shared)
         return
-    if not (local.is_file() and shared.is_file()) or local.read_bytes() == shared.read_bytes():
-        return
-    # Only when the shared copy is still exactly what this profile last linked
-    # is the profile's copy the newer edit. Otherwise both changed: keep both.
-    if links.get(name) != file_digest(shared):
+    if not can_heal_shared_file(base, local, shared, record):
         return
     backup_prefix = shared_root() / "backups" / "common" / shared.name
-    backup = backup_prefix.with_name(shared.name + "-" + str(time.time_ns()))
-    backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-    shutil.copy2(shared, backup)
+    write_backup_bytes(backup_prefix, shared.read_bytes())
     with tempfile.NamedTemporaryFile(dir=shared.parent, delete=False) as stream:
         stream.write(local.read_bytes())
+        stream.flush()
+        os.fsync(stream.fileno())
         temporary = stream.name
-    os.chmod(temporary, stat.S_IMODE(shared.stat().st_mode))
-    os.replace(temporary, shared)
+    try:
+        os.chmod(temporary, stat.S_IMODE(shared.stat().st_mode))
+        os.replace(temporary, shared)
+    except BaseException:
+        Path(temporary).unlink(missing_ok=True)
+        raise
     prune_backup_series(backup_prefix)
 
 
@@ -1039,7 +1409,7 @@ def shared_profile_resources(base, desktop=False):
     config = config_directory(base)
     common = Path.home() / ".claude"
     common.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-    if config == common:
+    if safe_resolve(config) == safe_resolve(common):
         return
     lock_dir = shared_root()
     lock_dir.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
@@ -1047,27 +1417,34 @@ def shared_profile_resources(base, desktop=False):
         fcntl.flock(lock, fcntl.LOCK_EX)
         record = read_record(base)
         conflict = "账号的技能或指令与共用资料同名冲突，请先核对 ~/.claude 中的对应文件；原文件已保留"
+        healable_names = {"CLAUDE.md", "AGENTS.md"}
         def check(local, shared):
+            if same_path(local, shared):
+                return
             if linked(local):
-                if local.resolve() != shared.resolve():
+                if safe_resolve(local) != safe_resolve(shared):
                     raise SharedResourceConflict(conflict)
             elif local.exists() and shared.exists():
+                if local.name in healable_names and local.parent == config and can_heal_shared_file(base, local, shared, record):
+                    return
                 if local.is_dir() and shared.is_dir():
                     for child in local.iterdir():
                         check(child, shared / child.name)
                 elif not (local.is_file() and shared.is_file() and local.read_bytes() == shared.read_bytes()):
                     raise SharedResourceConflict(conflict)
         def merge(local, shared):
+            if same_path(local, shared):
+                return
             if linked(local):
-                if local.resolve() == shared.resolve():
+                if safe_resolve(local) == safe_resolve(shared):
                     return
                 raise SharedResourceConflict(conflict)
             if local.exists():
                 if local.is_dir() and shared.is_dir():
                     for child in list(local.iterdir()):
                         merge(child, shared / child.name)
-                        if child.is_symlink():
-                            child.unlink()
+                        if linked(child):
+                            remove_link(child)
                     local.rmdir()
                 elif not shared.exists():
                     shared.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
@@ -1090,26 +1467,43 @@ def shared_profile_resources(base, desktop=False):
             resource_link(local, shared)
         # claude.ai downloads skills into skills/synced. Keep that subtree
         # account-specific; link only locally installed skill entries.
-        local, shared = config / "skills", common / "skills"
-        local.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        shared.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        names = {p.name for folder in (local, shared) for p in folder.iterdir()} - {"synced"}
+        local_skills, shared_skills = config / "skills", common / "skills"
+        shared_skills.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
         resources = [(config / name, common / name) for name in
                      ("commands", "agents", "rules", "agent-memory", "CLAUDE.md", "AGENTS.md")]
-        resources += [(local / name, shared / name) for name in sorted(names)]
-        for source, destination in resources[4:6]:
-            heal_shared_file(base, source, destination, record)
-        # Validate every resource before moving any of them. A late conflict
-        # must leave the account's existing directory layout usable.
+        if linked(local_skills):
+            # If config/skills is already a symlink to ~/.claude/skills, never
+            # iterate and unlink entries through the self-alias.
+            if safe_resolve(local_skills) != safe_resolve(shared_skills):
+                if desktop:
+                    print(conflict, file=sys.stderr)
+                else:
+                    raise SharedResourceConflict(conflict)
+        else:
+            local_skills.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+            names = {p.name for folder in (local_skills, shared_skills) for p in folder.iterdir()} - {"synced"}
+            resources += [(local_skills / name, shared_skills / name) for name in sorted(names)]
+        # Validate before mutating: terminals fail atomically; Desktop isolates
+        # conflicting entries so plugins, settings, MCP and memory still sync.
+        ready_resources = []
         for source, destination in resources:
-            check(source, destination)
-        for source, destination in resources:
+            try:
+                check(source, destination)
+                ready_resources.append((source, destination))
+            except SharedResourceConflict as error:
+                if not desktop:
+                    raise
+                print(str(error), file=sys.stderr)
+        for source, destination in ready_resources:
+            if source.name in healable_names and source.parent == config:
+                heal_shared_file(base, source, destination, record)
+        for source, destination in ready_resources:
             backup_prefix = None
-            if source.exists() and not source.is_symlink():
+            if source.exists() and not linked(source) and not same_path(source, destination):
                 backup_prefix = lock_dir / "backups" / base.name / source.relative_to(config)
                 backup = backup_prefix
-                if backup.exists():
-                    backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
+                if backup.exists() or linked(backup):
+                    backup = unique_backup_path(backup_prefix)
                 backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
                 if source.is_dir():
                     shutil.copytree(source, backup, symlinks=True)
@@ -1118,14 +1512,16 @@ def shared_profile_resources(base, desktop=False):
             merge(source, destination)
             if backup_prefix is not None:
                 prune_backup_series(backup_prefix)
-        for source, destination in resources[4:6]:
-            heal_shared_file(base, source, destination, record)
+        for source, destination in ready_resources:
+            if source.name in healable_names and source.parent == config:
+                heal_shared_file(base, source, destination, record)
         plugins_shared = share_plugin_folders(base, lock_dir)
+        private_marketplaces, private_plugins = frozenset(), frozenset()
         if plugins_shared:
-            sync_plugin_registries(base, lock_dir, record)
+            private_marketplaces, private_plugins = sync_plugin_registries(base, lock_dir, record)
         else:
             print("账号已有的插件与共用插件来源不同，插件继续按账号分开保存；其他共用资料不受影响", file=sys.stderr)
-        sync_profile_settings(base, lock_dir, record, plugins_shared)
+        sync_profile_settings(base, lock_dir, record, plugins_shared, private_marketplaces, private_plugins)
         sync_profile_mcp(base, lock_dir, record, desktop)
         if desktop:
             link_known_project_memory(base)
@@ -1169,26 +1565,29 @@ def legacy_project_key(directory):
 
 def link_project_memory(own, memory, backup):
     """Move a memory folder's notes into the shared one and leave a link behind."""
-    if own == memory or linked(own):
+    if same_path(own, memory) or own == memory or linked(own):
         return
     backup_prefix = None
     if own.exists():
-        sources = [source for source in own.rglob("*") if source.is_file()]
+        entries = list(own.rglob("*"))
+        if any(linked(entry) for entry in entries):
+            raise SharedResourceConflict("账号的项目记忆包含异常链接，原记忆已保留，请先核对")
+        sources = [source for source in entries if source.is_file()]
         for source in sources:
             destination = memory / source.relative_to(own)
-            if destination.exists() and (not destination.is_file() or destination.read_bytes() != source.read_bytes()):
+            if linked(destination) or destination.exists() and (not destination.is_file() or destination.read_bytes() != source.read_bytes()):
                 raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
         for source in sources:
             destination = memory / source.relative_to(own)
-            if destination.exists() and destination.read_bytes() != source.read_bytes():
+            if linked(destination) or destination.exists() and destination.read_bytes() != source.read_bytes():
                 raise SharedResourceConflict("账号的项目记忆与共用记忆冲突，原记忆已保留，请先核对")
             destination.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
             if not destination.exists():
                 shutil.copy2(source, destination)
         backup_prefix = backup
         backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
-        if backup.exists():
-            backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
+        if backup.exists() or linked(backup):
+            backup = unique_backup_path(backup_prefix)
         own.rename(backup)
     resource_link(own, memory)
     if backup_prefix is not None:
@@ -1221,7 +1620,7 @@ def link_known_project_memory(base):
             memory = shared / key / "memory"
             memory.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
             link_project_memory(own / key / "memory", memory, shared_root() / "backups" / base.name / "projects" / key / "memory")
-        except SharedResourceConflict as error:
+        except (SharedResourceConflict, OSError) as error:
             print(str(error), file=sys.stderr)
 
 
@@ -1240,7 +1639,7 @@ def shared_memory_path(memory):
         return _runtime["path"](memory)
     except _runtime["RuntimePathConflict"] as error:
         alias = error.alias
-    if alias.is_symlink() or not alias.is_dir() or os.name == "nt" and alias.is_junction():
+    if linked(alias) or not alias.is_dir():
         raise SharedResourceConflict("项目记忆的运行路径异常，原数据已保留，请同步环境组件后重试")
     if os.name != "nt" and alias.stat().st_uid != os.getuid():
         raise SharedResourceConflict("项目记忆的运行路径归属异常，原数据已保留，请检查目录权限")
@@ -1249,7 +1648,7 @@ def shared_memory_path(memory):
     entries = sorted(alias.rglob("*"))
     for source in entries:
         destination = memory / source.relative_to(alias)
-        if source.is_symlink() or os.name == "nt" and source.is_junction() or destination.is_symlink():
+        if linked(source) or linked(destination):
             raise SharedResourceConflict("项目记忆包含异常链接，原数据已保留，请先核对记忆目录")
         if source.is_dir():
             conflict = destination.exists() and not destination.is_dir()
@@ -1260,8 +1659,7 @@ def shared_memory_path(memory):
         if conflict:
             raise SharedResourceConflict("项目记忆存在同名内容冲突，两份记忆均已保留，请先核对后重试")
     backup_prefix = shared_root() / "backups/runtime-memory" / alias.name
-    backup = backup_prefix.with_name(alias.name + "-" + str(time.time_ns()))
-    backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
+    backup = unique_backup_path(backup_prefix)
     shutil.copytree(alias, backup, symlinks=True)
     for source in entries:
         destination = memory / source.relative_to(alias)
@@ -1308,14 +1706,14 @@ def shared_launch_arguments_locked(base, args, settings_fd):
         pass
     _, memory = shared_project_memory(base, directory)
     settings = {"autoMemoryDirectory": shared_memory_path(memory)}
-    common_settings = json_file(Path.home() / ".claude/settings.json")
+    _, common_settings = json_snapshot(Path.home() / ".claude/settings.json")
     shared_keys = SHARED_SETTINGS
     if isinstance(common_settings, dict):
         settings.update({key: value for key, value in common_settings.items() if key in shared_keys})
     # Hook groups already present in the profile's own settings (including
     # those copied there for Desktop) run from that file. Pass only the rest.
-    own_hooks = json_file(config_directory(base) / "settings.json")
-    own_hooks = own_hooks.get("hooks") if isinstance(own_hooks, dict) else None
+    _, own_settings = json_snapshot(config_directory(base) / "settings.json")
+    own_hooks = own_settings.get("hooks") if isinstance(own_settings, dict) else None
     if isinstance(settings.get("hooks"), dict) and isinstance(own_hooks, dict):
         remaining = {}
         for event, groups in settings["hooks"].items():
@@ -1331,7 +1729,7 @@ def shared_launch_arguments_locked(base, args, settings_fd):
     for parent in reversed((Path.cwd(), *Path.cwd().parents)):
         paths += [parent / ".claude/settings.json", parent / ".claude/settings.local.json"]
     for path in paths:
-        stored = json_file(path)
+        _, stored = json_snapshot(path)
         if path != Path.home() / ".claude/settings.json" and isinstance(stored, dict):
             # Let the CLI's normal profile/project precedence decide these
             # values. A shared default must not turn into a command-line override.
@@ -1348,7 +1746,7 @@ def shared_launch_arguments_locked(base, args, settings_fd):
             break
         if arg == "--settings" or arg.startswith("--settings="):
             value = next(iterator) if arg == "--settings" else arg.split("=", 1)[1]
-            supplied = json.loads(value) if value.lstrip().startswith("{") else json.loads(Path(value).read_text())
+            supplied = json.loads(value) if value.lstrip().startswith("{") else json.loads(Path(value).read_text(encoding="utf-8"))
             hooks = merged_hooks(settings.get("hooks"), supplied.get("hooks")) if isinstance(supplied, dict) else None
             settings.update(supplied)
             if hooks is not None:
@@ -1372,8 +1770,14 @@ def shared_launch_arguments_locked(base, args, settings_fd):
     if not path.exists():
         with tempfile.NamedTemporaryFile(dir=folder, delete=False) as stream:
             stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
             temporary = stream.name
-        os.replace(temporary, path)
+        try:
+            os.replace(temporary, path)
+        except BaseException:
+            Path(temporary).unlink(missing_ok=True)
+            raise
     return ["--settings", _runtime["path"](path), *result]
 
 
@@ -1435,7 +1839,12 @@ def main(args, *, mobile_settings_fd=None, verify_mobile=None):
     if mode == "statusline":
         raw = sys.stdin.buffer.read((1 << 20) + 1)
         if len(raw) <= 1 << 20:
-            save_usage(base, json.loads(raw), expected, lambda: subject(identity(binary, env, Path.cwd())))
+            try:
+                payload = json.loads(raw)
+            except (ValueError, TypeError):
+                payload = None
+            if isinstance(payload, dict):
+                save_usage(base, payload, expected, lambda: subject(identity(binary, env, Path.cwd())))
         line = user_status_line()
         if line is None:
             print("Claude")
