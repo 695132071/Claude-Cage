@@ -50,11 +50,7 @@ cage proxy-stop    Stop Cage's core and close external networking
 cage setup         Build the isolated base VM through the specified proxy
 cage up            Start the shared Cage environment, editor and browser
                    --reset re-clones the VM; files and logins on its disk are lost
-                   --cpus N; --memory N or --ram N (GiB); --disk N (GiB)
-                   --ssh-port N (0 for automatic, otherwise 1024-65535)
 cage login         Start cage services, then Claude's login flow inside the VM
-                   Same VM options as up: --reset, --cpus N, --memory N or --ram N (GiB),
-                   --disk N (GiB), --ssh-port N (0 or 1024-65535)
                    --reset re-clones the VM; files and logins on its disk are lost
 cage access        Inspect legacy viewer credentials (diagnostics only)
 cage shell         Open a shell in the shared environment
@@ -122,7 +118,7 @@ func run() int {
 		var err error
 		startArgs, err = cli.StartArgs(args[1:])
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\nUsage: cage %s [--reset] [--cpus N] [--memory N | --ram N] [--disk N] [--ssh-port N]\n", err, args[0])
+			fmt.Fprintf(os.Stderr, "Error: %v\nUsage: cage %s [--reset]\n", err, args[0])
 			return 2
 		}
 	}
