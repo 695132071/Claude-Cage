@@ -89,6 +89,12 @@ func stopWindowsCore(profile string) error {
 		return err
 	}
 	defer windows.CloseHandle(handle)
+	// An exited process stays openable while another handle keeps it, and its
+	// image name can no longer be queried (ERROR_GEN_FAILURE). Its PID cannot be
+	// reused meanwhile, so an exited object here never names a running process.
+	if exited, err := windows.WaitForSingleObject(handle, 0); err == nil && exited == windows.WAIT_OBJECT_0 {
+		return removeStaleCore(profile, path)
+	}
 	image, created, err := identifyCore(handle)
 	if err != nil {
 		return err
@@ -142,6 +148,12 @@ func removeStaleCore(profile, path string) error {
 }
 
 func removeWindowsCoreSocket(profile string) error {
+	// Earlier versions kept the socket in Temp, where removing it can fail
+	// (ERROR_CANT_ACCESS_FILE). It is no longer used: clean it up when
+	// possible, and never let it block stopping or starting the core.
+	legacy := legacyWindowsSocket(profile)
+	_ = os.Remove(legacy)
+	_ = os.Remove(filepath.Dir(legacy)) // only when empty
 	if err := os.Remove(Socket(profile)); err != nil && !os.IsNotExist(err) {
 		return &coreError{stage: "socket.remove", err: err}
 	}
@@ -180,7 +192,7 @@ func startWindowsCore(ctx context.Context, profile string, s Store) error {
 	if err != nil {
 		return err
 	}
-	if err := host.EnsurePrivateDir(filepath.Dir(Socket(profile))); err != nil {
+	if _, err := WindowsSocket(profile); err != nil {
 		return err
 	}
 	b, err := s.Runtime(profile)
