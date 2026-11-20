@@ -42,10 +42,15 @@ func TestCLIChannelProtocol(t *testing.T) {
 func TestCLIChannelCommandFitsWindows(t *testing.T) {
 	// Leave room in CreateProcessW's 32767 UTF-16 limit for SSH paths and the
 	// login-shell quoting around this command.
-	command := cliChannelCommand("launch", `{"id":"`+uuid.NewString()+`","prefix":["claude"]}`)
-	t.Logf("embedded command: %d UTF-16 units", len(utf16.Encode([]rune(command))))
-	if size := len(utf16.Encode([]rune(command))); size > 16000 {
-		t.Fatalf("channel command uses %d UTF-16 units", size)
+	// The helper itself travels on standard input, so neither command line
+	// grows with it.
+	for _, command := range []string{cliChannelCommand("launch", `{"id":"`+uuid.NewString()+`","prefix":["claude"]}`), cliChannelInstallCommand()} {
+		if size := len(utf16.Encode([]rune(command))); size > 2000 {
+			t.Fatalf("channel command uses %d UTF-16 units", size)
+		}
+	}
+	if strings.Contains(cliChannelCommand("discover", "-"), "decompress") {
+		t.Fatal("helper source must not travel on the command line")
 	}
 }
 
@@ -1145,5 +1150,31 @@ func runSharedConversationBrowser(t *testing.T, s *Server, project string) {
 			terminal.mu.Unlock()
 		}
 		t.Fatalf("shared browser: %v\n%s", err, output)
+	}
+}
+
+func TestCLIChannelInstallsHelperOverStandardInput(t *testing.T) {
+	s, _, _ := metadataFixture(t)
+	home := t.TempDir()
+	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=/usr/bin:/bin:/usr/local/bin"})
+	epoch, ok := s.account.access()
+	if !ok {
+		t.Fatal("missing unlock epoch")
+	}
+	ctx := context.WithValue(context.Background(), accountEpochKey{}, epoch)
+	helper := filepath.Join(home, ".local/share/cage/cli-channel-code", cliChannelDigest()+".py")
+	for range 2 {
+		// A fresh guest, then one whose helper was removed, both recover.
+		var found []terminalConversation
+		if err := s.runCLIChannel(ctx, "discover", map[string]any{"accounts": []string{"default"}, "workspaces": map[string]string{}}, &found); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(helper)
+		if err != nil || !strings.Contains(string(data), "def prepare_account_switch(") {
+			t.Fatalf("helper not installed: %v", err)
+		}
+		if err = os.Remove(helper); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

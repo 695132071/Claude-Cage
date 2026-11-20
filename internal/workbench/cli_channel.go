@@ -2,7 +2,7 @@ package workbench
 
 import (
 	"bytes"
-	"compress/flate"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -35,129 +36,65 @@ func resumeChannelRequest(record *mobileRecord) map[string]any {
 		"resume_text": cliResumePrompt, "account_resume_text": claudeAccountResumePrompt}
 }
 
-var cliChannelEncoded = sync.OnceValue(func() string {
-	var lines []string
-	inDoc := false
-	depth := 0
+// The helper travels once on SSH standard input and is executed from the
+// guest by digest. Command lines then stay small on every host: Windows limits
+// CreateProcessW to 32767 UTF-16 units, including the ssh.exe arguments.
+var cliChannelBundle = sync.OnceValue(func() []byte {
+	var helper strings.Builder
 	for _, line := range strings.Split(cliChannelHelper, "\n") {
-		s := strings.TrimSpace(line)
-		if s == "" || strings.HasPrefix(s, "#") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
-		if !inDoc && strings.HasPrefix(s, `"""`) {
-			if strings.HasSuffix(s, `"""`) && len(s) >= 6 {
-				continue
-			}
-			inDoc = true
-			continue
-		}
-		if inDoc {
-			if strings.HasSuffix(s, `"""`) {
-				inDoc = false
-			}
-			continue
-		}
-		cont := depth > 0
-		spaces := len(line) - len(strings.TrimLeft(line, " "))
-		var body []byte
-		var quote byte
-		for i := 0; i < len(s); i++ {
-			ch := s[i]
-			if quote != 0 {
-				body = append(body, ch)
-				if ch == '\\' && i+1 < len(s) {
-					i++
-					body = append(body, s[i])
-				} else if ch == quote {
-					quote = 0
-				}
-				continue
-			}
-			if ch == '"' || ch == '\'' {
-				quote = ch
-				body = append(body, ch)
-				continue
-			}
-			if ch == '#' {
-				for len(body) > 0 && body[len(body)-1] == ' ' {
-					body = body[:len(body)-1]
-				}
-				break
-			}
-			if ch == '(' || ch == '[' || ch == '{' {
-				depth++
-			} else if (ch == ')' || ch == ']' || ch == '}') && depth > 0 {
-				depth--
-			}
-			if ch == ' ' {
-				var prev, nxt byte
-				if len(body) > 0 {
-					prev = body[len(body)-1]
-				}
-				if i+1 < len(s) {
-					nxt = s[i+1]
-				}
-				if strings.IndexByte(",:=([{!<>+-*/%&|^", prev) >= 0 || strings.IndexByte(",:=)]}!<>", nxt) >= 0 {
-					continue
-				}
-				if strings.IndexByte("+-*/%&|^", nxt) >= 0 && i+2 < len(s) && (s[i+2] == ' ' || (s[i+2] == nxt && i+3 < len(s) && s[i+3] == ' ')) {
-					continue
-				}
-			}
-			body = append(body, ch)
-		}
-		if len(body) == 0 {
-			continue
-		}
-		if cont && len(lines) > 0 {
-			last := lines[len(lines)-1]
-			if strings.IndexByte(",([{:", last[len(last)-1]) >= 0 || strings.IndexByte(")]}", body[0]) >= 0 {
-				lines[len(lines)-1] = last + string(body)
-			} else {
-				lines[len(lines)-1] = last + " " + string(body)
-			}
-			continue
-		}
-		lines = append(lines, strings.Repeat("\t", spaces/4)+strings.Repeat(" ", spaces%4)+string(body))
+		helper.WriteString(line)
+		helper.WriteByte('\n')
 	}
-	indentOf := func(l string) int { return len(l) - len(strings.TrimLeft(l, "\t ")) }
-	simpleStmt := func(body string) bool {
-		if body == "" || strings.HasSuffix(body, `\`) || strings.HasSuffix(body, ":") || strings.HasPrefix(body, "@") {
-			return false
-		}
-		for _, kw := range []string{"if ", "elif ", "else", "for ", "while ", "with ", "try", "except", "finally", "def ", "class ", "async ", "match "} {
-			if strings.HasPrefix(body, kw) {
-				return false
-			}
-		}
-		return true
-	}
-	merged := make([]string, 0, len(lines))
-	for i := 0; i < len(lines); i++ {
-		cur := lines[i]
-		if strings.HasSuffix(cur, ":") && i+1 < len(lines) {
-			curInd := indentOf(cur)
-			nxt := lines[i+1]
-			nxtInd := indentOf(nxt)
-			afterInd := -1
-			if i+2 < len(lines) {
-				afterInd = indentOf(lines[i+2])
-			}
-			if nxtInd > curInd && afterInd <= curInd && simpleStmt(nxt[nxtInd:]) {
-				merged = append(merged, cur+nxt[nxtInd:])
-				i++
-				continue
-			}
-		}
-		merged = append(merged, cur)
-	}
-	bundle := []byte(strings.Join(merged, "\n") + "\n")
 	var compressed bytes.Buffer
-	writer, _ := flate.NewWriter(&compressed, flate.BestCompression)
-	_, _ = writer.Write(bundle)
+	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
+	_, _ = writer.Write([]byte(helper.String()))
 	_ = writer.Close()
-	return cliTransport85(compressed.Bytes())
+	return compressed.Bytes()
 })
+
+// Exit status of the bootstrap when this helper version is not yet installed.
+const cliChannelMissing = 75
+
+func cliChannelDigest() string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt)))
+}
+
+// Installs the compressed helper read from standard input. The file name is
+// the version digest; the content must match the expected SHA-256.
+func cliChannelInstallCommand() string {
+	content := sha256.Sum256(cliChannelBundle())
+	script := fmt.Sprintf(`import gzip,hashlib,os,pathlib,sys,tempfile
+d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
+d.mkdir(parents=True,exist_ok=True,mode=0o700)
+p=d/"%s.py"
+b=sys.stdin.buffer.read()
+if hashlib.sha256(b).hexdigest()!="%x":sys.exit(2)
+if not p.is_file():
+ with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
+  f.write(gzip.decompress(b))
+  t=f.name
+ os.replace(t,p)
+`, cliChannelDigest(), content)
+	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", script})
+}
+
+func (s *Server) installCLIChannel(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	command := "exec /bin/bash -c " + shellescape.Quote("exec /bin/bash -lc "+shellescape.Quote("exec "+cliChannelInstallCommand()))
+	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
+	cmd.Stdin = bytes.NewReader(cliChannelBundle())
+	cmd.WaitDelay = 2 * time.Second
+	if err := cmd.Run(); err != nil {
+		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=install failure=guest_command context=%v", ctx.Err()))
+		return errors.New("电脑未能准备会话通道，聊天记录已保留。")
+	}
+	return nil
+}
 
 // Python's RFC 1924 base85 alphabet has no single quote. It fits the compressed
 // helper within Windows' command limit without expanding shell quoting.
@@ -224,14 +161,11 @@ const conversationViewLimit = 32
 func cliChannelCommand(mode, argument string) string {
 	// Versioned helpers let an open terminal keep its original protocol while a
 	// rebuilt host begins new sessions. No account configuration is overwritten.
-	digest := sha256.Sum256([]byte(cliChannelHelper + cliResumePrompt + claudeAccountResumePrompt))
-	bootstrap := fmt.Sprintf(`import base64,os,pathlib,sys,tempfile
-p=pathlib.Path.home()/".local/share/cage/cli-channel-code/%x.py"
-p.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
-if not p.is_file():
- import zlib
- f=tempfile.NamedTemporaryFile(dir=p.parent,delete=False);f.write(zlib.decompress(base64.b85decode("%s"),-15));f.close();os.replace(f.name,p)
-os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])`, digest, cliChannelEncoded())
+	bootstrap := fmt.Sprintf(`import os,pathlib,sys
+p=pathlib.Path.home()/".local/share/cage/cli-channel-code"/"%s.py"
+if not p.is_file():sys.exit(%d)
+os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
+`, cliChannelDigest(), cliChannelMissing)
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
 
@@ -254,31 +188,43 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	var stderr fileControlStderr
 	exit := -1
 	transportLost := false
-	// Session views and discovery run every few seconds for each terminal.
-	// The shared control connection avoids an SSH session and the user's
-	// shell startup per call; a request that was never sent uses its own.
-	reply, sent, err := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
-	if sent {
-		result.Write(reply.stdout)
-		stderr.data = reply.stderr
-		if err == nil {
-			exit = reply.code
-			if reply.code != 0 || len(reply.stdout) > 4<<20 {
-				err = fmt.Errorf("exit status %d", reply.code)
+	for attempt := 0; ; attempt++ {
+		result, stderr = bytes.Buffer{}, fileControlStderr{}
+		exit, transportLost = -1, false
+		// Session views and discovery run every few seconds for each terminal.
+		// The shared control connection avoids an SSH session and the user's
+		// shell startup per call; a request that was never sent uses its own.
+		reply, sent, runErr := s.controlSession.runInput(ctx, s.lifetimeContext(), s.guestSessionCommand, script, data, 4<<20)
+		if sent {
+			result.Write(reply.stdout)
+			stderr.data = reply.stderr
+			err = runErr
+			if err == nil {
+				exit = reply.code
+				if reply.code != 0 || len(reply.stdout) > 4<<20 {
+					err = fmt.Errorf("exit status %d", reply.code)
+				}
+			} else {
+				transportLost = errors.Is(err, errGuestSessionEnded)
 			}
 		} else {
-			transportLost = errors.Is(err, errGuestSessionEnded)
+			cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec /bin/bash -c "+shellescape.Quote(script))
+			cmd.Stdin = bytes.NewReader(data)
+			cmd.Stderr = &stderr
+			cmd.WaitDelay = 2 * time.Second
+			cmd.Stdout = &boundedStatusWriter{buffer: &result, remaining: 4 << 20}
+			err = cmd.Run()
+			if cmd.ProcessState != nil {
+				exit = cmd.ProcessState.ExitCode()
+				transportLost = exit == 255
+			}
 		}
-	} else {
-		cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec /bin/bash -c "+shellescape.Quote(script))
-		cmd.Stdin = bytes.NewReader(data)
-		cmd.Stderr = &stderr
-		cmd.WaitDelay = 2 * time.Second
-		cmd.Stdout = &boundedStatusWriter{buffer: &result, remaining: 4 << 20}
-		err = cmd.Run()
-		if cmd.ProcessState != nil {
-			exit = cmd.ProcessState.ExitCode()
-			transportLost = exit == 255
+		// A fresh or rebuilt guest lacks this helper version: install it once.
+		if attempt > 0 || err == nil || exit != cliChannelMissing {
+			break
+		}
+		if err = s.installCLIChannel(ctx); err != nil {
+			return err
 		}
 	}
 	if err != nil || json.Unmarshal(result.Bytes(), output) != nil {
@@ -671,6 +617,9 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 	s.claudeAccounts.mu.Unlock()
 	if loadErr != nil {
 		return "", nil, loadErr
+	}
+	if err := s.installCLIChannel(s.lifetimeContext()); err != nil {
+		return "", nil, err
 	}
 	m := &s.mobileCLI
 	id := existing
