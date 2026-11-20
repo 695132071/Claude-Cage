@@ -29,8 +29,11 @@ type Egress struct {
 	upstream *url.URL
 	dnsURLs  []string
 	// dnsPreferred is the endpoint that answered last, so a blocked primary
-	// does not cost every query a timeout.
-	dnsPreferred atomic.Int32
+	// does not cost every query a timeout. dnsPrimaryRetry (Unix nanoseconds)
+	// is when one query next tries the primary endpoint first again, so a
+	// single transient failure does not leave every later query on a backup.
+	dnsPreferred    atomic.Int32
+	dnsPrimaryRetry atomic.Int64
 	client       *http.Client
 	public       netguard.Policy
 	connect      proxy.ContextDialer
@@ -40,6 +43,35 @@ type Egress struct {
 // to the relay after authentication. DialContext returns a net.Conn wrapper.
 type socksHandshaker interface {
 	DialWithConn(context.Context, net.Conn, string, string) (net.Addr, error)
+}
+
+// dnsPrimaryRetryInterval is how long queries stay on a backup DoH endpoint
+// before one of them tries the primary first again.
+var dnsPrimaryRetryInterval = 5 * time.Minute
+
+// dnsStart returns the endpoint a query tries first: the one that answered
+// last, or, once dnsPrimaryRetryInterval has passed since the switch to a
+// backup, the primary. Only the query that claims the retry slot tries the
+// primary; concurrent queries keep the backup meanwhile.
+func (e *Egress) dnsStart() int {
+	start := int(e.dnsPreferred.Load())
+	if start == 0 {
+		return 0
+	}
+	due := e.dnsPrimaryRetry.Load()
+	now := time.Now()
+	if now.UnixNano() >= due && e.dnsPrimaryRetry.CompareAndSwap(due, now.Add(dnsPrimaryRetryInterval).UnixNano()) {
+		return 0
+	}
+	return start
+}
+
+func (e *Egress) dnsAnswered(index int) {
+	if index != 0 && e.dnsPreferred.Swap(int32(index)) == 0 {
+		e.dnsPrimaryRetry.Store(time.Now().Add(dnsPrimaryRetryInterval).UnixNano())
+		return
+	}
+	e.dnsPreferred.Store(int32(index))
 }
 
 func NewEgress(c Config) (*Egress, error) {
@@ -194,7 +226,7 @@ func (e *Egress) ExchangeDNS(ctx context.Context, q *dns.Msg) (*dns.Msg, error) 
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	endpoints := e.dnsURLs
-	start := int(e.dnsPreferred.Load())
+	start := e.dnsStart()
 	attempts := max(3, len(endpoints))
 	for attempt := 0; attempt < attempts; attempt++ {
 		if ctx.Err() != nil {
@@ -207,7 +239,7 @@ func (e *Egress) ExchangeDNS(ctx context.Context, q *dns.Msg) (*dns.Msg, error) 
 		answer, retry, err = e.exchangeDNSOnce(attemptCtx, endpoints[index], q, wire)
 		done()
 		if err == nil {
-			e.dnsPreferred.Store(int32(index))
+			e.dnsAnswered(index)
 			return answer, nil
 		}
 		if !retry {

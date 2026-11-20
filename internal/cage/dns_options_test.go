@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/miekg/dns"
 )
@@ -145,4 +146,52 @@ func TestDNSOptionsFileKeepsMainConfigReadableByOlderVersions(t *testing.T) {
 	if _, err := Load(path); err == nil {
 		t.Fatal("malformed options accepted")
 	}
+}
+
+// One transient primary failure must not keep every later query on the
+// backup (which may be a second provider the user opted into).
+func TestDNSRetriesPrimaryAfterInterval(t *testing.T) {
+	var primaryDown, backupDown atomic.Bool
+	var primaryHits, backupHits atomic.Int32
+	primaryDown.Store(true)
+	primary := dohServer(t, &primaryDown, &primaryHits)
+	backup := dohServer(t, &backupDown, &backupHits)
+	p, _ := testProxy(t)
+	defer p.Close()
+	c := DefaultConfig()
+	c.ProxyURL, c.DNSURL = p.URL, primary.URL
+	c.DNS = NewDNSOptions([]string{backup.URL}, nil, false)
+	e, err := NewEgress(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer e.client.CloseIdleConnections()
+	pool := primary.Client().Transport.(*http.Transport).TLSClientConfig.RootCAs.Clone()
+	pool.AddCert(backup.Certificate())
+	e.client.Transport.(*http.Transport).TLSClientConfig = &tls.Config{RootCAs: pool}
+	q := new(dns.Msg).SetQuestion("example.com.", dns.TypeA)
+	query := func(wantPrimary, wantBackup int32) {
+		t.Helper()
+		if _, err := e.ExchangeDNS(t.Context(), q); err != nil {
+			t.Fatal(err)
+		}
+		if primaryHits.Load() != wantPrimary || backupHits.Load() != wantBackup {
+			t.Fatalf("primary=%d backup=%d, want %d/%d", primaryHits.Load(), backupHits.Load(), wantPrimary, wantBackup)
+		}
+	}
+	retryDue := func() { e.dnsPrimaryRetry.Store(time.Now().Add(-time.Second).UnixNano()) }
+	query(1, 1) // primary fails once, backup answers
+	primaryDown.Store(false)
+	query(1, 2) // within the interval the backup stays first
+	if due := time.Until(time.Unix(0, e.dnsPrimaryRetry.Load())); due < dnsPrimaryRetryInterval-time.Minute || due > dnsPrimaryRetryInterval {
+		t.Fatalf("primary retry scheduled in %v, want about %v", due, dnsPrimaryRetryInterval)
+	}
+	primaryDown.Store(true)
+	retryDue()
+	query(2, 3) // retry: primary still down, one attempt, then backup
+	query(2, 4) // and not retried again before the next interval
+	primaryDown.Store(false)
+	retryDue()
+	query(3, 4) // primary back: it answers and is preferred again
+	query(4, 4)
 }
