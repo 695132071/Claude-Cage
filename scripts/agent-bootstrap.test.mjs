@@ -24,8 +24,9 @@ test('select only exact platform artifacts and explicit unsigned consent', () =>
     assert.equal(selected.tag, tag);
   }
   assert.throws(() => selectAsset(release('win32-amd64'), { platform: 'win32-amd64' }), { code: 'unsigned_package_requires_consent' });
-  assert.throws(() => parseArgs(['download', '--destination', 'relative']), { code: 'invalid_input' });
-  assert.throws(() => parseArgs(['--version', '../../bad']), { code: 'invalid_input' });
+  // Name a supported platform so the result does not depend on the test host.
+  assert.throws(() => parseArgs(['download', '--platform', 'linux-amd64', '--destination', 'relative']), { code: 'invalid_input' });
+  assert.throws(() => parseArgs(['--platform', 'linux-amd64', '--version', '../../bad']), { code: 'invalid_input' });
   const wrong = release('linux-amd64'); wrong.assets[0].browser_download_url = 'https://example.org/package';
   assert.throws(() => selectAsset(wrong, { platform: 'linux-amd64' }), { code: 'invalid_release' });
 });
