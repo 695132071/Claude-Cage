@@ -130,18 +130,31 @@ func legacyWindowsSocket(profile string) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("cage-proxy-%x", h[:8]), "control.sock")
 }
 func Load(profile string) (Store, error) {
-	var s Store
+	b, missing, err := readStore(profile)
+	if err != nil {
+		return Store{}, err
+	}
+	return parseStore(b, missing)
+}
+
+// readStore returns the stored bytes; missing reports a store not yet created.
+func readStore(profile string) (b []byte, missing bool, err error) {
 	f, err := os.Open(filepath.Join(Dir(profile), "sources.json"))
 	if os.IsNotExist(err) {
-		return Store{Version: 1, Port: 17896, Auth: Token(), Sources: []Source{}}, nil
+		return nil, true, nil
 	}
 	if err != nil {
-		return s, err
+		return nil, false, err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, maxStoreSize+1))
-	if err != nil {
-		return s, err
+	b, err = io.ReadAll(io.LimitReader(f, maxStoreSize+1))
+	return b, false, err
+}
+
+func parseStore(b []byte, missing bool) (Store, error) {
+	var s Store
+	if missing {
+		return Store{Version: 1, Port: 17896, Auth: Token(), Sources: []Source{}}, nil
 	}
 	if len(b) > maxStoreSize || json.Unmarshal(b, &s) != nil || s.Version != 1 || s.Port < 1024 || s.Port > 65535 || len(s.Auth) != 48 {
 		return s, errors.New("Cage 代理配置无效，请恢复私有配置备份")

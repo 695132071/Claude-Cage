@@ -21,6 +21,7 @@ import (
 
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/host"
+	"github.com/sylvinus/agent-vm/internal/managedproxy"
 )
 
 const gateRecordName = "cage-gate.json"
@@ -224,6 +225,8 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 		defer close(watched)
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()
+		// Reread every second; only unchanged proxy store bytes skip the parse.
+		var applied managedproxy.AppliedCheck
 		for {
 			select {
 			case <-ctx.Done():
@@ -232,7 +235,7 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 				controlMu.Lock()
 				cfg, err := Load(configPath)
 				if err == nil {
-					err = cfg.RequireManagedProxy(filepath.Dir(configPath))
+					err = applied.Check(filepath.Dir(configPath), cfg.ProxyURL, cfg.ProxyRevision)
 				}
 				if err != nil || cfg.Fingerprint() != gate.Status().Configuration {
 					const reason = "配置已变更或无法读取，请重新检测；环境设置变化时需停止并重新启动"
