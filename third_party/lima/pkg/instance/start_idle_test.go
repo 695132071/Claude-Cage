@@ -41,3 +41,19 @@ func TestWithIdleDeadlineKeepsParentAndStop(t *testing.T) {
 		t.Fatal("zero idle must disable the deadline")
 	}
 }
+
+func TestWatchHostAgentTimeoutsUseSeparateKeys(t *testing.T) {
+	ctx := WithWatchHostAgentTimeout(context.Background(), 2*time.Hour)
+	ctx = WithWatchHostAgentIdleTimeout(ctx, 10*time.Minute)
+	if got := watchHostAgentTimeout(ctx); got != 2*time.Hour {
+		t.Fatalf("overall timeout = %v, want 2h: the idle timeout replaced it", got)
+	}
+	if got := watchHostAgentIdleTimeout(ctx); got != 10*time.Minute {
+		t.Fatalf("idle timeout = %v, want 10m", got)
+	}
+	ctx = WithWatchHostAgentIdleTimeout(WithWatchHostAgentTimeout(context.Background(), time.Hour), time.Minute)
+	ctx = WithWatchHostAgentTimeout(ctx, 3*time.Hour)
+	if watchHostAgentIdleTimeout(ctx) != time.Minute || watchHostAgentTimeout(ctx) != 3*time.Hour {
+		t.Fatal("setting the overall timeout after the idle one lost a value")
+	}
+}

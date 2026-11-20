@@ -485,7 +485,10 @@ func withIdleDeadline(ctx context.Context, idle time.Duration) (context.Context,
 	return ctx, touch, func() bool { return errors.Is(context.Cause(ctx), errIdle) }
 }
 
-type watchHostAgentIdleTimeoutKey = struct{}
+// A defined type, not an alias of struct{}: watchHostAgentEventsTimeoutKey
+// and launchingShellKey are aliases of struct{}, and an alias here would make
+// the idle timeout replace the overall one stored under the same key.
+type watchHostAgentIdleTimeoutKey struct{}
 
 // WithWatchHostAgentIdleTimeout makes watchHostAgentEvents fail only after
 // idle passes without any hostagent event, within the overall timeout set by

@@ -1,5 +1,5 @@
 diff --git a/pkg/hostagent/hostagent.go b/pkg/hostagent/hostagent.go
-index b53dceb9..c3b7de41 100644
+index b53dceb..c3b7de4 100644
 --- a/pkg/hostagent/hostagent.go
 +++ b/pkg/hostagent/hostagent.go
 @@ -678,7 +678,9 @@ ln -sf "${SSH_AUTH_SOCK}" /run/host-services/ssh-auth.sock`
@@ -14,7 +14,7 @@ index b53dceb9..c3b7de41 100644
  
  				a.watchCloudInitProgress(timeoutCtx)
 diff --git a/pkg/instance/start.go b/pkg/instance/start.go
-index 10b4d2f2..5aa0dc2f 100644
+index 10b4d2f..5a5c0b2 100644
 --- a/pkg/instance/start.go
 +++ b/pkg/instance/start.go
 @@ -372,6 +372,11 @@ func waitHostAgentStart(_ context.Context, haPIDPath, haStderrPath string) error
@@ -37,7 +37,7 @@ index 10b4d2f2..5aa0dc2f 100644
  		if !printedSSHLocalPort && ev.Status.SSHLocalPort != 0 {
  			logrus.Infof("SSH Local Port: %d", ev.Status.SSHLocalPort)
  			printedSSHLocalPort = true
-@@ -450,12 +456,49 @@ func watchHostAgentEvents(ctx context.Context, inst *limatype.Instance, haStdout
+@@ -450,12 +456,52 @@ func watchHostAgentEvents(ctx context.Context, inst *limatype.Instance, haStdout
  	}
  
  	if !receivedRunningEvent {
@@ -70,7 +70,10 @@ index 10b4d2f2..5aa0dc2f 100644
 +	return ctx, touch, func() bool { return errors.Is(context.Cause(ctx), errIdle) }
 +}
 +
-+type watchHostAgentIdleTimeoutKey = struct{}
++// A defined type, not an alias of struct{}: watchHostAgentEventsTimeoutKey
++// and launchingShellKey are aliases of struct{}, and an alias here would make
++// the idle timeout replace the overall one stored under the same key.
++type watchHostAgentIdleTimeoutKey struct{}
 +
 +// WithWatchHostAgentIdleTimeout makes watchHostAgentEvents fail only after
 +// idle passes without any hostagent event, within the overall timeout set by
@@ -89,10 +92,10 @@ index 10b4d2f2..5aa0dc2f 100644
  // WithWatchHostAgentTimeout sets the value of the timeout to use for
 diff --git a/pkg/instance/start_idle_test.go b/pkg/instance/start_idle_test.go
 new file mode 100644
-index 00000000..d1689083
+index 0000000..9d40f97
 --- /dev/null
 +++ b/pkg/instance/start_idle_test.go
-@@ -0,0 +1,43 @@
+@@ -0,0 +1,59 @@
 +package instance
 +
 +import (
@@ -134,5 +137,21 @@ index 00000000..d1689083
 +	touch(true)
 +	if ctx.Err() != nil || expired() {
 +		t.Fatal("zero idle must disable the deadline")
++	}
++}
++
++func TestWatchHostAgentTimeoutsUseSeparateKeys(t *testing.T) {
++	ctx := WithWatchHostAgentTimeout(context.Background(), 2*time.Hour)
++	ctx = WithWatchHostAgentIdleTimeout(ctx, 10*time.Minute)
++	if got := watchHostAgentTimeout(ctx); got != 2*time.Hour {
++		t.Fatalf("overall timeout = %v, want 2h: the idle timeout replaced it", got)
++	}
++	if got := watchHostAgentIdleTimeout(ctx); got != 10*time.Minute {
++		t.Fatalf("idle timeout = %v, want 10m", got)
++	}
++	ctx = WithWatchHostAgentIdleTimeout(WithWatchHostAgentTimeout(context.Background(), time.Hour), time.Minute)
++	ctx = WithWatchHostAgentTimeout(ctx, 3*time.Hour)
++	if watchHostAgentIdleTimeout(ctx) != time.Minute || watchHostAgentTimeout(ctx) != 3*time.Hour {
++		t.Fatal("setting the overall timeout after the idle one lost a value")
 +	}
 +}
