@@ -116,6 +116,9 @@ replace_once('    clipboardPasteFrom(text) {', '''    // Cage: serialize the cli
                 return;
             }
             const id = 'cage-paste-' + (this._cagePasteSequence = (this._cagePasteSequence || 0) + 1);
+            // Reaching the timeout means no X client ever received the data
+            // (or the connection stalled), so the text is not in the guest and
+            // queued input behind it is dropped rather than sent without it.
             const timer = setTimeout(() => {
                 if (this._cagePasteJob?.id === id) this._cagePasteJob = null;
                 reject(new Error('Remote application did not accept the paste'));
@@ -123,8 +126,10 @@ replace_once('    clipboardPasteFrom(text) {', '''    // Cage: serialize the cli
             // Xvnc asks for the data only when an X client reads the clipboard,
             // which is usually the application handling the paste. Once the
             // server has the announcement, paste; the request that follows is
-            // answered with this text by noVNC.
-            this._cagePasteJob = {id, timer, resolve, phase: 'announce'};
+            // answered with this text by noVNC. A guest clipboard watcher may
+            // read first: Xvnc then keeps the data and serves the paste itself
+            // without asking again, so a provide before Ctrl+V is remembered.
+            this._cagePasteJob = {id, timer, resolve, phase: 'announce', provided: false};
             this.clipboardPasteFrom(text);
             RFB.messages.clientFence(this._sock, (1 << 31) | 1, id);
         });
@@ -195,7 +200,9 @@ replace_once('''    _sendMouse(x, y, mask) {''', '''    _sendMouse(x, y, mask) {
 provide = 'RFB.messages.extendedClipboardProvide(this._sock, [extendedClipboardFormatText], [this._clipboardText]);'
 replace_once(provide, provide + '''
                         const cagePaste = this._cagePasteJob;
-                        if (cagePaste?.phase === 'pasted') {
+                        if (cagePaste?.phase === 'announce') {
+                            cagePaste.provided = true;
+                        } else if (cagePaste?.phase === 'pasted') {
                             // The application read the paste: confirm the
                             // server has the data before later input follows.
                             cagePaste.phase = 'keys';
@@ -215,7 +222,14 @@ replace_once('''        if (!(flags & (1<<31))) {
             const job = this._cagePasteJob;
             if (job && job.phase === 'announce' && payload === job.id) {
                 this._cagePasteKeys();
-                job.phase = 'pasted';
+                if (job.provided) {
+                    // The server already holds the data and answers the
+                    // application's read itself: confirm the keys arrived.
+                    job.phase = 'keys';
+                    RFB.messages.clientFence(this._sock, (1 << 31) | 1, job.id + '-keys');
+                } else {
+                    job.phase = 'pasted';
+                }
                 return true;
             }
             if (job && job.phase === 'keys' && payload === job.id + '-keys') {
