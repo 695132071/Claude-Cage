@@ -506,8 +506,63 @@ def json_snapshot(path):
     return raw, data if isinstance(data, dict) else None
 
 
+BACKUP_MAX_COUNT = 20
+BACKUP_MAX_AGE = 30 * 24 * 60 * 60
+
+
+def prune_backup_series(prefix, now=None, keep_count=BACKUP_MAX_COUNT, max_age=BACKUP_MAX_AGE):
+    """Bound backup growth by count and age while keeping at least one backup."""
+    backups_root = (shared_root() / "backups").resolve()
+    parent = prefix.parent
+    if not parent.is_dir():
+        return
+    try:
+        if not parent.resolve().is_relative_to(backups_root):
+            return
+    except OSError:
+        return
+    head = prefix.name + "-"
+    entries = []
+    try:
+        children = list(parent.iterdir())
+    except OSError:
+        return
+    for child in children:
+        if linked(child):
+            continue
+        if child.name == prefix.name:
+            stamp = 0
+        elif child.name.startswith(head) and child.name[len(head):].isdigit() and len(child.name[len(head):]) >= 15:
+            stamp = int(child.name[len(head):])
+        else:
+            continue
+        try:
+            mtime = child.lstat().st_mtime
+        except OSError:
+            continue
+        entries.append((mtime, stamp, child))
+    # Always retain the newest entry so a sole unreplaced migration backup is
+    # never deleted regardless of age.
+    if len(entries) <= 1:
+        return
+    entries.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    cutoff = (time.time() if now is None else now) - max_age
+    limit = max(1, keep_count)
+    for index, (mtime, _, child) in enumerate(entries):
+        if index == 0 or (index < limit and mtime >= cutoff):
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 def replace_json(path, data, original, backup):
     """Atomically publish JSON unless another writer changed the file since it was read."""
+    backup_prefix = backup
     if original is not None:
         backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
         backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
@@ -529,6 +584,7 @@ def replace_json(path, data, original, backup):
             Path(temporary).unlink(missing_ok=True)
             return False
         os.replace(temporary, path)
+        prune_backup_series(backup_prefix)
         return True
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
@@ -645,9 +701,11 @@ def share_plugin_folders(base, lock_dir):
                 move(child, target, depth - 1, relative / child.name)
             else:
                 # Keep the profile's own copy recoverable instead of deleting it.
-                backup = lock_dir / "backups" / base.name / "plugins" / relative / (child.name + "-" + str(time.time_ns()))
+                backup_prefix = lock_dir / "backups" / base.name / "plugins" / relative / child.name
+                backup = backup_prefix.with_name(child.name + "-" + str(time.time_ns()))
                 backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
                 child.rename(backup)
+                prune_backup_series(backup_prefix)
         local.rmdir()
     # Every rename is atomic, so an interrupted migration resumes from here.
     for local, shared, depth in plan:
@@ -709,8 +767,46 @@ def plugin_form(value, forms):
     return found[0] if found else forms[0]
 
 
+def clear_active_plugin_orphans(common_root, installed_plugins):
+    """Remove stale .orphaned_at markers for plugin versions still installed in the shared registry."""
+    cache_root = common_root / "cache"
+    if not cache_root.is_dir():
+        return
+    try:
+        resolved_cache = cache_root.resolve()
+    except OSError:
+        return
+    for records in installed_plugins.values():
+        if not isinstance(records, list):
+            continue
+        for entry in records:
+            install_path = entry.get("installPath") if isinstance(entry, dict) else None
+            if not isinstance(install_path, str) or not install_path:
+                continue
+            try:
+                target = Path(install_path).resolve()
+            except OSError:
+                continue
+            if target == resolved_cache or not target.is_relative_to(resolved_cache):
+                continue
+            marker = target / ".orphaned_at"
+            try:
+                if marker.is_file() and not marker.is_symlink():
+                    marker.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def sync_plugin_registries(base, lock_dir, record):
-    """Merge installed plugins and known marketplaces in both directions."""
+    """Merge installed plugins and known marketplaces in both directions.
+
+    Uninstalls and marketplace removals must synchronize alongside installs:
+    accounts share plugins/cache and plugins/marketplaces, and the official CLI
+    marks uninstalled cache versions with .orphaned_at for later deletion (and
+    immediately deletes removed marketplace directories). Keeping a plugin
+    installed in another account while one account uninstalled it would allow
+    the official CLI to delete files still referenced by the other account.
+    """
     config, common = config_directory(base), Path.home() / ".claude"
     local_root, common_root = config / "plugins", common / "plugins"
     local_forms, common_forms = plugin_root_forms(config), plugin_root_forms(common)
@@ -740,6 +836,8 @@ def sync_plugin_registries(base, lock_dir, record):
             data = {**local, "version": 2, field: merged_local} if field else merged_local
             if not replace_json(local_root / name, data, local_raw, lock_dir / "backups" / base.name / "plugins" / name):
                 continue
+        if name == "installed_plugins.json":
+            clear_active_plugin_orphans(common_root, merged_common)
         bases[name] = merged_base
 
 
@@ -924,7 +1022,8 @@ def heal_shared_file(base, local, shared, record):
     # is the profile's copy the newer edit. Otherwise both changed: keep both.
     if links.get(name) != file_digest(shared):
         return
-    backup = shared_root() / "backups" / "common" / (shared.name + "-" + str(time.time_ns()))
+    backup_prefix = shared_root() / "backups" / "common" / shared.name
+    backup = backup_prefix.with_name(shared.name + "-" + str(time.time_ns()))
     backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     shutil.copy2(shared, backup)
     with tempfile.NamedTemporaryFile(dir=shared.parent, delete=False) as stream:
@@ -932,6 +1031,7 @@ def heal_shared_file(base, local, shared, record):
         temporary = stream.name
     os.chmod(temporary, stat.S_IMODE(shared.stat().st_mode))
     os.replace(temporary, shared)
+    prune_backup_series(backup_prefix)
 
 
 def shared_profile_resources(base, desktop=False):
@@ -1004,8 +1104,10 @@ def shared_profile_resources(base, desktop=False):
         for source, destination in resources:
             check(source, destination)
         for source, destination in resources:
+            backup_prefix = None
             if source.exists() and not source.is_symlink():
-                backup = lock_dir / "backups" / base.name / source.relative_to(config)
+                backup_prefix = lock_dir / "backups" / base.name / source.relative_to(config)
+                backup = backup_prefix
                 if backup.exists():
                     backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
                 backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
@@ -1014,6 +1116,8 @@ def shared_profile_resources(base, desktop=False):
                 else:
                     shutil.copy2(source, backup)
             merge(source, destination)
+            if backup_prefix is not None:
+                prune_backup_series(backup_prefix)
         for source, destination in resources[4:6]:
             heal_shared_file(base, source, destination, record)
         plugins_shared = share_plugin_folders(base, lock_dir)
@@ -1025,6 +1129,16 @@ def shared_profile_resources(base, desktop=False):
         sync_profile_mcp(base, lock_dir, record, desktop)
         if desktop:
             link_known_project_memory(base)
+        for prefix in (lock_dir / "backups" / base.name / "settings.json",
+                       lock_dir / "backups" / base.name / "claude.json",
+                       lock_dir / "backups" / base.name / "plugins/installed_plugins.json",
+                       lock_dir / "backups" / base.name / "plugins/known_marketplaces.json",
+                       lock_dir / "backups" / "common" / "settings.json",
+                       lock_dir / "backups" / "common" / "plugins/installed_plugins.json",
+                       lock_dir / "backups" / "common" / "plugins/known_marketplaces.json",
+                       lock_dir / "backups" / "common" / "CLAUDE.md",
+                       lock_dir / "backups" / "common" / "AGENTS.md"):
+            prune_backup_series(prefix)
         write_record(base, record)
 
 
@@ -1057,6 +1171,7 @@ def link_project_memory(own, memory, backup):
     """Move a memory folder's notes into the shared one and leave a link behind."""
     if own == memory or linked(own):
         return
+    backup_prefix = None
     if own.exists():
         sources = [source for source in own.rglob("*") if source.is_file()]
         for source in sources:
@@ -1070,11 +1185,14 @@ def link_project_memory(own, memory, backup):
             destination.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
             if not destination.exists():
                 shutil.copy2(source, destination)
+        backup_prefix = backup
         backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
         if backup.exists():
             backup = backup.with_name(backup.name + "-" + str(time.time_ns()))
         own.rename(backup)
     resource_link(own, memory)
+    if backup_prefix is not None:
+        prune_backup_series(backup_prefix)
 
 
 def shared_project_memory(base, directory):
@@ -1141,7 +1259,8 @@ def shared_memory_path(memory):
             conflict = True
         if conflict:
             raise SharedResourceConflict("项目记忆存在同名内容冲突，两份记忆均已保留，请先核对后重试")
-    backup = shared_root() / "backups/runtime-memory" / (alias.name + "-" + str(time.time_ns()))
+    backup_prefix = shared_root() / "backups/runtime-memory" / alias.name
+    backup = backup_prefix.with_name(alias.name + "-" + str(time.time_ns()))
     backup.parent.mkdir(mode=PRIVATE_MODE, parents=True, exist_ok=True)
     shutil.copytree(alias, backup, symlinks=True)
     for source in entries:
@@ -1160,6 +1279,7 @@ def shared_memory_path(memory):
     # Retain the original directory too: an older process may still hold it
     # open or write to it. Nothing in recovery recursively deletes user notes.
     alias.rename(alias.with_name(backup.name + ".recovered"))
+    prune_backup_series(backup_prefix)
     return _runtime["path"](memory)
 
 
