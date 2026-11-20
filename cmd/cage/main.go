@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -94,9 +95,15 @@ func run() int {
 	// The shared commands otherwise name agent-vm and suggest its installer.
 	cli.Command = "claude-cage"
 	cli.UpdateHint = "update Cage from the app, or with the installer or package that installed it"
+	// --reset deletes the environment's disk with the user's files and logins.
+	cli.StaleBaseHint = "提示：Cage 的基础镜像比当前环境新。当前环境的磁盘会保留，不需要重建；请在 Cage 的“设置 > 环境与恢复”中更新环境组件或环境工具，也可以运行 cage update-tools。"
 	args := os.Args[1:]
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Print(help)
+		return 0
+	}
+	if text, ok := subcommandHelp(args); ok {
+		fmt.Print(text)
 		return 0
 	}
 	// These read only this build's own metadata. Answering them before the
@@ -572,19 +579,13 @@ func run() int {
 	}
 
 	if args[0] == "check" {
-		e, err := cage.NewEgress(cfg)
+		// Use the same fixed exit services as the network check, so one
+		// blocked endpoint does not fail this check on its own.
+		ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+		_, err := cage.ProbeExitIP(ctx, cfg)
+		cancel()
 		if err != nil {
-			return fail(err)
-		}
-		client := &http.Client{Timeout: 25 * time.Second, Transport: &http.Transport{DialContext: e.DialContext, Proxy: nil}}
-		req, _ := http.NewRequestWithContext(context.Background(), "GET", "https://1.1.1.1/cdn-cgi/trace", nil)
-		r, err := client.Do(req)
-		if err != nil {
-			return fail(fmt.Errorf("proxy transport check failed (no direct fallback)"))
-		}
-		r.Body.Close()
-		if r.StatusCode != 200 {
-			return fail(fmt.Errorf("proxy check returned HTTP %d", r.StatusCode))
+			return fail(fmt.Errorf("proxy transport check failed (no direct fallback): %w", err))
 		}
 		fmt.Println("Proxy transport OK. Guest traffic still requires VM acceptance checks.")
 		return 0
@@ -612,7 +613,7 @@ func run() int {
 		if resourceErr != nil {
 			return fail(resourceErr)
 		}
-		args = append([]string{"setup", "--memory", fmt.Sprint(memory), "--cpus", fmt.Sprint(cpus), "--disk", "24", "--preinstall=node,python,chromium,gh,claude,code-server"}, args[1:]...)
+		args = append([]string{"setup", "--memory", fmt.Sprint(memory), "--cpus", fmt.Sprint(cpus), "--disk", "24", "--preinstall=node,python,chromium,gh,claude,code-server"}, requireWorkbenchTools(args[1:])...)
 	}
 	if args[0] == "up" || args[0] == "login" {
 		result := cli.Main([]string{"run", "true"}, cli.Stdio())
@@ -672,6 +673,78 @@ func containerInstallScript(kind string) (string, error) {
 func runGuestServiceStart(script string, stdio cli.IO, invoke func([]string, cli.IO) int) int {
 	stdio.Stdin = strings.NewReader(script)
 	return invoke([]string{"run", "bash", "-s"}, stdio)
+}
+
+// The shared environment's start script needs these tools. A --preinstall
+// list given to `cage setup`, such as "default", keeps its choices and gains
+// any of them it lacks, so the base it builds can always start.
+var workbenchTools = []string{"chromium", "code-server"}
+
+func requireWorkbenchTools(args []string) []string {
+	complete := func(list string) string {
+		if list == "" {
+			list = "default"
+		}
+		names := strings.Split(list, ",")
+		for _, tool := range workbenchTools {
+			if !slices.Contains(names, tool) {
+				names = append(names, tool)
+			}
+		}
+		return strings.Join(names, ",")
+	}
+	result := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		switch a := args[i]; {
+		case strings.HasPrefix(a, "--preinstall="):
+			result = append(result, "--preinstall="+complete(strings.TrimPrefix(a, "--preinstall=")))
+		case a == "--preinstall":
+			// As in setup, only a following non-option is its value.
+			value := ""
+			if i+1 < len(args) && !strings.HasPrefix(args[i+1], "-") {
+				i++
+				value = args[i]
+			}
+			result = append(result, "--preinstall="+complete(value))
+		default:
+			result = append(result, a)
+		}
+	}
+	return result
+}
+
+// Commands whose remaining arguments belong to a program in the environment,
+// such as `cage run ls -h`, or that answer --help themselves.
+var helpPassthrough = map[string]bool{
+	"agent": true, "run": true, "shell": true, "sh": true, "claude": true, "code": true,
+	"opencode": true, "codex": true, "vibe": true, "pi": true,
+}
+
+// subcommandHelp answers `cage COMMAND --help` before the command opens or
+// creates a profile, so asking for help never runs it. It prints the
+// command's lines from the overview, or the overview when it has none.
+func subcommandHelp(args []string) (string, bool) {
+	if len(args) < 2 || args[1] != "--help" && args[1] != "-h" || helpPassthrough[args[0]] {
+		return "", false
+	}
+	var lines []string
+	matched := false
+	for _, line := range strings.Split(help, "\n") {
+		switch {
+		case strings.HasPrefix(line, "cage "):
+			fields := strings.Fields(line)
+			matched = len(fields) > 1 && fields[1] == args[0]
+		case !strings.HasPrefix(line, " "):
+			matched = false
+		}
+		if matched {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return help, true
+	}
+	return strings.Join(lines, "\n") + "\n\nRun 'cage --help' for all commands.\n", true
 }
 
 func fail(err error) int {

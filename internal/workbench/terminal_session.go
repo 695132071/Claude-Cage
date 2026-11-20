@@ -23,6 +23,7 @@ type terminalSession struct {
 	backgroundLogin       bool
 	mu                    sync.Mutex
 	id, title             string
+	creationOrder         int
 	sharedID              string
 	connectionID          string
 	conversationEnded     bool
@@ -54,6 +55,22 @@ func (t *terminalSession) accountID() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.claudeAccountID
+}
+
+func (t *terminalSession) ended() bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if !t.closed {
+		return false
+	}
+	if t.done != nil {
+		select {
+		case <-t.done:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func (t *terminalSession) replaceable() bool {
@@ -186,6 +203,27 @@ func (t *terminalSession) enqueueInput(ctx context.Context, input string) error 
 		return nil
 	default:
 		return errTerminalInputFull
+	}
+}
+
+// terminalInputWait bounds how long a burst of client input, such as a
+// terminal answering many queries at once, may wait for the PTY writer.
+const terminalInputWait = 2 * time.Second
+
+// enqueueInputWait retries a full queue until the writer drains it, keeping
+// input order; it fails only when the PTY stays blocked or the request ends.
+func (t *terminalSession) enqueueInputWait(ctx context.Context, input string, wait time.Duration) error {
+	deadline := time.Now().Add(wait)
+	for {
+		err := t.enqueueInput(ctx, input)
+		if !errors.Is(err, errTerminalInputFull) || !time.Now().Before(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
 }
 

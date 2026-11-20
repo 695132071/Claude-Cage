@@ -31,6 +31,7 @@ import { PluginView } from "./plugin-view";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
+import { TERMINAL_LIMIT, liveTerminalCount } from "./session-order.mjs";
 import { InitializationGate } from "./initialization";
 import { ProjectRecovery } from "./project-recovery";
 import { DesktopPanes, useAccountDesktops } from "./account-desktops";
@@ -59,7 +60,13 @@ import { networkState, isGuestLocalURL } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
 import { NetworkSpeed } from "./network-speed";
-import { useWindowVisibility } from "./window-visibility";
+import { isWindowFocused, useWindowVisibility } from "./window-visibility";
+import {
+  createNotificationDeduplicator,
+  defaultNotificationPreferences,
+  dispatchDesktopNotification,
+  normalizeNotificationPreferences,
+} from "./notifications.mjs";
 import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
@@ -600,6 +607,7 @@ function App() {
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
     <TerminalMenu choice={terminalChoice} busy={busy} profiles={claudeProfiles}
+      atLimit={liveTerminalCount(tabs) + (enrollmentID ? 1 : 0) >= TERMINAL_LIMIT}
       usesOfficialCLI={(settings?.claude_terminal_command?.trim() || "claude") === "claude"}
       onClose={() => setTerminalChoice(null)}
       onSelect={(kind, accountId, autoHandoff) => createTerminal(terminalChoice.path, kind, accountId, autoHandoff).catch((e) => notify(e.message))} />
@@ -631,7 +639,8 @@ function App() {
     }
   };
   const closeTab = async (tab, anchor) => {
-    if (tab.cli_session_id) return archiveSession({id:tab.cli_session_id, title:tab.title}, anchor);
+    // An ended conversation terminal only holds its output; closing it keeps the conversation.
+    if (tab.cli_session_id && !tab.closed) return archiveSession({id:tab.cli_session_id, title:tab.title}, anchor);
     if (tab.kind === "terminal") {
       if (
         !tab.closed &&
@@ -734,6 +743,7 @@ function App() {
         exit: () => native("quitNow"),
         isCancelled: () => quitAfterStop.current !== request,
         onStatus: setStatus,
+        tr,
       });
     } catch (error) {
       if (quitAfterStop.current === request) {
@@ -899,6 +909,102 @@ function App() {
     }).catch(() => {});
     return () => { live = false; };
   }, [settings, status, fatal, connectionError]);
+  const notificationPrefsRef = useRef(defaultNotificationPreferences);
+  const notificationDedupRef = useRef(null);
+  if (!notificationDedupRef.current) notificationDedupRef.current = createNotificationDeduplicator();
+  const notificationViewRef = useRef({});
+  notificationViewRef.current = {
+    settingsOpen,
+    managementPage,
+    desktopOpen,
+    viewingAccountDesktop,
+    showHome,
+    safetyOpen,
+    dialog,
+    layout,
+    tabs,
+    select,
+    accountDesktops,
+    tr,
+  };
+  useEffect(() => {
+    const controller = new AbortController();
+    api("/client/notifications", undefined, undefined, {}, { signal: controller.signal })
+      .then((value) => {
+        if (!controller.signal.aborted) {
+          notificationPrefsRef.current = normalizeNotificationPreferences(value);
+        }
+      })
+      .catch(() => {});
+    const onUpdated = (event) => {
+      notificationPrefsRef.current = normalizeNotificationPreferences(event.detail);
+    };
+    const onClicked = (event) => {
+      const detail = event.detail || {};
+      if (!detail.terminal_id) return;
+      if (detail.connection_id && detail.connection_id !== getClientContext().connection_id) return;
+      const state = notificationViewRef.current;
+      const tabId = "terminal:" + detail.terminal_id;
+      if (!state.tabs.some((item) => item.id === tabId)) return;
+      state.accountDesktops.clear();
+      setSettingsOpen(false);
+      setSafetyOpen(false);
+      setManagementPage("");
+      setDesktopOpen(false);
+      setHome(false);
+      void state.select(tabId, true);
+    };
+    window.addEventListener("cage-notification-preferences", onUpdated);
+    window.addEventListener("cage-notification-click", onClicked);
+    return () => {
+      controller.abort();
+      window.removeEventListener("cage-notification-preferences", onUpdated);
+      window.removeEventListener("cage-notification-click", onClicked);
+    };
+  }, []);
+  useEffect(() => {
+    // Notifications come only from this computer's own environment. A remote
+    // host's terminals never raise banners on the client.
+    const context = getClientContext();
+    if (!status?.ready || context.mode !== "local" || context.client_only) return;
+    const stream = new EventSource(runtimeURL("/notifications/events"));
+    stream.addEventListener("notification", (event) => {
+      let detail;
+      try {
+        detail = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      const state = notificationViewRef.current;
+      const overlayOpen = Boolean(
+        state.settingsOpen ||
+        state.managementPage ||
+        state.desktopOpen ||
+        state.viewingAccountDesktop ||
+        state.showHome ||
+        state.safetyOpen ||
+        state.dialog,
+      );
+      const viewingTerminal = !overlayOpen && Boolean(
+        detail.tab_id && (state.layout.active === detail.tab_id || state.layout.other === detail.tab_id),
+      );
+      void dispatchDesktopNotification(detail, {
+        prefs: notificationPrefsRef.current,
+        viewState: { windowFocused: isWindowFocused(), viewingTerminal },
+        nativeAvailable,
+        native,
+        tr: state.tr,
+        connectionId: getClientContext().connection_id,
+        dedup: notificationDedupRef.current,
+        onFocus: (target) => {
+          window.dispatchEvent(new CustomEvent("cage-notification-click", { detail: target }));
+        },
+      }).catch(() => {});
+    });
+    return () => {
+      stream.close();
+    };
+  }, [status?.ready, clipboardConnection]);
   useEffect(() => {
     if (!status?.ready) return;
     const stream = new EventSource(runtimeURL("/browser/events"));
@@ -1955,7 +2061,7 @@ function App() {
             />
             <NetworkSpeed
               key={`speed:${proxy?.selected}:${proxy?.revision}:${running}:${busy}:${Boolean(connectionError)}`}
-              enabled={running && !busy && !connectionError}
+              enabled={running && !busy && !connectionError && windowVisible}
             />
             <span className="status-spacer" />
             <AudioControls audio={audio} />

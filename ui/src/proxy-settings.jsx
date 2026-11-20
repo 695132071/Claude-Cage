@@ -89,6 +89,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const [readingFile, setReadingFile] = useState(false);
   const alive = useRef(true),
     mutating = useRef(false),
+    delayReasons = useRef({}),
     loading = useRef(false),
     latest = useRef(null),
     appliedFailure = useRef(null),
@@ -252,9 +253,13 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             const id = ids[index++];
             try {
               const result = await api("/proxy/delay", { node_id: id });
+              delete delayReasons.current[id];
               if (alive.current)
                 setDelays((old) => ({ ...old, [id]: `${result.delay} ms` }));
-            } catch {
+            } catch (e) {
+              // The server separates unloaded nodes, timeouts and upstream
+              // failures; keep its reason instead of a fixed guess.
+              delayReasons.current[id] = e.message;
               if (alive.current)
                 setDelays((old) => ({ ...old, [id]: "不可用 / 未载入" }));
             }
@@ -750,7 +755,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       {n.id === proxy.selected ? tr("当前出口") : tr("当前中转")}
                     </span>
                   )}
-                  <span className="proxy-delay">
+                  <span className="proxy-delay" title={n.blocked_reason ? undefined : delayReasons.current[n.id] || undefined}>
                     {!n.blocked_reason && (delays[n.id] || tr("未测速"))}
                   </span>
                   <button

@@ -15,7 +15,7 @@ import (
 
 	"al.essio.dev/pkg/shellescape"
 	"github.com/google/uuid"
-	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/zlib"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 )
 
@@ -35,16 +35,34 @@ func resumeChannelRequest(record *mobileRecord) map[string]any {
 		"resume_text": cliResumePrompt, "account_resume_text": claudeAccountResumePrompt}
 }
 
-var cliChannelEncoded = sync.OnceValue(func() string {
+// cliChannelBundle drops comment and blank lines and shrinks each 4-space
+// indentation step to one space. Python only needs consistent indentation, so
+// the program is unchanged; text inside triple-quoted strings is kept verbatim.
+func cliChannelBundle(source string) string {
 	var helper strings.Builder
-	for _, line := range strings.Split(cliChannelHelper, "\n") {
-		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
-			helper.WriteString(line + "\n")
+	inString := false
+	for _, line := range strings.Split(source, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !inString {
+			if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+				continue
+			}
+			if indent := len(line) - len(strings.TrimLeft(line, " ")); indent%4 == 0 {
+				line = line[indent-indent/4:]
+			}
 		}
+		if (strings.Count(line, "'''")+strings.Count(line, `"""`))%2 == 1 {
+			inString = !inString
+		}
+		helper.WriteString(line + "\n")
 	}
-	bundle := []byte(helper.String())
+	return helper.String()
+}
+
+var cliChannelEncoded = sync.OnceValue(func() string {
+	bundle := []byte(cliChannelBundle(cliChannelHelper))
 	var compressed bytes.Buffer
-	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
+	writer, _ := zlib.NewWriterLevel(&compressed, zlib.BestCompression)
 	_, _ = writer.Write(bundle)
 	_ = writer.Close()
 	return cliTransport85(compressed.Bytes())
@@ -102,18 +120,17 @@ func cliChannelCommand(mode, argument string) string {
 	// Versioned helpers let an open terminal keep its original protocol while a
 	// rebuilt host begins new sessions. No account configuration is overwritten.
 	digest := sha256.Sum256([]byte(cliChannelHelper + cliResumePrompt + claudeAccountResumePrompt))
-	bootstrap := fmt.Sprintf(`import base64,os,pathlib,sys,tempfile
-d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
-d.mkdir(parents=True,exist_ok=True,mode=0o700)
-n="%x"
-p=d/(n+".py")
+	bootstrap := fmt.Sprintf(`import os,sys
+from pathlib import Path
+d=Path.home()/".local/share/cage/cli-channel-code"
+d.mkdir(0o700,1,1)
+p=d/"%x.py"
 if not p.is_file():
- import gzip
- with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
-  f.write(gzip.decompress(base64.b85decode("%s")))
-  t=f.name
- os.replace(t,p)
-os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
+ import base64 as b,tempfile as t,zlib as z
+ with t.NamedTemporaryFile(dir=d,delete=0) as f:f.write(z.decompress(b.b85decode("%s")));n=f.name
+ os.replace(n,p)
+e=sys.executable
+os.execv(e,[e,"-I",str(p),*sys.argv[1:]])
 `, digest, cliChannelEncoded())
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
