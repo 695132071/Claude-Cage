@@ -2464,5 +2464,7 @@
   "终端有操作等待确认，点击返回终端": "Waxaa terminal-ka ku jira fal sugaya xaqiijin, guji si aad ugu laabato",
   "Claude Code 已完成回复": "Claude Code wuu dhammeeyay jawaabta",
   "{0} · 点击返回终端": "{0} · Guji si aad ugu laabato terminal-ka",
-  "本轮回复已结束，点击返回终端": "Jawaabtu way dhammaatay, guji si aad ugu laabato terminal-ka"
+  "本轮回复已结束，点击返回终端": "Jawaabtu way dhammaatay, guji si aad ugu laabato terminal-ka",
+  "系统通知服务不可用": "Adeegga ogeysiisyada nidaamka lama heli karo",
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "Adeegga ogeysiisyada nidaamka lama helin. Hubi in ogeysiisyadu ka shaqeynayaan deegaanka desktop-ka, kadibna isku day mar kale."
 }

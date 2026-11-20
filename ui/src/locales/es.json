@@ -2464,5 +2464,7 @@
   "终端有操作等待确认，点击返回终端": "Hay una acción pendiente de confirmación; haz clic para volver a la terminal",
   "Claude Code 已完成回复": "Claude Code terminó de responder",
   "{0} · 点击返回终端": "{0} · Haz clic para volver a la terminal",
-  "本轮回复已结束，点击返回终端": "La respuesta ha finalizado; haz clic para volver a la terminal"
+  "本轮回复已结束，点击返回终端": "La respuesta ha finalizado; haz clic para volver a la terminal",
+  "系统通知服务不可用": "El servicio de notificaciones del sistema no está disponible",
+  "未检测到系统通知服务，请确认桌面环境已开启通知后重试。": "No se encontró el servicio de notificaciones del sistema. Comprueba que el entorno de escritorio tenga las notificaciones activadas y vuelve a intentarlo."
 }
