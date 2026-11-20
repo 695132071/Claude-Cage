@@ -84,6 +84,22 @@ git push
 
 登录账户仍需拥有目标仓库的写入权限；组织 SSO、分支保护和工作流权限继续由 GitHub 管理。
 
+### 在本机和环境之间使用 git worktree
+
+`git worktree` 把仓库与额外工作区的位置以绝对路径写在两处：工作区里的 `.git` 文件，以及主仓库的 `.git/worktrees/<名称>/gitdir`。Cage 不修改这些文件，能否两边通用取决于本机与环境中的路径是否一致：
+
+- 工作区目录必须位于已共享的文件夹内：把工作区所在的上级目录加入项目，或把工作区目录本身加入同一项目。共享后再创建工作区；环境里原本就存在的同名目录会被共享内容遮住，其中的文件仍在环境磁盘上，不会出现在本机。
+- macOS 和 Linux：共享文件夹在环境中的路径与本机相同，在任一侧创建的工作区两边都能直接使用。
+- Windows：`D:\Projects\repo` 在环境中是 `/d/Projects/repo`。在环境中创建的工作区写的是 `/d/...`，Windows 的 Git 无法识别；在 Windows 上创建的写的是 `D:/...`，环境中的 Git 同样找不到，对方会把它列为 prunable（可清理）。
+
+Windows 上建议每个工作区只在创建它的一侧使用。确实需要两边切换时：
+
+1. 在创建工作区的一侧执行 `git worktree lock --reason "两边共用" <工作区路径>`。被锁定的工作区不会被 `git worktree prune` 或 `git gc` 的自动清理删除登记；未锁定时，另一侧的清理可能删掉它的登记信息（工作区文件本身保留，但需要重新关联）。
+2. 每次换到另一侧使用前，在主仓库中执行 `git worktree repair <工作区路径>`，把两处链接改写为当前这一侧的路径。换回来时在原来一侧再执行一次。
+3. 不要在另一侧对显示为 prunable 的工作区执行 `git worktree prune` 或 `git worktree remove`。
+
+Git 2.48 起可以用 `git worktree add --relative-paths` 或 `worktree.useRelativePaths=true` 写入相对路径，两边路径不同也能共用。但它会给仓库启用 `extensions.relativeWorktrees`，更早的 Git 会拒绝打开整个仓库；当前 Debian 13 环境的 Git 是 2.47，因此在本机开启这一选项后，环境里将无法使用该仓库。环境内的 Git 升级到 2.48 或更新之前，不要对需要在 Cage 中打开的仓库开启它。
+
 ## 新建 Claude 终端
 
 1. 点击项目旁的终端图标，选“新建 Claude 终端”。Cage 会在默认文件夹启动 `claude`，并让它访问项目内其余绑定文件夹。
