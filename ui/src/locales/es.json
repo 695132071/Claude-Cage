@@ -2664,5 +2664,9 @@
   "请在「设置」中填写必填项，保存后插件会自动启动。": "Completa los campos obligatorios en «Configuración»; el plugin se iniciará automáticamente al guardar.",
   "填写设置": "Completar configuración",
   "填写必填设置后，这里会列出插件提供的工具。": "Cuando completes la configuración obligatoria, aquí aparecerán las herramientas que ofrece el plugin.",
-  "需要配置": "Requiere configuración"
+  "需要配置": "Requiere configuración",
+  "保留旧 Ubuntu 环境并新建 Debian": "Conservar el entorno Ubuntu anterior y crear uno Debian",
+  "保留旧 Ubuntu 环境并新建 Debian？": "¿Conservar el entorno Ubuntu anterior y crear uno Debian?",
+  "旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。": "El entorno Ubuntu anterior se moverá tal cual a la carpeta state/guests-removed del directorio de datos, sin eliminar ningún archivo. Después, Cage descargará y creará un nuevo entorno Debian; los archivos y las sesiones iniciadas del entorno anterior no pasarán al nuevo.",
+  "保留并新建 Debian": "Conservar y crear Debian"
 }

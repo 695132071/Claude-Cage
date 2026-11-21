@@ -140,6 +140,7 @@ type Server struct {
 	closeOnce               sync.Once
 	closeErr                error
 	deviceReset             deviceResetHooks
+	abandonedVMState        func(context.Context, string) (bool, error)
 	controlPublished        bool
 
 	// guestUpdateGeneration changes whenever an attach, update or stop
@@ -710,7 +711,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"keyboard":         s.preferences.Keyboard, "auto_timezone": s.preferences.AutoTimezone, "job": s.jobs.snapshot(),
 		"location": s.location, "network_error": s.currentNetworkErrorLocked(), "can_restore": e == nil,
 		"safety": s.safety, "environment_update_required": s.guestUpdateRequired, "environment_update_error": s.guestUpdateError,
-		"abandoned_guests": s.abandonedGuestList(),
+		"abandoned_guests": s.abandonedGuestList(), "abandoned_environment": s.abandonedEnvironmentSystem(),
 	}
 	if system, err := s.installedLinuxSystem(); err != nil {
 		view["guest_system_error"] = err.Error()
@@ -840,10 +841,16 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "桌面端正在进行首次引导，请先在 Cage 窗口完成或关闭引导后再启动环境", http.StatusConflict)
 		return
 	}
-	var input guestInstallRequest
-	if r.ContentLength != 0 && !readJSON(w, r, &input) {
+	var request struct {
+		guestInstallRequest
+		// SetAsideAbandoned moves an environment of a no longer supported
+		// system aside, unchanged, before a Debian environment is created.
+		SetAsideAbandoned bool `json:"set_aside_abandoned"`
+	}
+	if r.ContentLength != 0 && !readJSON(w, r, &request) {
 		return
 	}
+	input := request.guestInstallRequest
 	if input.GuestProfile != nil {
 		if err := input.GuestProfile.Validate(); err != nil {
 			requestError(w, err)
@@ -852,6 +859,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	}
 	if abandonedGuestSystem(input.System) {
 		http.Error(w, abandonedGuestMessage(input.System), http.StatusConflict)
+		return
+	}
+	if request.SetAsideAbandoned {
+		s.startAfterSettingAside(w, r, input)
 		return
 	}
 	pending, err := guestos.LoadInstallation(s.profile)
@@ -895,6 +906,36 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		return s.startEnvironment(true)
 	})
 }
+
+// startAfterSettingAside is only offered in the Cage window, where the user
+// confirmed that the old environment is moved aside.
+func (s *Server) startAfterSettingAside(w http.ResponseWriter, r *http.Request, input guestInstallRequest) {
+	if !s.hasTrustedView(r) || requestInitiator(r) == jobInitiatorAgent || !s.localVMStorage() {
+		http.Error(w, "请在本机 Cage 窗口确认保留旧 Ubuntu 环境并新建 Debian", http.StatusForbidden)
+		return
+	}
+	if input.System != "" && input.System != guestos.Debian13 {
+		http.Error(w, "新环境只提供 Debian 13", http.StatusConflict)
+		return
+	}
+	if s.abandonedEnvironmentSystem() == "" {
+		http.Error(w, "没有需要保留的旧 Ubuntu 环境", http.StatusConflict)
+		return
+	}
+	s.launchRequest(w, r, "start", func() error {
+		if _, err := s.setAsideAbandonedEnvironment(); err != nil {
+			return err
+		}
+		if err := s.prepareGuestProfile(input.GuestProfile); err != nil {
+			return err
+		}
+		if err := s.prepareEnvironment(); err != nil {
+			return err
+		}
+		return s.hookStartEnv(true)
+	})
+}
+
 func (s *Server) stop(w http.ResponseWriter, r *http.Request) {
 	s.requestStop(w, r, false)
 }

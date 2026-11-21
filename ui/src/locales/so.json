@@ -2664,5 +2664,9 @@
   "请在「设置」中填写必填项，保存后插件会自动启动。": "Buuxi meelaha qasabka ah ee «Dejinta»; plugin-ku si toos ah ayuu u bilaabmayaa marka la kaydiyo.",
   "填写设置": "Buuxi dejinta",
   "填写必填设置后，这里会列出插件提供的工具。": "Marka aad buuxiso dejinta qasabka ah, qalabka uu plugin-ku bixiyo halkan ayaa lagu soo bandhigi doonaa.",
-  "需要配置": "Dejin baa loo baahan yahay"
+  "需要配置": "Dejin baa loo baahan yahay",
+  "保留旧 Ubuntu 环境并新建 Debian": "Hay deegaanka Ubuntu ee hore oo samee Debian cusub",
+  "保留旧 Ubuntu 环境并新建 Debian？": "Ma la hayaa deegaanka Ubuntu ee hore oo la sameeyaa Debian cusub?",
+  "旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。": "Deegaanka Ubuntu ee hore sidiisa ayaa loo rarayaa galka state/guests-removed ee ku jira galka xogta, fayl lama tirtirayo. Kadib Cage wuxuu soo dejinayaa oo samaynayaa deegaan Debian cusub; faylasha iyo xaaladda gelitaanka ee deegaanka hore looma gudbinayo deegaanka cusub.",
+  "保留并新建 Debian": "Hay oo samee Debian"
 }

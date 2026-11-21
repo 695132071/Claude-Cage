@@ -213,6 +213,23 @@ func (l *Lima) inspect(ctx context.Context, name string) (*limatype.Instance, er
 	return inst, err
 }
 
+// InstanceIn is the VM name of the Lima home home. Unlike NewLima it puts
+// LIMA_HOME back: a process that only looks at VMs must not pass home to the
+// programs it starts next, which take it for the user's own Lima home.
+func InstanceIn(ctx context.Context, home, name string) (*Instance, error) {
+	limaHomeMu.Lock()
+	defer limaHomeMu.Unlock()
+	var out *Instance
+	err := withLimaHome(home, func() error {
+		inst, err := (&Lima{}).inspect(ctx, name)
+		if err == nil {
+			out = fromLima(inst)
+		}
+		return err
+	})
+	return out, err
+}
+
 func fromLima(inst *limatype.Instance) *Instance {
 	out := &Instance{
 		Name:         inst.Name,
