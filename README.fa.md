@@ -78,7 +78,7 @@ Claude Cage ترمینال، مرورگر، ویرایشگر، برنامهٔ ر
 
 ## دانلود و نصب کنید
 
-Cage از macOS، Windows و Linux پشتیبانی می‌کند: Apple Silicon با macOS 14+، Windows 10 22H2 / 11 x64 و Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac، Windows ARM64 و Linux ARM64 فعلاً پشتیبانی نمی‌شوند. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage از macOS، Windows و Linux پشتیبانی می‌کند: Apple Silicon و Intel Mac با macOS 14+، Windows 10 22H2 / 11 x64 و Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 و Linux ARM64 فعلاً پشتیبانی نمی‌شوند. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. دانلود برنامه: [macOS / Windows / Linux](https://claude-cage.com/fa/#download).
 2. macOS: بسته نصب را باز کرده و بکشید **Cage** به **برنامه های کاربردی**; سپس آن را از Applications اجرا کنید. Windows: [راهنمای نصب](docs/windows.md#安装并开始工作) · Linux: [راهنمای نصب](docs/linux.md#安装并开始工作).

@@ -78,7 +78,7 @@ https://github.com/Lee-xeo/Claude-Cage ၏ နောက်ဆုံး source co
 
 ## ဒေါင်းလုဒ်လုပ်ပြီး တပ်ဆင်ပါ။
 
-Cage သည် macOS၊ Windows နှင့် Linux ကို ပံ့ပိုးသည်။ macOS 14+ ရှိ Apple Silicon Mac၊ Windows 10 22H2 / 11 x64 နှင့် Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac၊ Windows ARM64 နှင့် Linux ARM64 ကို မပံ့ပိုးသေးပါ။ [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage သည် macOS၊ Windows နှင့် Linux ကို ပံ့ပိုးသည်။ macOS 14+ ရှိ Apple Silicon Mac နှင့် Intel Mac၊ Windows 10 22H2 / 11 x64 နှင့် Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 နှင့် Linux ARM64 ကို မပံ့ပိုးသေးပါ။ [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. အက်ပ်ကို ဒေါင်းလုဒ်လုပ်ရန်: [macOS / Windows / Linux](https://claude-cage.com/my/#download).
 2. macOS: တပ်ဆင်မှုပက်ကေ့ချ်ကိုဖွင့်ပြီး ဆွဲယူပါ။ **Cage** ထဲသို့ **အသုံးချမှု**; ထို့နောက် ၎င်းကို Applications မှ စတင်လိုက်ပါ။ Windows: [တပ်ဆင်နည်း](docs/windows.md#安装并开始工作) · Linux: [တပ်ဆင်နည်း](docs/linux.md#安装并开始工作).

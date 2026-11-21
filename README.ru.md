@@ -78,7 +78,7 @@ Claude Cage объединяет терминал, браузер, редакт�
 
 ## Загрузка и установка
 
-Cage поддерживает macOS, Windows и Linux: Apple Silicon с macOS 14+, Windows 10 22H2 / 11 x64 и Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac, Windows ARM64 и Linux ARM64 пока не поддерживаются. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage поддерживает macOS, Windows и Linux: Apple Silicon и Intel Mac с macOS 14+, Windows 10 22H2 / 11 x64 и Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 и Linux ARM64 пока не поддерживаются. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. Скачать приложение: [macOS / Windows / Linux](https://claude-cage.com/ru/#download).
 2. macOS: Откройте установочный пакет и перетащите **Cage** в **Приложения**; затем запустите его из приложений. Windows: [Инструкция по установке](docs/windows.md#安装并开始工作) · Linux: [Инструкция по установке](docs/linux.md#安装并开始工作).
