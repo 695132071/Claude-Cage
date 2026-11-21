@@ -3,6 +3,7 @@
 package proxyimport
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -50,9 +51,14 @@ const (
 	// Party is Clash Party (formerly Mihomo Party). Its root config.yaml holds
 	// app settings, while mihomo runs from work/ with work/config.yaml.
 	Party
+	// OixCloud is FlClash for oixCloud. Its root config.yaml holds app settings
+	// without nodes and profiles/*.yaml may be age-encrypted ciphertext.
+	OixCloud
 	// Surge reads the INI-style .conf profiles of Surge for Mac.
 	Surge
 )
+
+const encryptedConfigError = "配置文件使用 age 加密，Cage 不会解密私有配置，无法直接导入。请从原客户端或服务商导出明文 Clash/Mihomo YAML 后通过“添加来源”导入，或手动添加节点"
 
 type Location struct {
 	Client, Directory string
@@ -86,6 +92,7 @@ func Locations(platform, home, dataHome, configHome string) []Location {
 	out := []Location{
 		{"FlClash", filepath.Join(dataHome, "com.follow.clash"), Plain, ""},
 		{"FlClash", filepath.Join(dataHome, "com.follow.clash", "profiles"), Plain, ""},
+		{"FlClash for oixCloud", filepath.Join(dataHome, "com.oixcloud.clash"), OixCloud, ""},
 		{"Clash Verge Rev", filepath.Join(dataHome, "io.github.clash-verge-rev.clash-verge-rev"), Verge, ""},
 		// Clash Neo is a Verge fork and keeps the same profile layout.
 		{"Clash Neo", filepath.Join(dataHome, "io.github.clash-neo"), Verge, ""},
@@ -97,13 +104,14 @@ func Locations(platform, home, dataHome, configHome string) []Location {
 		{"Shadowsocks", filepath.Join(configHome, "shadowsocks"), Plain, ""},
 	}
 	if platform == "darwin" {
-		out = append(out, Location{Client: "ShadowsocksX-NG", Directory: filepath.Join(home, ".ShadowsocksX-NG"), Layout: Plain})
+		out = append(out, Location{"ShadowsocksX-NG", filepath.Join(home, ".ShadowsocksX-NG"), Plain, ""})
 		out = append(out, surgeProfileDirectories(home)...)
 	}
 	if platform == "windows" {
 		out = append(out,
 			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash"), Plain, ""},
 			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash", "profiles"), Plain, ""},
+			Location{"FlClash for oixCloud", filepath.Join(dataHome, "com.oixcloud", "FlClash"), OixCloud, ""},
 			Location{"Clash / Mihomo", filepath.Join(home, ".config", "clash"), Plain, ""},
 			Location{"Clash Verge", filepath.Join(home, ".config", "clash-verge"), Verge, ""},
 			Location{"ShadowsocksR", filepath.Join(dataHome, "ShadowsocksR"), Plain, ""})
@@ -137,13 +145,14 @@ func Scan(locations []Location, key []byte) []Config {
 		seen[root] = true
 		// providers is the directory, relative to root, that the client's
 		// mihomo core uses to resolve proxy-provider cache paths.
-		add := func(file, providers, name, remote string, current bool) {
+		build := func(file, providers, name, remote string, current bool) (Config, bool, bool) {
 			data, err := readWithin(root, file)
 			if os.IsNotExist(err) {
-				return
+				return Config{}, false, false
 			}
 			c := Config{Client: loc.Client, Name: displayName(name), Current: current}
 			identity := filepath.Join(root, file)
+			encrypted := false
 			if err != nil {
 				c.Error = "无法读取这份配置，请检查文件权限或改为手动导入"
 			} else if loc.Layout == Surge {
@@ -151,6 +160,9 @@ func Scan(locations []Location, key []byte) []Config {
 				if err != nil {
 					c.Error = err.Error()
 				}
+			} else if isAgeEncrypted(data) {
+				encrypted = true
+				c.Error = encryptedConfigError
 			} else {
 				c.Data, c.Warning, err = nodeData(root, providers, data)
 				if err != nil {
@@ -175,17 +187,72 @@ func Scan(locations []Location, key []byte) []Config {
 				c.URL = remote
 				c.Refreshable = true
 			}
-			h := sha256.Sum256([]byte(identity))
-			c.SourceID = "local-" + hex.EncodeToString(h[:12])
-			mac := hmac.New(sha256.New, key)
-			for _, value := range []string{identity, c.Name, c.URL, c.Warning, c.Error, fmt.Sprint(c.Current), string(c.Data)} {
-				mac.Write([]byte(value))
-				mac.Write([]byte{0})
+			signConfig(&c, identity, key)
+			return c, true, encrypted
+		}
+		add := func(file, providers, name, remote string, current bool) {
+			if c, ok, _ := build(file, providers, name, remote, current); ok {
+				out = append(out, c)
 			}
-			c.ID = hex.EncodeToString(mac.Sum(nil))
-			out = append(out, c)
 		}
 		switch loc.Layout {
+		case OixCloud:
+			var encryptedFiles []string
+			var fallbackErrors []Config
+			foundImportable := false
+			for _, subdir := range []string{"", "profiles"} {
+				files, err := listWithin(root, subdir)
+				if err != nil {
+					continue
+				}
+				count := 0
+				for _, file := range files {
+					if file.IsDir() {
+						continue
+					}
+					ext := strings.ToLower(filepath.Ext(file.Name()))
+					if ext != ".yaml" && ext != ".yml" && ext != ".json" && ext != ".age" {
+						continue
+					}
+					if count >= 32 {
+						break
+					}
+					count++
+					rel := file.Name()
+					if subdir != "" {
+						rel = filepath.Join(subdir, file.Name())
+					}
+					c, ok, encrypted := build(rel, "", file.Name(), "", subdir == "" && (file.Name() == "config.yaml" || file.Name() == "config.json"))
+					if !ok {
+						continue
+					}
+					if encrypted {
+						encryptedFiles = append(encryptedFiles, rel)
+						continue
+					}
+					if ext == ".age" {
+						continue
+					}
+					if c.Error == "" {
+						foundImportable = true
+						out = append(out, c)
+					} else {
+						fallbackErrors = append(fallbackErrors, c)
+					}
+				}
+			}
+			if len(encryptedFiles) > 0 {
+				sort.Strings(encryptedFiles)
+				notice := Config{
+					Client: loc.Client,
+					Name:   "加密配置",
+					Error:  encryptedConfigError,
+				}
+				signConfig(&notice, filepath.Join(root, "profiles"), key, encryptedFiles...)
+				out = append(out, notice)
+			} else if !foundImportable {
+				out = append(out, fallbackErrors...)
+			}
 		case Party:
 			add(filepath.Join("work", "config.yaml"), "work", "当前生效配置", "", true)
 			data, err := readWithin(root, "profile.yaml")
@@ -304,6 +371,63 @@ func Scan(locations []Location, key []byte) []Config {
 		return out[i].Current && !out[j].Current
 	})
 	return out
+}
+
+func signConfig(c *Config, identity string, key []byte, extra ...string) {
+	h := sha256.Sum256([]byte(identity))
+	c.SourceID = "local-" + hex.EncodeToString(h[:12])
+	mac := hmac.New(sha256.New, key)
+	for _, value := range []string{identity, c.Client, c.Name, c.URL, c.Warning, c.Error, fmt.Sprint(c.Current), string(c.Data)} {
+		mac.Write([]byte(value))
+		mac.Write([]byte{0})
+	}
+	for _, value := range extra {
+		mac.Write([]byte(value))
+		mac.Write([]byte{0})
+	}
+	c.ID = hex.EncodeToString(mac.Sum(nil))
+}
+
+// isAgeEncrypted inspects only the public age format header; Cage never
+// decrypts client profiles or reads private keys.
+func isAgeEncrypted(data []byte) bool {
+	trimmed := bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF})
+	if bytes.HasPrefix(trimmed, []byte("age-encryption.org/v1\n")) ||
+		bytes.HasPrefix(trimmed, []byte("age-encryption.org/v1\r\n")) {
+		return true
+	}
+	trimmed = bytes.TrimLeft(trimmed, " \t\r\n")
+	return bytes.HasPrefix(trimmed, []byte("-----BEGIN AGE ENCRYPTED FILE-----\n")) ||
+		bytes.HasPrefix(trimmed, []byte("-----BEGIN AGE ENCRYPTED FILE-----\r\n"))
+}
+
+func listWithin(root, subdir string) ([]os.DirEntry, error) {
+	if subdir == "" {
+		return os.ReadDir(root)
+	}
+	if !filepath.IsLocal(subdir) {
+		return nil, errors.New("配置路径不受支持")
+	}
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return nil, err
+	}
+	defer dir.Close()
+	f, err := dir.Open(subdir)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !info.IsDir() {
+		return nil, errors.New("配置目录不可读取")
+	}
+	entries, err := f.ReadDir(-1)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
+	return entries, nil
 }
 
 func displayName(name string) string {
