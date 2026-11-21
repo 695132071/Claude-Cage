@@ -270,3 +270,24 @@ func TestLinuxAccountDesktopDeleteScript(t *testing.T) {
 		t.Fatalf("expected systemctl stop and reset-failed, got:\n%s", logged)
 	}
 }
+
+func TestLinuxAccountDesktopScriptWiresPortalAndSharedX11(t *testing.T) {
+	if bash, err := exec.LookPath("bash"); err == nil {
+		cmd := exec.Command(bash, "-n")
+		cmd.Stdin = strings.NewReader(linuxAccountDesktop)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("linux-account-desktop.sh syntax error: %v\n%s", err, out)
+		}
+	}
+	for _, want := range []string{
+		"/usr/local/bin/cage-desktop-files --open",
+		"/usr/local/bin/cage-desktop-files &",
+		"export GTK_USE_PORTAL=1",
+		"--xdg-portal-required-version=3",
+		"--property=BindPaths=/tmp/.X11-unix",
+	} {
+		if !strings.Contains(linuxAccountDesktop, want) {
+			t.Fatalf("linux-account-desktop.sh missing %q", want)
+		}
+	}
+}

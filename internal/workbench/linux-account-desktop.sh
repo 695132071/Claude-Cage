@@ -107,9 +107,15 @@ with (apps/'mimeinfo.cache').open('w') as output:
 (Path.home()/'.config/mimeapps.list').write_text('[Default Applications]\nx-scheme-handler/claude=com.anthropic.Claude.desktop;\nx-scheme-handler/http=web.desktop;\nx-scheme-handler/https=web.desktop;\n')
 PY
 # Use the desktop-entry parser for quoted arguments when the browser opens a
-# custom URI. The generic xdg-open fallback tokenizes Exec with the shell.
+# custom URI. Route local files and folders to this instance's file broker.
 mkdir -p "$XDG_RUNTIME_DIR/bin"
-printf '%s\n' '#!/bin/sh' 'exec /usr/bin/gio open "$1"' > "$XDG_RUNTIME_DIR/bin/xdg-open"
+cat > "$XDG_RUNTIME_DIR/bin/xdg-open" <<'OPEN'
+#!/bin/sh
+case "${1:-}" in
+  http://*|https://*|claude://*|about:blank) exec /usr/bin/gio open "$1" ;;
+  *) exec /usr/local/bin/cage-desktop-files --open "${1:-}" ;;
+esac
+OPEN
 chmod 0700 "$XDG_RUNTIME_DIR/bin/xdg-open"
 export PATH="$XDG_RUNTIME_DIR/bin:$PATH" BROWSER="$XDG_RUNTIME_DIR/bin/xdg-open"
 export XAUTHORITY="$XDG_RUNTIME_DIR/Xauthority"
@@ -152,13 +158,24 @@ for _ in {1..60}; do
   sleep .1
 done
 gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets/aliases/default --method org.freedesktop.DBus.Properties.Get org.freedesktop.Secret.Collection Locked | grep -q false
+if [[ -x /usr/local/bin/cage-desktop-files ]]; then
+  /usr/local/bin/cage-desktop-files &
+  files_pid=$!
+  for _ in {1..100}; do
+    kill -0 "$files_pid"
+    if [[ -S "$XDG_RUNTIME_DIR/files.sock" ]]; then break; fi
+    sleep .1
+  done
+  test -S "$XDG_RUNTIME_DIR/files.sock"
+  export GTK_USE_PORTAL=1
+fi
 notify=$NOTIFY_SOCKET
 unset NOTIFY_SOCKET
 cd "$HOME"
 # Desktop emits the active identity from its native account provider after
 # the renderer confirms the login. Keep the filtered stream in the unit's
 # private, ephemeral runtime directory; no callback or cookie is inspected.
-DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
+DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret --xdg-portal-required-version=3 > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
 app=$!
 printf '%s\n' "$app" > "$XDG_RUNTIME_DIR/app-pid"
 for _ in {1..250}; do
@@ -169,6 +186,9 @@ done
 exit 1
 SESSION
 user=$(id -un)
+if [[ -d /tmp/.X11-unix ]]; then
+  props+=("--property=BindPaths=/tmp/.X11-unix")
+fi
 sudo systemd-run --quiet --no-block --collect --unit="$unit" --service-type=notify \
   --property="User=$user" --property="RuntimeDirectory=$unit" --property=RuntimeDirectoryMode=0700 \
   --property=NotifyAccess=all --property=TimeoutStartSec=45 --property=TimeoutStopSec=8 \

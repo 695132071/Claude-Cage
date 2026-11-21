@@ -1066,4 +1066,40 @@ test('remote hover shape updates even without an editable focus and rejects arbi
       assert.ok(readings > before);
     } finally { f.controller.dispose(); }
   });
+
+  test("copy succeeds while Windows native input owns focus and document.hasFocus is false", async () => {
+    const clock = fakeClock();
+    const nativeWrites = [];
+    let hasFocus = true;
+    const f = fixture(true, true, {
+      ...clock,
+      surface: {
+        width: 800,
+        height: 600,
+        getBoundingClientRect: () => ({ left: 0, top: 0, width: 800, height: 600 }),
+      },
+      caretRect: async () => ({ available: true, context: "b".repeat(32), rect: [240, 120, 0, 24] }),
+      native: async (name, value) => {
+        if (name === "clipboardRevision") return 7;
+        if (name === "clipboardSyncWrite") { nativeWrites.push(value); return { revision: 8 }; }
+        return true;
+      },
+    });
+    f.doc.hasFocus = () => hasFocus;
+    f.doc.visibilityState = "visible";
+    f.win.cageNativeIMEAvailable = true;
+    try {
+      f.rfb.focus();
+      await clock.advance(0);
+      // Native Win32 IME box now owns focus, so WebView2 reports document.hasFocus() === false.
+      hasFocus = false;
+      const context = f.armCopy();
+      assert.ok(context);
+      await f.controller.receiveCopy({ id: "tab-1", text: "windows native copy", context });
+      assert.equal(nativeWrites.length, 1);
+      assert.equal(nativeWrites[0].text, "windows native copy");
+    } finally {
+      f.controller.dispose();
+    }
+  });
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
+	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/containerenv"
 )
 
@@ -138,6 +139,9 @@ func (s *Server) changeAccountDesktop(parent context.Context, instance string, a
 			return err
 		}
 		defer clear(key)
+		if err = s.runDesktopScript("set -euo pipefail\n"+cage.DesktopFileSupportScript(), 20*time.Second); err != nil {
+			return err
+		}
 	}
 	ctx, cancel := context.WithTimeout(parent, 100*time.Second)
 	defer cancel()

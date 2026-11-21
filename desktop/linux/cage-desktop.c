@@ -1189,23 +1189,29 @@ static gboolean bridge_received(WebKitUserContentManager *manager, JSCValue *val
         reply_json(reply,context,"true");
     } else if (!strcmp(name, "clipboardSyncRelease")) {
         const char *id = text_member(request, "files");
+        const char *connection = text_member(request, "connection_id");
+        if (!*connection) connection = "local";
         if (!g_uuid_string_is_valid(id)) reply_error(reply, "剪贴板文件标识无效。");
         else {
-            const char *args[] = {app.backend, "clipboard-files", "--json", "--connection", text_member(request, "connection_id"), "release", id, NULL};
+            const char *args[] = {app.backend, "clipboard-files", "--json", "--connection", connection, "release", id, NULL};
             backend_arguments(args, 10, browser_file_finished, pending_reply(reply, context));
         }
     } else if (!strcmp(name, "clipboardSyncRead")) {
-        PendingReply *pending = pending_reply(reply,context); pending->sync = TRUE; pending->generation = clipboard_generation; pending->revision = clipboard_current_revision(); pending->connection = g_strdup(text_member(request,"connection_id"));
+        const char *connection = text_member(request, "connection_id");
+        if (!*connection) connection = "local";
+        PendingReply *pending = pending_reply(reply,context); pending->sync = TRUE; pending->generation = clipboard_generation; pending->revision = clipboard_current_revision(); pending->connection = g_strdup(connection);
         JsonNode *defer = json_object_get_member(request,"defer_files");
         pending->defer_files = defer && JSON_NODE_HOLDS_VALUE(defer) && json_node_get_value_type(defer) == G_TYPE_BOOLEAN && json_node_get_boolean(defer);
         gtk_clipboard_request_uris(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD),clipboard_file_uris,pending);
     } else if (!strcmp(name, "clipboardSyncWrite")) {
+        const char *connection = text_member(request, "connection_id");
+        if (!*connection) connection = "local";
         PendingReply *pending = pending_reply(reply,context); pending->generation = clipboard_generation; pending->revision = json_object_has_member(request,"revision") ? (guint64)json_object_get_int_member(request,"revision") : clipboard_current_revision();
         if (pending->revision != clipboard_current_revision()) clipboard_sync_reply(pending,TRUE);
         else if (*text_member(request,"files")) {
             const char *id = text_member(request,"files");
             if (!g_uuid_string_is_valid(id)) { reply_error(reply,"剪贴板文件标识无效。"); pending_free(pending); }
-            else { const char *args[] = {app.backend,"clipboard-files","--json","--connection",text_member(request,"connection_id"),"receive",id,NULL}; backend_arguments(args,1800,clipboard_files_received,pending); }
+            else { const char *args[] = {app.backend,"clipboard-files","--json","--connection",connection,"receive",id,NULL}; backend_arguments(args,1800,clipboard_files_received,pending); }
         } else if (*text_member(request,"png")) {
             gsize length = 0; guchar *bytes = g_base64_decode(text_member(request,"png"),&length);
             GdkPixbufLoader *loader = gdk_pixbuf_loader_new_with_type("png",NULL);

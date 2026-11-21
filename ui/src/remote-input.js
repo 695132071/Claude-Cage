@@ -420,7 +420,7 @@ export function installRemoteInput(
   const receiveCopy = async ({ id, text, clipboard, context, document: sourceDocument, error }) => {
     if (sharedClipboard()) return;
     const valid = () => !disposed && Boolean(copyContext) && context === copyContext && id === getTargetId() && focused() &&
-      document.visibilityState !== "hidden" && document.hasFocus();
+      document.visibilityState !== "hidden" && (nativeOwned || document.hasFocus());
     if (!valid()) return;
     if (error) { copyRequested = false; clearTimeout(copyTimer); say("复制未完成，请重新选择内容后重试。"); return; }
     const revision = copyRevision;
@@ -476,7 +476,7 @@ export function installRemoteInput(
     if (copyText) {
       const context = copyContext, id = getTargetId();
       const valid = () => !disposed && isActive() && context === copyContext && id === getTargetId() &&
-        document.visibilityState !== "hidden" && document.hasFocus();
+        document.visibilityState !== "hidden" && (nativeOwned || document.hasFocus());
       return transport.runKeyAction(async sendKey => {
         const before = await caretRect?.();
         const sendCopy = async () => {

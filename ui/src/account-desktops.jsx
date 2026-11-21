@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, forwardRef, useImperativeHandle } from "react";
 import {
   ChevronDown,
   ChevronRight,
@@ -11,8 +11,13 @@ import {
 } from "lucide-react";
 import RFB from "../.generated/novnc/core/rfb.js";
 import { InlineSelect } from "./inline-select";
-import { api } from "./api";
+import { api, nativeAvailable } from "./api";
 import { AccountIconNumber } from "./agent-icon";
+import { BrowserUploads } from "./browser-uploads";
+import { ProjectDialog } from "./project-dialog";
+import { sendFiles } from "./file-transfer";
+import { installRemoteInput } from "./remote-input";
+import { guestKeys } from "./guest-keys.mjs";
 import { runtimeSocketURL } from "./client-context.mjs";
 import { translate, useTranslation } from "./interface-language.mjs";
 
@@ -321,30 +326,104 @@ export function DesktopList({ model, disabled, selected, onDefault, onRename }) 
   );
 }
 
-function DesktopPane({ account, visible, close, busy }) {
+function DesktopPane({
+  account,
+  visible,
+  focused,
+  onFocus,
+  keyboard,
+  systemClipboard = true,
+  onStatus,
+  onFallback,
+  onControl,
+  close,
+  busy,
+}) {
   const tr = useTranslation();
   const box = useRef(null);
+  const rfb = useRef(null);
+  const input = useRef(null);
+  const current = useRef({ visible: visible && focused, keyboard, systemClipboard, onStatus, onFallback });
+  current.current = { visible: visible && focused, keyboard, systemClipboard, onStatus, onFallback };
   const [message, setMessage] = useState("");
   const [attempt, retry] = useState(0);
   useEffect(() => {
+    onControl(account.id, {
+      focus: () => rfb.current?.focus(),
+      edit: (action) => (input.current?.focused() ? input.current.edit(action) : false),
+    });
+    return () => onControl(account.id, null);
+  }, [account.id, onControl]);
+  useEffect(() => {
     if (!visible) return;
+    const container = box.current;
+    if (!container) return;
     let live = true,
-      client;
+      client,
+      keys;
     setMessage("正在连接…");
     const path = entry(account.id);
     api(path + "/vnc-credentials")
       .then(({ password }) => {
         if (!live) return;
-        client = new RFB(box.current, runtimeSocketURL(path + "/vnc"), {
+        client = new RFB(container, runtimeSocketURL(path + "/vnc"), {
           credentials: { password },
         });
+        rfb.current = client;
+        keys = guestKeys(client.sendKey.bind(client));
+        client.sendKey = keys.sendKey;
         client.scaleViewport = true;
         client.resizeSession = true;
         client.focusOnClick = true;
         client.addEventListener("connect", () => {
-          if (live) setMessage("");
+          if (!live) return;
+          setMessage("");
+          input.current?.dispose();
+          input.current = installRemoteInput(
+            {
+              events: client,
+              setKeyboardTarget: (target) => client.cageSetKeyboardTarget(target),
+              sendKey: (...key) => client.sendKey(...key),
+              focus: () => client.focus(),
+              pasteText: (text) => client.cagePasteText(text),
+              runKeyAction: (action) => client.cageRunInput(action),
+            },
+            container,
+            {
+              systemClipboard: () => current.current.systemClipboard,
+              pasteContent: (content) => {
+                const valid = () => live && current.current.visible;
+                return client.cagePasteContent(
+                  content,
+                  (payload) => {
+                    if (!valid()) throw new Error("输入目标已切换，请重新传递文件");
+                    if (payload.files || payload.fileSelection) {
+                      return sendFiles(payload, "desktop", undefined, {
+                        valid,
+                        desktop: account.id,
+                      });
+                    }
+                    throw new Error("请使用剪贴板同步或以文件方式拖入图片");
+                  },
+                  valid,
+                );
+              },
+              insertText: (text) => client.cagePasteText(text),
+              tabId: () => `desktop:${account.id}`,
+              mode: () => current.current.keyboard,
+              isActive: () => current.current.visible,
+              onStatus: (text) => current.current.onStatus?.(text),
+              onFallback: (...args) => current.current.onFallback?.(...args),
+            },
+          );
+          if (current.current.visible && !document.activeElement?.closest(".chrome")) {
+            client.focus();
+          }
         });
         client.addEventListener("disconnect", () => {
+          keys?.stop();
+          input.current?.dispose();
+          input.current = null;
           if (live) setMessage("画面已断开");
         });
       })
@@ -353,11 +432,22 @@ function DesktopPane({ account, visible, close, busy }) {
       });
     return () => {
       live = false;
+      input.current?.dispose();
+      input.current = null;
+      keys?.stop();
+      rfb.current = null;
       client?.disconnect();
     };
   }, [account.id, account.generation, visible, attempt]);
   return (
-    <section className="account-desktop-pane" id={"desktop-pane-"+account.id} aria-label={title(account)}>
+    <section
+      className="account-desktop-pane"
+      id={"desktop-pane-" + account.id}
+      aria-label={title(account)}
+      data-focused={focused}
+      onPointerDownCapture={onFocus}
+      onFocusCapture={onFocus}
+    >
       <header>
         <strong className="account-desktop-title" title={title(account)}>
           <DesktopAccountLabel account={account} />
@@ -379,18 +469,91 @@ function DesktopPane({ account, visible, close, busy }) {
   );
 }
 
-export function DesktopPanes({ model, visible }) {
+export const DesktopPanes = forwardRef(function DesktopPanes(
+  {
+    model,
+    visible,
+    keyboard,
+    systemClipboard = true,
+    uploads = [],
+    status,
+    onProjectOpened,
+    onStatus,
+    onFallback,
+  },
+  ref,
+) {
+  const [focusedID, setFocusedID] = useState("");
+  const [closedChooser, setClosedChooser] = useState("");
+  const controls = useRef(new Map());
+  const setControl = useCallback((id, control) => {
+    if (control) controls.current.set(id, control);
+    else controls.current.delete(id);
+  }, []);
+  const activePaneID = model.panes.some((pane) => pane.id === focusedID)
+    ? focusedID
+    : (model.panes[model.panes.length - 1]?.id || "");
+  useImperativeHandle(
+    ref,
+    () => ({
+      edit: (action) => {
+        const target = controls.current.get(activePaneID);
+        if (target?.edit(action)) return true;
+        for (const control of controls.current.values()) {
+          if (control.edit(action)) return true;
+        }
+        return false;
+      },
+    }),
+    [activePaneID],
+  );
+  const paneIDs = new Set(model.panes.map((pane) => pane.id));
+  const paneUploads = uploads.filter((item) => item.desktop && paneIDs.has(item.desktop));
+  const directoryRequest = paneUploads.find((item) => item.directory && item.id !== closedChooser);
   return (
     <div className="account-desktop-panes">
+      {!nativeAvailable() && <BrowserUploads requests={paneUploads} onStatus={onStatus} />}
+      {directoryRequest && status && (
+        <ProjectDialog
+          key={directoryRequest.id}
+          status={status}
+          activate={false}
+          onClose={() => {
+            setClosedChooser(directoryRequest.id);
+            void api("/input/files/cancel", {
+              target: "desktop",
+              id: directoryRequest.id,
+              desktop: directoryRequest.desktop,
+            }).catch((e) => onStatus?.(e.message));
+          }}
+          onOpened={async (workspace) => {
+            await api("/input/files/directory", {
+              target: "desktop",
+              id: directoryRequest.id,
+              desktop: directoryRequest.desktop,
+              workspace,
+            });
+            setClosedChooser(directoryRequest.id);
+            await onProjectOpened?.(workspace);
+          }}
+        />
+      )}
       {model.panes.map((a) => (
         <DesktopPane
           key={a.id}
           account={a}
           visible={visible}
+          focused={activePaneID === a.id}
+          onFocus={() => setFocusedID(a.id)}
+          keyboard={keyboard}
+          systemClipboard={systemClipboard}
+          onStatus={onStatus}
+          onFallback={onFallback}
+          onControl={setControl}
           busy={Boolean(model.pending)}
           close={() => model.act(a, "stop")}
         />
       ))}
     </div>
   );
-}
+});

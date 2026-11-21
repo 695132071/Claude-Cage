@@ -363,8 +363,9 @@ function App() {
   };
   const clipboardConnection = getClientContext().connection_id;
   const clipboardRef = useRef(null);
+  const accountDesktopControl = useRef(null);
   useEffect(() => {
-    if (!status?.ready || viewingAccountDesktop || !nativeAvailable()) return;
+    if (!status?.ready || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
@@ -374,11 +375,11 @@ function App() {
     clipboardRef.current = clipboard;
     window.cageSyncClipboard = () => clipboard.sync();
     return () => { clipboardRef.current = null; clipboard.dispose(); delete window.cageSyncClipboard; };
-  }, [status?.ready, viewingAccountDesktop, clipboardConnection]);
+  }, [status?.ready, clipboardConnection]);
   useEffect(() => {
     clipboardRef.current?.setVisible(windowVisible);
   }, [windowVisible]);
-  const desktopFiles = useDesktopFiles(Boolean(status?.ready && !viewingAccountDesktop), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
+  const desktopFiles = useDesktopFiles(Boolean(status?.ready), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
   const refreshSettings = async () => {
@@ -1229,6 +1230,8 @@ function App() {
         return false;
       if (terminal)
         return terminalControls.current.get(current.id)?.edit(command) || false;
+      if (viewingAccountDesktop)
+        return accountDesktopControl.current?.edit(command) || false;
       return remote.current?.edit(command) || false;
     };
     window.cageWorkbenchAction = async (command) => {
@@ -1346,6 +1349,7 @@ function App() {
     savedTabs,
     selectedProject,
     desktopOpen,
+    viewingAccountDesktop,
     terminalChoice,
   ]);
   const project = projectName(contentWorkspace, groups, tr("新项目"));
@@ -1732,7 +1736,18 @@ function App() {
           <main className={`workspace ${split ? "workspace-split" : ""}`} ref={workspaceBox} hidden={Boolean(managementPage)}
             style={{ "--split-left": `${100 * (dualBrowser && nativeSplit?.fraction || 0.5)}%` }}>
             {dropSide && <div aria-hidden="true" className={`split-drop split-${dropSide}`}>{dropSide === "left" ? tr("放到左侧") : tr("放到右侧")}</div>}
-            {!storageRecovery && desktopOpen && accountDesktops.panes.length>0 && <DesktopPanes model={accountDesktops} visible={!settingsOpen && !managementPage && windowVisible}/>}
+            {!storageRecovery && desktopOpen && accountDesktops.panes.length>0 && <DesktopPanes
+              ref={accountDesktopControl}
+              model={accountDesktops}
+              visible={!settingsOpen && !managementPage && windowVisible}
+              keyboard={status.keyboard}
+              systemClipboard={browser.capabilities?.systemClipboard !== false}
+              uploads={desktopFiles.uploads}
+              status={status}
+              onProjectOpened={() => refreshStatus.current?.()}
+              onStatus={notify}
+              onFallback={(text, message) => setTransfer({ text, message })}
+            />}
             {!storageRecovery && desktopOpen && !accountDesktops.panes.length && <ClaudeDesktop
               uploads={desktopFiles.uploads}
               onProjectOpened={() => refreshStatus.current?.()}

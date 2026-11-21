@@ -306,6 +306,106 @@ class BridgeEventLoopTests(unittest.TestCase):
                 stdout_file.close()
                 stdout_reader.close()
 
+    def test_discover_desktop_displays_filters_and_formats(self):
+        import shutil
+        import tempfile
+        root = Path(tempfile.mkdtemp(prefix='cage-clip-run-'))
+        self.addCleanup(shutil.rmtree, root, True)
+        valid_id = 'a' * 24
+        dup_id = 'b' * 24
+        bad_id = 'not-hex'
+        for name, disp, with_auth in [
+            (f'desktop-{valid_id}', '79\n', True),
+            (f'desktop-{dup_id}', '78\n', True),  # skips default desktop :78
+            (f'desktop-{bad_id}', '80\n', True),  # invalid id
+            ('desktop-' + 'c' * 24, '81\n', False),  # missing Xauthority
+        ]:
+            d = root / name
+            d.mkdir()
+            (d / 'display').write_text(disp)
+            if with_auth:
+                (d / 'Xauthority').write_bytes(b'auth')
+        found = clipboard.discover_desktop_displays(root)
+        self.assertEqual(found, [
+            (':79', 'cage', str(root / f'desktop-{valid_id}' / 'Xauthority')),
+        ])
+
+    def test_bridge_dynamically_attaches_and_detaches_account_desktops(self):
+        import multiprocessing
+        stdin_r, stdin_w = os.pipe()
+        stdout_r, stdout_w = os.pipe()
+        stdout_file = os.fdopen(stdout_w, 'w')
+        stdout_reader = os.fdopen(stdout_r, 'r')
+        spawned = []
+        terminated = []
+        active_displays = [(':79', 'cage', '/run/desktop-a/Xauthority')]
+        child_conns = []
+
+        class FakeProc:
+            def __init__(self, name):
+                self.name = name
+                self.alive = True
+            def is_alive(self):
+                return self.alive
+            def terminate(self):
+                self.alive = False
+                terminated.append(self.name)
+            def join(self, timeout=None):
+                self.alive = False
+
+        def fake_spawn(name, user, xauthority=None):
+            parent, child = multiprocessing.Pipe()
+            child_conns.append(child)
+            spawned.append((name, user, xauthority))
+            return FakeProc(name), parent
+
+        try:
+            thread = threading.Thread(
+                target=clipboard.bridge,
+                kwargs=dict(
+                    displays=(),
+                    stdin_fd=stdin_r,
+                    stdout=stdout_file,
+                    spawn_worker=fake_spawn,
+                    display_exists=lambda name: True,
+                    discover_displays=lambda: list(active_displays),
+                ),
+                daemon=True,
+            )
+            thread.start()
+            # First hello announces availability for the dynamically discovered display.
+            hello = json.loads(stdout_reader.readline())
+            self.assertTrue(hello['hello']['available'])
+            self.assertEqual(spawned, [(':79', 'cage', '/run/desktop-a/Xauthority')])
+            # Send a clipboard update and verify the dynamically attached worker receives it.
+            os.write(stdin_w, (json.dumps({'serial': 1, 'text': 'hello desktop'}) + '\n').encode())
+            self.assertTrue(child_conns[0].poll(2))
+            self.assertEqual(child_conns[0].recv(), {'text': 'hello desktop', 'serial': 1})
+            child_conns[0].send({'ack': 1})
+            self.assertEqual(json.loads(stdout_reader.readline()), {'ack': 1})
+            # Removing the account desktop detaches and terminates its worker.
+            active_displays.clear()
+            os.write(stdin_w, (json.dumps({'serial': 2, 'text': 'after stop'}) + '\n').encode())
+            reply = json.loads(stdout_reader.readline())
+            # Either hello(available=False) or ack(2) arrives next.
+            replies = [reply, json.loads(stdout_reader.readline())]
+            self.assertIn({'ack': 2}, replies)
+            self.assertTrue(any('hello' in r and r['hello']['available'] is False for r in replies))
+            self.assertEqual(terminated, [':79'])
+            os.close(stdin_w)
+            thread.join(timeout=3)
+            self.assertFalse(thread.is_alive())
+        finally:
+            for c in child_conns:
+                c.close()
+            try:
+                os.close(stdin_w)
+            except OSError:
+                pass
+            os.close(stdin_r)
+            stdout_file.close()
+            stdout_reader.close()
+
 
 if __name__ == '__main__':
     unittest.main()

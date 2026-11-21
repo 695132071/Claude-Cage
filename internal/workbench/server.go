@@ -96,6 +96,7 @@ type Server struct {
 	locationError                                    string
 	networkIntentError                               string
 	credentials                                      guestCredentials
+	desktopFileOwners                                map[string]string
 	terminals                                        terminalManager
 	notifications                                    notificationHub
 	mobileCLI                                        mobileCLIStore
