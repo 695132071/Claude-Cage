@@ -98,6 +98,30 @@ Debian 13 的 APT 3.0.3 在下载重试时可能积存大量 `Tried to start del
 
 正在启动或检查时可以停止环境。网络设置需要重启时，先保存文件；不要同时运行多个安装副本或手动修改运行中的私有配置。
 
+## 用户目录含空格时环境无法启动
+
+Cage 在配置目录旁建立内部传输目录（默认为 `%USERPROFILE%\.claude-cage-downloads`），并通过 Lima 共享进环境。Lima 无法共享路径中含空格的目录，因此 Windows 账户名含空格（例如 `C:\Users\Jae Young`）时，环境无法启动。启动时 Cage 会直接指出这个目录；较早的版本要先完成基础系统安装，最后才提示“退出码 1，未返回可识别的原因”，操作详情末尾是 `project path contains whitespace, which Lima cannot mount`。
+
+处理方法是把整个配置目录移到不含空格的路径，再让 Cage 使用新位置。账户、设置、代理和已下载的基础系统都会随目录一起移动，无需重新创建账户。
+
+1. 在 Cage 中停止环境，从系统托盘退出 Cage，并在任务管理器中确认没有 `cage.exe` 和 `mihomo.exe` 仍在运行。
+2. 在同一磁盘内移动配置目录。复制或跨磁盘移动会改变文件权限，Cage 会拒绝使用权限异常的私有文件。
+
+   ```powershell
+   New-Item -ItemType Directory C:\CageData
+   Move-Item -LiteralPath "$env:USERPROFILE\.claude-cage" -Destination C:\CageData\.claude-cage
+   ```
+
+3. 删除 `C:\CageData\.claude-cage\environment.json`。它记录了原来含空格的内部传输目录，删除后 Cage 会按新位置重新生成。若该文件中有 `identity_directory` 字段，说明环境曾在其他位置运行过，先保留文件并导出诊断包反馈。
+4. 为当前用户设置 `CLAUDE_CAGE_CONFIG`，然后注销并重新登录 Windows，让开始菜单和桌面快捷方式读取新设置：
+
+   ```powershell
+   [Environment]::SetEnvironmentVariable('CLAUDE_CAGE_CONFIG', 'C:\CageData\.claude-cage\config.json', 'User')
+   ```
+
+5. 打开 Cage，用原密码解锁后启动环境。已下载的基础系统会被复用，Cage 只需在新位置创建环境。
+
+原来的 `%USERPROFILE%\.claude-cage-downloads` 若为空可以删除。以后的启动、更新和维护都应继续使用同一个 `CLAUDE_CAGE_CONFIG`；要改回默认位置，先退出 Cage，把目录移回原处，再删除这个用户环境变量。
 ## 节点已经应用，但外网仍然离线
 
 “已应用”表示代理核心的节点选择成功，工作台的网络检查还需要通过。点击底部网络状态，查看失败或未知的关键项：

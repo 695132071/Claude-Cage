@@ -249,6 +249,23 @@ func proposedSettings(input Settings, old cage.Config, profile string) (cage.Con
 	}
 	return c, p, nil
 }
+
+// mountableEnvironmentDir refuses an environment directory Lima cannot share
+// with the guest. The CLI refuses it too, but only when it starts the VM after
+// setup, and its reason never reaches the window. The directory follows the
+// configuration directory, so a Windows account name with a space is enough.
+func mountableEnvironmentDir(dir string) error {
+	why, bad := mounts.Unmountable(paths.Host(dir))
+	if !bad {
+		return nil
+	}
+	reason := "Lima 无法把它共享进环境（" + why + "）"
+	if strings.HasPrefix(why, "contains whitespace") {
+		reason = "路径含有空格，Lima 无法把它共享进环境"
+	}
+	return errors.New("Cage 的内部传输目录 " + dir + " " + reason + "。该目录位于 Cage 配置目录旁，用户目录含空格（例如 Windows 账户名含空格）时就会出现。请把 Cage 配置目录移到不含空格的路径后再启动，步骤见故障排查文档“用户目录含空格时环境无法启动”。")
+}
+
 func validateWorkspace(path, profile string) (string, error) {
 	home, _ := os.UserHomeDir()
 	if strings.HasPrefix(path, "~/") {

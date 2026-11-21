@@ -35,6 +35,7 @@ func executionFailure(action string, err error, output string) error {
 		{[]string{"curl: (60)", "certificate verify failed", "certificate verification failed"}, "下载服务器的证书验证未通过", "请检查电脑时间和所选代理；仍失败时导出诊断包，不要关闭证书验证。"},
 		{[]string{"407 proxy authentication", "proxy authentication required"}, "代理服务器拒绝了当前登录凭据", "请在网络与代理设置中更新代理账号或订阅，再应用节点。"},
 		{[]string{"permission denied", "access is denied"}, "系统拒绝访问安装所需的文件或程序", "请检查应用及环境目录的权限；若安全软件拦截了 Cage，请先核实其拦截记录。"},
+		{[]string{"which lima cannot mount"}, "目录路径含有空格，Lima 无法把它共享进环境", "操作详情中列出了这个目录；把它移到不含空格的路径后重试。若是 Cage 配置目录旁的内部传输目录，步骤见故障排查文档“用户目录含空格时环境无法启动”。"},
 		{[]string{"tried to start delayed item"}, "环境的软件包下载程序反复重试，未能完成安装", "请使用包含 APT 修复的 Cage 构建后继续安装；仍失败时导出诊断包。"},
 	} {
 		for _, pattern := range rule.patterns {
