@@ -23,7 +23,8 @@ const (
 // grants, for one project's commands or one plugin, until the user takes it
 // back.
 type hostApprovals struct {
-	ask func(ctx context.Context, title, msg string) (desktop.Scope, bool)
+	ask       func(ctx context.Context, title, msg string) (desktop.Scope, bool)
+	remoteAsk func(ctx context.Context, prompt remoteApprovalPrompt) (desktop.Scope, bool)
 	// grants is nil where nothing is remembered beyond this start.
 	grants *hostGrants
 	// permissions are those each loaded plugin declares.
@@ -41,8 +42,14 @@ func newHostApprovals() *hostApprovals {
 }
 
 func (a *hostApprovals) approve(ctx context.Context, request hostbridge.CommandRequest) error {
+	prompt := remoteApprovalPrompt{
+		Kind:    "command",
+		Project: request.Project,
+		Dir:     request.Dir,
+		Command: request.Command,
+	}
 	return a.decide(ctx, hostGrantProject+request.Project, []string{"commands"}, request.Command+request.Dir, len(request.Command),
-		"允许 Claude 在这台电脑上运行命令？", hostApprovalMessage(request))
+		"允许 Claude 在这台电脑上运行命令？", hostApprovalMessage(request), prompt)
 }
 
 // approveTool asks about one call to a plugin's tool. "Always" covers that
@@ -55,10 +62,17 @@ func (a *hostApprovals) approveTool(ctx context.Context, request hostbridge.Tool
 	if request.FromView {
 		title, source = "允许插件页面使用它的工具？", "\n来源　插件自己的页面"
 	}
+	prompt := remoteApprovalPrompt{
+		Kind:      "tool",
+		Plugin:    request.Plugin,
+		Tool:      request.Tool,
+		Arguments: request.Arguments,
+		FromView:  request.FromView,
+	}
 	return a.decide(ctx, hostGrantPlugin+request.Plugin, a.permissions[request.Plugin], request.Arguments, len(request.Arguments),
 		title,
 		"插件「"+request.Plugin+"」\n工具　"+request.Tool+source+"\n\n"+request.Arguments+
-			"\n\n插件以你的用户权限运行。「始终允许」会记住对该插件的授权，以后不再询问；可以在插件页随时撤销。")
+			"\n\n插件以你的用户权限运行。「始终允许」会记住对该插件的授权，以后不再询问；可以在插件页随时撤销。", prompt)
 }
 
 // unshowableRequest is a request refused before anyone is asked, because the
@@ -69,7 +83,7 @@ func (e unshowableRequest) Error() string { return string(e) }
 
 // decide asks unless key was already allowed. shown is the text the user
 // must be able to read in full to judge the request.
-func (a *hostApprovals) decide(ctx context.Context, key string, permissions []string, shown string, length int, title, message string) error {
+func (a *hostApprovals) decide(ctx context.Context, key string, permissions []string, shown string, length int, title, message string, prompt remoteApprovalPrompt) error {
 	// A request the dialog cannot show faithfully is one the user cannot
 	// judge: control and invisible format characters can hide part of it.
 	if strings.ContainsFunc(shown, func(r rune) bool {
@@ -91,7 +105,14 @@ func (a *hostApprovals) decide(ctx context.Context, key string, permissions []st
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostApprovalWait)
 	defer cancel()
-	scope, answered := a.ask(ctx, title, message)
+	var scope desktop.Scope
+	var answered bool
+	if a.remoteAsk != nil {
+		scope, answered = a.remoteAsk(ctx, prompt)
+	}
+	if !answered && a.ask != nil {
+		scope, answered = a.ask(ctx, title, message)
+	}
 	switch {
 	case !answered:
 		return errors.New("no approval dialog could be shown on the user's computer, so nothing was run")

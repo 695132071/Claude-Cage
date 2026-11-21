@@ -80,6 +80,7 @@ type Server struct {
 	diagnosticWindow                                 time.Time
 	diagnosticCount                                  int
 	tickets                                          map[string]time.Time
+	remoteDesktopTickets                             map[string]bool
 	browserControl                                   *browserClient
 	controlSession                                   guestSession
 	op                                               sync.Mutex
@@ -113,6 +114,8 @@ type Server struct {
 	hostMarket                                       hostMarketCache
 	hostGrants                                       *hostGrants
 	hostGrantsOnce                                   sync.Once
+	remoteApprovals                                  remoteApprovalHub
+	clientBridge                                     serverClientPluginBridge
 	// pluginSettingsMu serializes reading and writing plugin-settings.json.
 	pluginSettingsMu sync.Mutex
 	// tailnetTool stands in for the running Tailscale plugin in tests.
@@ -348,10 +351,19 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/mobile/device", s.reportPhoneDevice)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { jsonReply(w, map[string]bool{"ready": true}) })
 	mux.HandleFunc("POST /api/launch", func(w http.ResponseWriter, r *http.Request) {
-		if !s.launcherAuthenticated(w, r) {
+		var input struct {
+			Token         string `json:"token"`
+			RemoteDesktop bool   `json:"remote_desktop,omitempty"`
+		}
+		if !readJSON(w, r, &input) {
 			return
 		}
-		jsonReply(w, launchResponse{ConfigPath: s.configPath, ClientOnly: s.clientOnly, DesktopGateway: s.desktopEntry, URL: s.origin + "/?launch=" + randomToken()[:8] + "#" + s.issueTicket(), Controller: s.identity})
+		if !equalSecret(input.Token, s.token) {
+			http.Error(w, "Launcher refused", http.StatusUnauthorized)
+			return
+		}
+		ticket := s.issueTicketWithScope(input.RemoteDesktop)
+		jsonReply(w, launchResponse{ConfigPath: s.configPath, ClientOnly: s.clientOnly, DesktopGateway: s.desktopEntry, URL: s.origin + "/?launch=" + randomToken()[:8] + "#" + ticket, Controller: s.identity})
 	})
 	if s.desktopEntry || s.clientOnly {
 		mux.HandleFunc("POST /api/handoff", s.handoffEntry)
@@ -370,11 +382,15 @@ func (s *Server) handler() http.Handler {
 		if !readJSON(w, r, &v) {
 			return
 		}
-		if !s.consumeTicket(v.Token) {
+		ok, remoteDesktop := s.consumeTicketWithScope(v.Token)
+		if !ok {
 			http.Error(w, "访问凭证无效，请从 Cage 应用重新打开。", http.StatusUnauthorized)
 			return
 		}
 		http.SetCookie(w, &http.Cookie{Name: s.cookieName(), Value: s.session, Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400 * 30})
+		if remoteDesktop {
+			http.SetCookie(w, &http.Cookie{Name: s.cookieName() + "-remote-desktop", Value: remoteDesktopProof(s.token), Path: "/", HttpOnly: true, SameSite: http.SameSiteStrictMode, MaxAge: 86400 * 30})
+		}
 		jsonReply(w, map[string]bool{"ok": true})
 	})
 	mux.HandleFunc("GET /api/status", s.status)
@@ -400,6 +416,10 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/host-tools", s.setHostTools)
 	mux.HandleFunc("POST /api/host-tools/call", s.callHostTool)
 	mux.HandleFunc("GET /api/host-tools/market", s.getHostMarket)
+	mux.HandleFunc("GET /api/host-tools/sync", s.getHostPluginSync)
+	mux.HandleFunc("POST /api/host-tools/sync", s.syncHostPlugin)
+	mux.HandleFunc("POST /api/host-tools/approvals/channel", s.remoteApprovalChannel)
+	mux.HandleFunc("POST /api/host-tools/client-bridge", s.remoteClientPluginBridge)
 	mux.HandleFunc("GET "+hostPluginIconPath, s.hostPluginIcon)
 	mux.HandleFunc("GET /api/client/about", s.appAbout)
 	mux.HandleFunc("POST /api/client/about", s.appAbout)
@@ -524,9 +544,12 @@ func (s *Server) handler() http.Handler {
 				return
 			}
 		}
-		// A plugin's page belongs to this computer's own plugins, whatever
-		// workload is selected, and sets the headers its frame needs.
+		// A plugin's page belongs to the currently selected workload (local or
+		// sandbox-proxied from the active remote host), and sets its own headers.
 		if strings.HasPrefix(r.URL.Path, hostViewPrefix) {
+			if s.routeRemotePluginView(w, r) {
+				return
+			}
 			s.servePluginView(w, r)
 			return
 		}
@@ -967,24 +990,44 @@ func (s *Server) requestStop(w http.ResponseWriter, r *http.Request, logout bool
 func (s *Server) cookieName() string { u, _ := url.Parse(s.origin); return cookieName + "_" + u.Port() }
 
 func (s *Server) issueTicket() string {
+	return s.issueTicketWithScope(false)
+}
+
+func (s *Server) issueTicketWithScope(remoteDesktop bool) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.tickets == nil {
 		s.tickets = map[string]time.Time{}
 	}
+	if s.remoteDesktopTickets == nil {
+		s.remoteDesktopTickets = map[string]bool{}
+	}
 	for token, expires := range s.tickets {
 		if time.Now().After(expires) {
 			delete(s.tickets, token)
+			delete(s.remoteDesktopTickets, token)
 		}
 	}
 	token := randomToken()
 	s.tickets[token] = time.Now().Add(time.Minute)
+	if remoteDesktop {
+		s.remoteDesktopTickets[token] = true
+	}
 	return token
 }
+
 func (s *Server) consumeTicket(token string) bool {
+	ok, _ := s.consumeTicketWithScope(token)
+	return ok
+}
+
+func (s *Server) consumeTicketWithScope(token string) (bool, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	expires, ok := s.tickets[token]
+	remoteDesktop := s.remoteDesktopTickets[token]
 	delete(s.tickets, token)
-	return ok && time.Now().Before(expires)
+	delete(s.remoteDesktopTickets, token)
+	valid := ok && time.Now().Before(expires)
+	return valid, valid && remoteDesktop
 }

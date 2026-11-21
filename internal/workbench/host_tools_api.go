@@ -7,13 +7,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/sylvinus/agent-vm/internal/containerenv"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/hostbridge"
 	"github.com/sylvinus/agent-vm/internal/hostproxy"
@@ -121,11 +121,14 @@ type hostToolsView struct {
 	Available bool `json:"available"`
 	Enabled   bool `json:"enabled"`
 	Running   bool `json:"running"`
+	Headless  bool `json:"headless,omitempty"`
+	Platform  string `json:"platform,omitempty"`
 	// Directory is where the user puts plugin folders.
-	Directory string           `json:"directory"`
-	Folders   []string         `json:"folders"`
-	Plugins   []hostPluginView `json:"plugins"`
-	Problems  []string         `json:"problems,omitempty"`
+	Directory    string                 `json:"directory"`
+	Folders      []string               `json:"folders"`
+	Plugins      []hostPluginView       `json:"plugins"`
+	ClientBridge []hostClientBridgeView `json:"client_bridge,omitempty"`
+	Problems     []string               `json:"problems,omitempty"`
 	// Catalog is always empty; kept for windows that still read it.
 	Catalog []hostCatalogView `json:"catalog"`
 }
@@ -151,8 +154,16 @@ func (s *Server) hostToolsView() hostToolsView {
 		pluginProblems, missingPrograms, problems = tools.pluginProblems, tools.missingPrograms, tools.problems
 	}
 	s.mu.Unlock()
-	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil && tools.serving,
-		Directory: s.hostPluginDir(), Folders: s.hostToolDirs()}
+	view := hostToolsView{
+		Available:    !s.clientOnly,
+		Enabled:      enabled,
+		Running:      tools != nil && tools.serving,
+		Headless:     s.hostIsHeadless(),
+		Platform:     runtime.GOOS,
+		Directory:    s.hostPluginDir(),
+		Folders:      s.hostToolDirs(),
+		ClientBridge: s.clientBridge.views(),
+	}
 	if view.Folders == nil {
 		view.Folders = []string{}
 	}
@@ -384,11 +395,11 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !s.hasTrustedView(r) {
-		http.Error(w, "请在本机 Cage 窗口更改主机工具", http.StatusForbidden)
+	if !s.hasPluginControlView(r) {
+		http.Error(w, "请在受信任的 Cage 窗口更改主机工具", http.StatusForbidden)
 		return
 	}
-	if containerenv.Configured(s.profile) {
+	if s.clientOnly {
 		http.Error(w, "此环境不支持主机工具", http.StatusConflict)
 		return
 	}
