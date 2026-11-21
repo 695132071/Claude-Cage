@@ -52,7 +52,7 @@ func runAgent(args []string, stdin io.Reader, stdout io.Writer, clientOnly bool)
 			if reply.Error.Code == "invalid_input" || reply.Error.Code == "unknown_operation" {
 				code = 2
 			}
-			if reply.Error.Code == "account_locked" || reply.Error.Code == "user_action_required" {
+			if reply.Error.Code == "account_locked" || reply.Error.Code == "account_missing" || reply.Error.Code == "user_action_required" {
 				code = 3
 			}
 			if reply.Error.Code == "wait_timeout" {

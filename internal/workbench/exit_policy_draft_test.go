@@ -106,7 +106,7 @@ func TestStaticIPDraftSaveAndFailClosedSecurity(t *testing.T) {
 			t.Fatalf("unexpected accepted job: %s %v", raw, err)
 		}
 		state := awaitJobIdle(t, &s.jobs)
-		if !state.SettingsSaved || !strings.Contains(state.Error, "已保存待验证的静态 IP 基准（8.8.8.8）") || !strings.Contains(state.Error, "外网保持关闭") {
+		if !state.SettingsSaved || state.Message != "已保存待验证的静态 IP，外网保持关闭" || !strings.Contains(state.Error, "已保存待验证的静态 IP 基准（8.8.8.8）") || !strings.Contains(state.Error, "外网保持关闭") {
 			t.Fatalf("unexpected draft save job state: %+v", state)
 		}
 		saved, err := loadConfig(s.configPath)

@@ -112,6 +112,8 @@ type Server struct {
 	hostMarket                                       hostMarketCache
 	hostGrants                                       *hostGrants
 	hostGrantsOnce                                   sync.Once
+	// pluginSettingsMu serializes reading and writing plugin-settings.json.
+	pluginSettingsMu sync.Mutex
 	// tailnetTool stands in for the running Tailscale plugin in tests.
 	tailnetTool             func(context.Context, string, json.RawMessage) (*mcp.CallToolResult, error)
 	hostViewMu              sync.Mutex
@@ -600,6 +602,7 @@ func (s *Server) handler() http.Handler {
 					http.Error(w, s.account.desktopOnlyMobileMessage(), http.StatusLocked)
 					return
 				}
+				s.account.markMissingAccount(w)
 				http.Error(w, "Cage 已锁定，请先登录", http.StatusLocked)
 				return
 			}

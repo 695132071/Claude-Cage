@@ -26,6 +26,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action != "create" && action != "unlock" && action != "device-unlock" && action != "recovery-reset" {
 		if _, ok := s.account.accessFor(s.hasTrustedView(r), false); !ok {
+			s.account.markMissingAccount(w)
 			http.Error(w, "请先解锁 Cage", http.StatusLocked)
 			return
 		}
@@ -113,6 +114,7 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 	}
 	if action == "unlock" || action == "device-unlock" || action == "recovery-reset" {
 		s.refreshShellLoginWatch()
+		s.restartPluginsAfterUnlock()
 	}
 	if action == "lock" || action == "suspend" || action == "recovery-reset" {
 		s.clearBrowserVault(vaultLease)

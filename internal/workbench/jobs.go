@@ -223,11 +223,14 @@ func (m *jobManager) finishLocked(execution *jobExecution, err error) {
 		}
 		m.state.Message = jobName(m.state.Kind) + "失败"
 		var networkFailure networkCheckError
+		var draftPending staticDraftPendingError
 		if m.state.Kind == "start" && errors.As(err, &networkFailure) {
 			m.state.Message = "环境已启动，联网检查未通过"
 		} else if m.state.SettingsSaved {
 			m.state.Message = "设置已保存，等待环境恢复"
-			if errors.As(err, &networkFailure) {
+			if errors.As(err, &draftPending) {
+				m.state.Message = "已保存待验证的静态 IP，外网保持关闭"
+			} else if errors.As(err, &networkFailure) {
 				m.state.Message = "设置已保存，环境已启动，联网检查未通过"
 			}
 		}

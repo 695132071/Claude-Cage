@@ -38,6 +38,14 @@ func TestExecutionFailureNamesUnconfirmedStop(t *testing.T) {
 	}
 }
 
+func TestExecutionFailureNamesUnmountablePath(t *testing.T) {
+	output := "Error: project path contains whitespace, which Lima cannot mount:\n  C:/Users/Jae Young/.claude-cage-downloads\nRename the directory, then retry.\n"
+	message := executionFailure("启动环境", errors.New("exit status 1"), output).Error()
+	if !strings.Contains(message, "含有空格") || strings.Contains(message, "可识别") {
+		t.Fatalf("%q", message)
+	}
+}
+
 func TestExecutionFailureNamesMissingQEMU(t *testing.T) {
 	for _, line := range []string{
 		`level=fatal msg="exec: \"qemu-img\": executable file not found in %PATH%"`,

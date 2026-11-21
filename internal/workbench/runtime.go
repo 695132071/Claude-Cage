@@ -23,6 +23,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
+	"github.com/sylvinus/agent-vm/internal/vm"
 )
 
 var loadConfig = cage.Load
@@ -284,7 +285,7 @@ func (s *Server) runCage(args ...string) error {
 			cmd.Dir = s.profile
 		}
 	}
-	cmd.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath)
+	cmd.Env = append(vm.ChildEnv(), cage.ConfigEnv+"="+s.configPath)
 	execution := s.jobs.execution()
 	if len(args) == 1 && args[0] == "setup" {
 		cmd.Env = append(cmd.Env, "CAGE_SETUP_PROGRESS=1")
@@ -373,6 +374,9 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 			_ = s.closeProxyGate(failure.Message)
 			return failure
 		}
+	} else if err := mountableEnvironmentDir(s.environmentDir()); err != nil {
+		// A container's share is sshfs over a quoted path, a VM's is Lima's.
+		return err
 	}
 	cfg, err := loadConfig(s.configPath)
 	if err != nil {
@@ -713,7 +717,7 @@ func (s *Server) applyWithOptions(v savedProfile, validate, saveStaticDraft bool
 		}
 	}
 	if pendingStaticDraftErr != nil {
-		return networkCheckError{fmt.Errorf("已保存待验证的静态 IP 基准（%s），外网保持关闭。待代理恢复后请重新检测联网，实时出口、国家与隔离检查全部通过前不会放行外网：%w", v.Config.ExitPolicy.IP, pendingStaticDraftErr)}
+		return staticDraftPendingError{fmt.Errorf("已保存待验证的静态 IP 基准（%s），外网保持关闭。待代理恢复后请重新检测联网，实时出口、国家与隔离检查全部通过前不会放行外网：%w", v.Config.ExitPolicy.IP, pendingStaticDraftErr)}
 	}
 	return nil
 }

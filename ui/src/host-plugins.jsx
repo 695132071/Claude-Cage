@@ -168,9 +168,10 @@ function entryInfo(entry, view) {
   const plugin = entry.plugin;
   let state = { tone: "", label: "可安装" };
   if (plugin) {
-    state = plugin.problem ? { tone: "problem", label: "无法使用" }
+    state = plugin.problem && !plugin.needs_settings ? { tone: "problem", label: "无法使用" }
       : plugin.enabled === false ? { tone: "off", label: "已停用" }
       : !plugin.supported ? { tone: "problem", label: unsupportedLabel(plugin) }
+      : plugin.needs_settings ? { tone: "waiting", label: "需要配置" }
       : !view.enabled ? { tone: "", label: "未开启" }
       : plugin.loaded ? { tone: "online", label: "运行中" }
       : view.running ? { tone: "", label: "未加载" } : { tone: "waiting", label: "等待启动" };
@@ -237,7 +238,7 @@ async function installPlugin(model, entry, onConfirm) {
 export function pluginPages(model) {
   const pages = [];
   for (const plugin of model.view?.plugins || []) {
-    if (plugin.enabled === false || !plugin.supported || plugin.problem) continue;
+    if (plugin.enabled === false || !plugin.supported || plugin.problem || plugin.needs_settings) continue;
     for (const view of plugin.contributes?.views || []) {
       if (!view.url) continue;
       pages.push({ key: `${plugin.name}/${view.id}`, plugin: plugin.name, view, title: view.title || pluginTitle(plugin),
@@ -584,10 +585,79 @@ function Grants({ model, plugin, onConfirm }) {
   );
 }
 
+// PluginSettings is the form for the values a plugin asks the user for. The
+// app never sends a secret back: one that is set shows as such and can only
+// be replaced or cleared.
+function PluginSettings({ model, plugin, onConfirm }) {
+  const tr = useTranslation();
+  const { busy, change } = model;
+  const settings = plugin.settings || [];
+  const [values, setValues] = useState(() => Object.fromEntries(settings.filter(item => item.type !== "secret").map(item => [item.id, item.value || ""])));
+  const [secrets, setSecrets] = useState({}), [cleared, setCleared] = useState([]), [failed, setFailed] = useState(false);
+  const key = `settings:${plugin.name}`, guest = plugin.kind === "guest";
+  const dirty = settings.some(item => item.type !== "secret" && (values[item.id] || "") !== (item.value || ""))
+    || Object.values(secrets).some(Boolean) || cleared.length > 0;
+  const save = async event => {
+    event.preventDefault();
+    const body = {};
+    for (const item of settings) {
+      if (item.type !== "secret") body[item.id] = values[item.id] || null;
+      else if (secrets[item.id]) body[item.id] = secrets[item.id];
+      else if (cleared.includes(item.id)) body[item.id] = null;
+    }
+    const giving = settings.some(item => item.type === "secret" && secrets[item.id]);
+    if (guest && giving && !await onConfirm({ title: translate("把密钥交给环境内的插件？"), danger: true, confirm: translate("仍然保存"),
+      body: translate("这个插件在 Cage 环境中运行，密钥会离开这台电脑，以环境变量交给它的程序。环境内以同一用户运行的其他程序，包括 Claude，也可能读取到它。只在你信任这个插件时继续。") })) return;
+    const saved = await change({ plugin: plugin.name, settings: body, ...(guest && giving ? { confirm_guest_secrets: true } : {}) }, key);
+    setFailed(!saved);
+    if (saved) { setSecrets({}); setCleared([]); }
+  };
+  const set = (id, value) => setValues(previous => ({ ...previous, [id]: value }));
+  return (
+    <form className="plugin-settings" onSubmit={save} aria-label={tr("设置")}>
+      <p className="plugin-page-lead">{guest
+        ? tr("这些值以环境变量交给插件在 Cage 环境中的程序，保存后插件会重新启动。密钥用你的 Cage 账户加密保存，之后不再显示；交给环境内的插件前需要你确认风险。")
+        : tr("这些值以环境变量交给插件在这台电脑上的程序，保存后插件会重新启动。密钥用你的 Cage 账户加密保存，之后不再显示；Cage 锁定时，用到密钥的插件会停止，解锁后自动恢复。")}</p>
+      {settings.map(item => {
+        const id = `plugin-setting-${plugin.name}-${item.id}`, clearing = cleared.includes(item.id);
+        const value = values[item.id] || "";
+        return <div key={item.id} className="plugin-setting">
+          <label htmlFor={id}><strong>{item.title}</strong>{item.required && <em>{tr("必填")}</em>}</label>
+          {item.description && <p>{item.description}</p>}
+          {item.type === "secret" ? <div className="plugin-setting-row">
+            <input id={id} type="password" autoComplete="new-password" spellCheck={false} maxLength={8192} disabled={Boolean(busy)}
+              value={secrets[item.id] || ""} placeholder={item.set && !clearing ? tr("已设置，留空保持不变") : tr("未设置")}
+              onChange={event => { const next = event.target.value; setSecrets(previous => ({ ...previous, [item.id]: next })); setCleared(previous => previous.filter(other => other !== item.id)); }} />
+            {item.set && <button type="button" disabled={Boolean(busy) || clearing}
+              onClick={() => { setSecrets(previous => ({ ...previous, [item.id]: "" })); setCleared(previous => [...previous, item.id]); }}>{clearing ? tr("将清除") : tr("清除")}</button>}
+          </div>
+          : item.type === "boolean" ? <span className="plugin-switch small">
+            <input id={id} role="switch" type="checkbox" disabled={Boolean(busy)} checked={(value || item.default || "false") === "true"}
+              onChange={event => set(item.id, event.target.checked ? "true" : "false")} />
+            <span aria-hidden="true" />
+          </span>
+          : item.type === "choice" ? <select id={id} disabled={Boolean(busy)} value={value || item.default || ""} onChange={event => set(item.id, event.target.value)}>
+            {!item.default && <option value="">{tr("未选择")}</option>}
+            {(item.choices || []).map(choice => <option key={choice} value={choice}>{choice}</option>)}
+          </select>
+          : <input id={id} type="text" spellCheck={false} maxLength={8192} disabled={Boolean(busy)} value={value} placeholder={item.default || ""}
+            onChange={event => set(item.id, event.target.value)} />}
+        </div>;
+      })}
+      {failed && model.error && <p role="alert" className="error-message">{model.error}</p>}
+      <div className="plugin-settings-actions">
+        <button type="submit" className="primary" disabled={Boolean(busy) || !dirty}>
+          {busy === key ? <LoaderCircle size={15} className="spin" /> : null}{busy === key ? tr("正在保存…") : tr("保存")}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function Detail({ model, name, onConfirm, onPage }) {
   const tr = useTranslation();
   const { view, busy, change } = model;
-  const [tab, setTab] = useState("tools");
+  const [tab, setTab] = useState(() => view?.plugins?.find(item => item.name === name)?.needs_settings ? "settings" : "tools");
   const { installed, available } = pluginEntries(model);
   const entry = [...installed, ...available].find(item => item.name === name);
   if (!entry) return (
@@ -659,7 +729,11 @@ function Detail({ model, name, onConfirm, onPage }) {
         <strong>{plugin.built_in && name === "commands" ? tr("命令已停用") : tr("插件已停用")}</strong>
         <p>{plugin.built_in && name === "commands" ? tr("Claude 将不能在这台电脑上运行命令。打开上方开关即可恢复。") : tr("插件不会运行，Claude 也看不到它提供的工具。打开上方开关即可恢复。")}</p>
       </div></div>}
-      {plugin?.problem && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div>
+      {plugin && on && plugin.needs_settings && <div className="plugin-banner" role="status"><CircleAlert size={17} /><div>
+        <strong>{tr("插件需要配置")}</strong>
+        <p>{tr("请在「设置」中填写必填项，保存后插件会自动启动。")}</p>
+      </div>{tab !== "settings" && <button type="button" onClick={() => setTab("settings")}>{tr("填写设置")}</button>}</div>}
+      {plugin?.problem && !plugin.needs_settings && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div>
         <strong>{plugin.missing_program ? tr("需要本机安装 {0}", plugin.missing_program) : tr("插件无法加载")}</strong>
         <p>{plugin.missing_program ? missingProgramGuide(plugin.missing_program) : plugin.problem}</p>
       </div></div>}
@@ -667,11 +741,13 @@ function Detail({ model, name, onConfirm, onPage }) {
       <nav className="plugin-tabs" role="tablist" aria-label={tr("{0} 的内容", (info.title))}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>{tr("工具")}<em>{tools.length}</em></button>
         <button type="button" role="tab" aria-selected={tab === "permissions"} onClick={() => setTab("permissions")}>{plugin ? tr("授权与权限") : tr("权限")}<em>{declared.length}</em></button>
+        {plugin?.settings?.length > 0 && <button type="button" role="tab" aria-selected={tab === "settings"} onClick={() => setTab("settings")}>{tr("设置")}<em>{plugin.settings.length}</em></button>}
         {added.length > 0 && <button type="button" role="tab" aria-selected={tab === "contributions"} onClick={() => setTab("contributions")}>{tr("功能")}<em>{added.length}</em></button>}
       </nav>
       <div className="plugin-page-body">
         <div className="plugin-page-main" role="tabpanel">
-          {tab === "contributions" && added.length ? <>
+          {tab === "settings" && plugin?.settings?.length ? <PluginSettings key={JSON.stringify(plugin.settings)} model={model} plugin={plugin} onConfirm={onConfirm} />
+          : tab === "contributions" && added.length ? <>
             <p className="plugin-page-lead">{tr("除了提供给 Claude 的工具，插件还会在应用中添加这些内容。")}</p>
             <ul className="plugin-permission-list">
               {added.map(({ key, icon: Icon, title, text }) => <li key={key}><span><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></li>)}
@@ -683,7 +759,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             </li>)}
           </ul> : <div className="plugin-empty compact">
             <Wrench size={22} />
-            <p>{!plugin ? tr("安装并运行后，这里会列出插件提供给 Claude 的工具。") : plugin.problem ? tr("插件无法加载，没有可用的工具。") : !on ? tr("启用插件后，这里会列出它提供的工具。") : !view.enabled ? tr("开启主机工具后，这里会列出插件提供的工具。") : tr("插件运行后，这里会列出它提供的工具。")}</p>
+            <p>{!plugin ? tr("安装并运行后，这里会列出插件提供给 Claude 的工具。") : plugin.needs_settings ? tr("填写必填设置后，这里会列出插件提供的工具。") : plugin.problem ? tr("插件无法加载，没有可用的工具。") : !on ? tr("启用插件后，这里会列出它提供的工具。") : !view.enabled ? tr("开启主机工具后，这里会列出插件提供的工具。") : tr("插件运行后，这里会列出它提供的工具。")}</p>
           </div> : <>
             {plugin && <Grants model={model} plugin={plugin} onConfirm={onConfirm} />}
             <p className="plugin-page-lead">{tr("权限由插件自行声明，供你在安装前判断。")}</p>
