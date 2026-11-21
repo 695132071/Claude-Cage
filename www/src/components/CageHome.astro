@@ -14,7 +14,7 @@ interface Props { locale: CageLocale }
 const { locale } = Astro.props;
 const c = cageCopy[locale];
 type PlatformRelease = { version: string; releaseURL: string; downloadURL: string; unsigned?: boolean };
-const published: { version: string; releaseURL: string; platforms: Partial<Record<'macos' | 'windows' | 'linux' | 'android', PlatformRelease>> } = releaseData;
+const published: { version: string; releaseURL: string; platforms: Partial<Record<'macos' | 'macosIntel' | 'windows' | 'linux' | 'android', PlatformRelease>> } = releaseData;
 const downloads = published.platforms;
 const base = import.meta.env.BASE_URL;
 const repo = 'https://github.com/Lee-xeo/Claude-Cage';
@@ -41,6 +41,8 @@ const docHref = (href: string) => href.replace('https://claude-cage.com/docs/', 
 const platforms = [
   { name: 'macOS', icon: 'apple', requirements: 'Apple Silicon · macOS 14+', format: '.dmg',
     url: downloads.macos?.downloadURL, version: downloads.macos?.version, notes: downloads.macos?.releaseURL, guideURL: `${repo}/blob/main/docs/getting-started.md` },
+  { name: 'macOS Intel', icon: 'apple', requirements: 'Intel · VT-x · macOS 14+', format: '.dmg',
+    url: downloads.macosIntel?.downloadURL, version: downloads.macosIntel?.version, notes: downloads.macosIntel?.releaseURL, guideURL: `${repo}/blob/main/docs/getting-started.md` },
   { name: 'Windows', icon: 'windows', requirements: 'Windows 10 22H2 / 11 · x64', format: '.exe',
     url: downloads.windows?.downloadURL, version: downloads.windows?.version,
     preview: downloads.windows?.unsigned,
@@ -53,7 +55,8 @@ const platforms = [
     notes: downloads.android?.releaseURL, guideURL: `${base}docs/mobile/` },
   { name: 'iOS', icon: 'apple', requirements: 'iOS 17+ · Secure Enclave', localBuild: true,
     guideURL: `${base}docs/mobile/` },
-];
+// The Intel Mac entry appears once a release publishes its package.
+].filter(platform => platform.name !== 'macOS Intel' || platform.url);
 const pathFor = (code: CageLocale) => `${base}${code === 'zh' ? '' : `${code}/`}`;
 const canonical = new URL(pathFor(locale), Astro.site);
 ---

@@ -10,7 +10,7 @@
 
 | 需要准备 | 说明 |
 |---|---|
-| 支持的平台与虚拟化 | Apple Silicon Mac 需要 macOS 14+；Windows 10 22H2 / 11 x64 需要 Windows 虚拟机监控程序平台；Debian 12 / Ubuntu 22.04 / 24.04 x86_64 主机需要 KVM。Intel Mac、Windows ARM64 和 Linux ARM64 暂不支持。 |
+| 支持的平台与虚拟化 | Apple Silicon Mac 与 Intel Mac 需要 macOS 14+，Intel Mac 还需支持 VT-x 硬件虚拟化；Windows 10 22H2 / 11 x64 需要 Windows 虚拟机监控程序平台；Debian 12 / Ubuntu 22.04 / 24.04 x86_64 主机需要 KVM。Windows ARM64 和 Linux ARM64 暂不支持。 |
 | 可用的代理 | Clash/Mihomo 配置、v2rayN 具体节点的分享链接，或远程 HTTP/SOCKS5 节点。Cage 随附代理核心，不提供代理服务。 |
 | 自己的 Claude 使用资格 | 需要使用 Claude Code 时，在 Cage 内完成自己的授权。主机已有登录不会自动导入。 |
 
@@ -22,7 +22,7 @@
 
 | 平台 | 安装方式 |
 |---|---|
-| macOS | 下载 Apple Silicon `.dmg`，打开后将 Cage 拖入 Applications（应用程序），再从“应用程序”启动。 |
+| macOS | 按芯片下载 `.dmg`：Apple Silicon 选 `macos-arm64`，Intel 选 `macos-amd64`。打开后将 Cage 拖入 Applications（应用程序），再从“应用程序”启动。 |
 | Windows | 下载 x64 `.exe` 安装器，运行后从开始菜单打开 Cage。可信签名包支持校验发布者身份；旧版或单独标明“未签名”的预览包仅用于手动安装测试，不能自动安装更新。详见 [Windows 指南](windows.md)。 |
 | Linux | 下载 x86_64 `.deb`，使用 `sudo apt install ./Cage-<版本>-linux-amd64.deb` 安装。缺少 QEMU、GTK、WebKitGTK、OpenSSH 等主机依赖时，APT 会从系统配置的软件源补齐，再从应用菜单打开 Cage。详见 [Linux 指南](linux.md)。 |
 
