@@ -4,7 +4,7 @@ import {
   Keyboard, LoaderCircle, Monitor, PanelLeft, RefreshCw, Search, Settings, ShieldCheck, SquareTerminal, Store, Trash2, TriangleAlert, Wrench,
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
-import { runtimeURL } from "./client-context.mjs";
+import { getClientContext, isRemoteClient, runtimeURL } from "./client-context.mjs";
 import { useWindowVisibility } from "./window-visibility";
 import { sameState } from "./workspace-state.mjs";
 import "./host-plugins.css";
@@ -90,7 +90,25 @@ export function useHostPlugins(active) {
   const windowVisible = useWindowVisibility();
   const [view, setView] = useState(null), [error, setError] = useState(""), [busy, setBusy] = useState("");
   const [market, setMarket] = useState({ loading: false, loaded: false });
+  const [syncStatus, setSyncStatus] = useState(null);
+  const [bridgeStatus, setBridgeStatus] = useState(null);
   const mounted = useRef(true), revision = useRef(0), marketRevision = useRef(0);
+  const refreshRemoteExtras = useCallback(async () => {
+    if (!isRemoteClient()) {
+      setSyncStatus(null);
+      setBridgeStatus(null);
+      return;
+    }
+    try {
+      const [sync, bridge] = await Promise.all([
+        api("/client/plugins/sync").catch(() => null),
+        api("/client/plugins/bridge").catch(() => null),
+      ]);
+      if (!mounted.current) return;
+      if (sync) setSyncStatus(previous => (sameState(previous, sync) ? previous : sync));
+      if (bridge) setBridgeStatus(previous => (sameState(previous, bridge) ? previous : bridge));
+    } catch { /* Remote client status is best-effort alongside /host-tools. */ }
+  }, []);
   const refresh = useCallback(async () => {
     const current = ++revision.current;
     try {
@@ -100,7 +118,8 @@ export function useHostPlugins(active) {
         setError("");
       }
     } catch (e) { if (mounted.current && current === revision.current) setError(e.message); }
-  }, []);
+    await refreshRemoteExtras();
+  }, [refreshRemoteExtras]);
   const loadMarket = useCallback(async (fresh = false) => {
     const current = ++marketRevision.current;
     setMarket(previous => ({ ...previous, loading: true }));
@@ -134,7 +153,27 @@ export function useHostPlugins(active) {
     } catch (e) { if (mounted.current) setError(e.message); return false; }
     finally { if (mounted.current) setBusy(""); }
   }, [loadMarket]);
-  return { view, error, busy, change, market, loadMarket };
+  const triggerSync = useCallback(async () => {
+    setBusy("sync"); setError("");
+    try {
+      const value = await api("/client/plugins/sync", {});
+      if (mounted.current) setSyncStatus(value);
+      setTimeout(() => { if (mounted.current) void refresh(); }, 800);
+      return true;
+    } catch (e) { if (mounted.current) setError(e.message); return false; }
+    finally { if (mounted.current) setBusy(""); }
+  }, [refresh]);
+  const toggleBridge = useCallback(async (plugin, shared) => {
+    setBusy(`bridge:${plugin}`); setError("");
+    try {
+      const value = await api("/client/plugins/bridge", { plugin, shared });
+      if (mounted.current) setBridgeStatus(value);
+      void refresh();
+      return true;
+    } catch (e) { if (mounted.current) setError(e.message); return false; }
+    finally { if (mounted.current) setBusy(""); }
+  }, [refresh]);
+  return { view, error, busy, change, market, loadMarket, syncStatus, bridgeStatus, triggerSync, toggleBridge };
 }
 
 // pluginEntries merges what is installed with what can be installed, so the
@@ -778,7 +817,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             <div><dt>{tr("标识符")}</dt><dd><code>{name}</code></dd></div>
             {info.version && <div><dt>{tr("版本")}</dt><dd>{info.version}</dd></div>}
             <div><dt>{tr("来源")}</dt><dd>{translate(sources[entry.source])}</dd></div>
-            {(plugin || offer).kind && <div><dt>{tr("运行位置")}</dt><dd>{(plugin || offer).kind === "guest" ? tr("Cage 环境") : tr("这台电脑")}</dd></div>}
+            {(plugin || offer).kind && <div><dt>{tr("运行位置")}</dt><dd>{(plugin || offer).kind === "guest" ? (isRemoteClient() ? tr("远程 Cage 环境") : tr("Cage 环境")) : (isRemoteClient() ? tr("远程主机") : tr("这台电脑"))}</dd></div>}
             {runtimeLabel && <div><dt>{tr("运行环境")}</dt><dd>{runtimeLabel}</dd></div>}
             {platformList && <div><dt>{tr("支持系统")}</dt><dd>{platformList}</dd></div>}
             <div><dt>{tr("状态")}</dt><dd>{plugin ? tr(info.state.label) : offer.supported ? tr("未安装") : unsupportedLabel(offer)}</dd></div>
@@ -806,27 +845,48 @@ function Detail({ model, name, onConfirm, onPage }) {
 
 function SettingsPage({ model, status, onConfirm }) {
   const tr = useTranslation();
-  const { view, busy, change } = model;
+  const { view, busy, change, syncStatus, bridgeStatus, triggerSync, toggleBridge } = model;
+  const remote = isRemoteClient();
+  const hostName = getClientContext().name || tr("远程主机");
   const waiting = view.enabled && !view.running;
   const toggle = async () => {
-    if (!view.enabled && !await onConfirm({ title: "允许 Claude 使用这台电脑？",
-      body: "开启后，环境内的 Claude 可以通过插件在这台电脑上操作，例如在已打开的项目文件夹中运行命令。命令以你的系统账户权限运行，不受环境的隔离保护。每次操作前，系统会弹出确认窗口，由你决定是否允许。",
-      confirm: "开启" })) return;
+    if (!view.enabled && !await onConfirm({
+      title: remote ? translate("允许远程主机「{0}」上的 Claude 使用插件？", hostName) : "允许 Claude 使用这台电脑？",
+      body: remote
+        ? translate("开启后，远程环境内的 Claude 可以通过插件在远程主机「{0}」上执行命令或调用工具。每次需要审批时，确认窗口会弹在你面前的这台电脑上，并明确标出远程主机名称。", hostName)
+        : "开启后，环境内的 Claude 可以通过插件在这台电脑上操作，例如在已打开的项目文件夹中运行命令。命令以你的系统账户权限运行，不受环境的隔离保护。每次操作前，系统会弹出确认窗口，由你决定是否允许。",
+      confirm: "开启",
+    })) return;
     await change({ enabled: !view.enabled }, "toggle");
   };
   const state = !view.available ? { tone: "problem", label: "此环境不支持" } : view.running ? { tone: "online", label: "已开启，插件正在运行" }
     : waiting ? { tone: "waiting", label: status?.ready ? "已开启，正在启动插件" : "已开启，环境启动后生效" } : { tone: "", label: "未开启" };
+  const syncLabel = !syncStatus ? tr("等待同步")
+    : syncStatus.state === "syncing" ? tr("正在从本机同步…")
+    : syncStatus.state === "locked" ? tr("等待远程解锁后自动同步")
+    : syncStatus.state === "error" ? tr("同步失败")
+    : syncStatus.synced?.length ? tr("已同步 {0} 个插件", syncStatus.synced.length)
+    : tr("已与本机兼容插件保持一致");
+  const onToggleBridge = async (item) => {
+    const next = !item.shared;
+    if (next && !await onConfirm({
+      title: translate("向远程主机「{0}」临时共享本机插件「{1}」？", hostName, item.display_name || item.name),
+      body: translate("开启后，远程主机「{0}」环境内的 Claude 可通过加密隧道调用你这台电脑上的「{1}」。调用时会先在本机弹出确认窗口并在本机执行，断开远程连接后自动收回。", hostName, item.display_name || item.name),
+      confirm: "共享",
+    })) return;
+    await toggleBridge(item.name, next);
+  };
   return (
     <div className="plugin-settings">
       <section className={`plugin-card plugin-master ${view.enabled ? "on" : ""}`}>
         <div className="plugin-master-row">
           <span className="plugin-master-icon"><Blocks size={24} /></span>
           <div>
-            <h2>{tr("允许 Claude 使用这台电脑")}</h2>
-            <p>{tr("插件通过 MCP 把这台电脑的能力提供给环境内的 Claude Code 和 Claude 桌面应用。")}</p>
+            <h2>{remote ? tr("允许远程主机「{0}」的 Claude 使用插件", hostName) : tr("允许 Claude 使用这台电脑")}</h2>
+            <p>{remote ? tr("插件通过 MCP 把远程主机与环境内的能力提供给远程 Claude Code 和 Claude 桌面应用，审批窗口会回流到你本机桌面。") : tr("插件通过 MCP 把这台电脑的能力提供给环境内的 Claude Code 和 Claude 桌面应用。")}</p>
           </div>
           {view.available && <label className="plugin-switch">
-            <input role="switch" type="checkbox" aria-label={tr("允许 Claude 使用这台电脑")} checked={view.enabled} disabled={Boolean(busy)} onChange={toggle} />
+            <input role="switch" type="checkbox" aria-label={remote ? tr("允许远程主机使用插件") : tr("允许 Claude 使用这台电脑")} checked={view.enabled} disabled={Boolean(busy)} onChange={toggle} />
             <span aria-hidden="true" />
           </label>}
         </div>
@@ -838,14 +898,74 @@ function SettingsPage({ model, status, onConfirm }) {
         </div>
       </section>
       <ul className="plugin-facts">
-        <li><ShieldCheck size={18} /><div><strong>{tr("每次操作都先征求同意")}</strong><p>{tr("系统会弹窗显示插件、工具和参数，你可以只允许一次，或在本次运行期间都允许。")}</p></div></li>
+        <li><ShieldCheck size={18} /><div><strong>{tr("每次操作都先征求同意")}</strong><p>{remote ? tr("需要确认时会在你本机弹出原生确认框并标明远程主机名称，可选择允许一次或始终允许。") : tr("系统会弹窗显示插件、工具和参数，你可以只允许一次，或在本次运行期间都允许。")}</p></div></li>
         <li><TriangleAlert size={18} /><div><strong>{tr("不受环境隔离保护")}</strong><p>{tr("插件以你的系统账户权限运行。只安装你信任的插件。")}</p></div></li>
         <li><CircleAlert size={18} /><div><strong>{tr("试验功能")}</strong><p>{tr("此功能仍在试验阶段，默认关闭。")}</p></div></li>
       </ul>
+      {remote && syncStatus && syncStatus.state !== "unsupported" && (
+        <section className="plugin-card">
+          <div className="plugin-card-head-row">
+            <div>
+              <h3>{tr("从本机自动同步")}</h3>
+              <p className="plugin-card-lead">{tr("连接远程主机后会自动把本机兼容的插件同步过去（单向增量，不删除远程已有插件，不同步授权和密钥）。")}</p>
+            </div>
+            <button type="button" disabled={Boolean(busy) || syncStatus.state === "syncing"} onClick={triggerSync}>
+              <RefreshCw size={14} className={busy === "sync" || syncStatus.state === "syncing" ? "spin" : undefined} />{tr("立即同步")}
+            </button>
+          </div>
+          <div className="plugin-sync-summary">
+            <StateChip state={{ tone: syncStatus.state === "error" ? "problem" : syncStatus.state === "syncing" || syncStatus.state === "locked" ? "waiting" : "online", label: syncLabel }} />
+          </div>
+          {syncStatus.error && <p className="error-message">{syncStatus.error}</p>}
+          {syncStatus.skipped?.length > 0 && (
+            <ul className="plugin-sync-notes">
+              {syncStatus.skipped.map(item => <li key={item.name}><code>{item.name}</code><span>{item.reason}</span></li>)}
+            </ul>
+          )}
+          {syncStatus.failed?.length > 0 && (
+            <ul className="plugin-sync-notes problem">
+              {syncStatus.failed.map(item => <li key={item.name}><code>{item.name}</code><span>{item.reason}</span></li>)}
+            </ul>
+          )}
+        </section>
+      )}
+      {remote && bridgeStatus?.supported && (
+        <section className="plugin-card">
+          <h3>{tr("共享本机插件给当前远程")}</h3>
+          <p className="plugin-card-lead">{tr("把本机桌面插件（如 Blender、桌面控制）通过加密隧道临时提供给远程 Claude。调用时会在你本机弹窗审批并在本机执行，断开连接自动收回。")}</p>
+          {bridgeStatus.error && <p className="error-message">{bridgeStatus.error}</p>}
+          {bridgeStatus.plugins?.length ? (
+            <ul className="plugin-bridge-list">
+              {bridgeStatus.plugins.map(item => (
+                <li key={item.name} className="plugin-bridge-row">
+                  <div>
+                    <div className="plugin-bridge-title">
+                      <strong>{item.display_name || item.name}</strong>
+                      <code>{item.name}</code>
+                      {item.shared && item.running && <StateChip state={{ tone: "online", label: tr("已共享") }} />}
+                    </div>
+                    <p>{item.description || tr("本机插件")}</p>
+                    {item.problem && <p className="error-message">{item.problem}</p>}
+                    {item.skipped?.length > 0 && <p className="plugin-bridge-note">{tr("跳过冲突工具：{0}", item.skipped.map(s => s.name).join("、"))}</p>}
+                  </div>
+                  <label className="plugin-switch small">
+                    <input role="switch" type="checkbox" checked={Boolean(item.shared)} disabled={Boolean(busy) || !view.enabled}
+                      aria-label={tr("共享本机插件 {0}", item.display_name || item.name)}
+                      onChange={() => onToggleBridge(item)} />
+                    <span aria-hidden="true" />
+                  </label>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <div className="plugin-empty compact"><Blocks size={22} /><p>{tr("本机还没有可反向共享的桌面/本机插件。")}</p></div>
+          )}
+        </section>
+      )}
       {view.problems?.length > 0 && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div><strong>{tr("部分插件未能加载")}</strong>{view.problems.map(problem => <p key={problem}>{problem}</p>)}</div></div>}
       <section className="plugin-card">
         <h3>{tr("可操作的文件夹")}</h3>
-        <p className="plugin-card-lead">{tr("命令插件只能在这些已打开的项目文件夹中运行。")}</p>
+        <p className="plugin-card-lead">{remote ? tr("远程命令插件只能在远程主机这些已打开的项目文件夹中运行。") : tr("命令插件只能在这些已打开的项目文件夹中运行。")}</p>
         {view.folders.length ? <ul className="plugin-folder-list">
           {view.folders.map(folder => <li key={folder}><Folder size={16} /><code>{folder}</code></li>)}
         </ul> : <div className="plugin-empty compact"><FolderOpen size={22} /><p>{tr("还没有打开项目。打开项目后，它的文件夹会出现在这里。")}</p></div>}

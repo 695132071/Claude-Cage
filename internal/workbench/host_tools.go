@@ -17,7 +17,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/sylvinus/agent-vm/internal/containerenv"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/hostbridge"
 	"github.com/sylvinus/agent-vm/internal/paths"
@@ -98,7 +97,7 @@ func (h *hostTools) close() {
 // whenever the environment is known to be reachable, so a forward that
 // dropped is replaced on the next check.
 func (s *Server) ensureHostTools() {
-	if containerenv.Configured(s.profile) {
+	if s.clientOnly {
 		return
 	}
 	s.mu.Lock()
@@ -142,6 +141,7 @@ func (s *Server) startHostTools(serving bool) error {
 		return err
 	}
 	approvals := newHostApprovals()
+	approvals.remoteAsk = s.remoteApprovals.ask
 	jobs := hostbridge.NewJobs()
 	ctx, cancel := context.WithCancel(s.lifetimeContext())
 	// Plugins the user installed run beside the built-in command tool. One
@@ -223,6 +223,7 @@ func (s *Server) startHostTools(serving bool) error {
 		return err
 	}
 	tools.bridge = bridge
+	s.reattachClientPluginBridge(bridge)
 	forward := fmt.Sprintf("127.0.0.1:%d:%s", hostToolsPort, bridge.Addr())
 	s.releaseHostToolsPort(ctx)
 	cmd := s.sshCommandWithForwarding(ctx, "-o", "ExitOnForwardFailure=yes", "-N", "-T", "-R", forward, s.sshTarget())
