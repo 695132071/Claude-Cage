@@ -158,6 +158,20 @@ type AgentError struct {
 
 func (e *AgentError) Error() string { return e.Message }
 
+const accountMissingRecovery = "account-missing"
+
+// agentResponseError maps a controller response. Its recovery header names a
+// more specific next step than the status code alone.
+func agentResponseError(code int, recovery string) *AgentError {
+	e := agentHTTPError(code)
+	if code == http.StatusLocked && recovery == accountMissingRecovery {
+		e.Code = "account_missing"
+		e.Message = "Create the Cage account before configuring the environment."
+		e.NextAction = "account.create"
+	}
+	return e
+}
+
 func agentHTTPError(code int) *AgentError {
 	e := &AgentError{Code: "request_rejected", Message: "Cage rejected the operation. Check the input and run doctor.", NextAction: "doctor", HTTPStatus: code}
 	switch code {

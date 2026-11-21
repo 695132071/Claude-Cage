@@ -599,6 +599,7 @@ func (s *Server) handler() http.Handler {
 					http.Error(w, s.account.desktopOnlyMobileMessage(), http.StatusLocked)
 					return
 				}
+				s.account.markMissingAccount(w)
 				http.Error(w, "Cage 已锁定，请先登录", http.StatusLocked)
 				return
 			}
