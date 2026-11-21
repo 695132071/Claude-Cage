@@ -88,6 +88,7 @@ type Server struct {
 	preferences                                      Preferences
 	jobs                                             jobManager
 	desktopOnboardingUntil                           time.Time
+	desktopOnboardingReleased                        bool
 	ready                                            bool
 	location                                         *Location
 	exitProbeError                                   string
@@ -838,7 +839,7 @@ func (s *Server) restore(w http.ResponseWriter, r *http.Request) {
 }
 func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 	if requestInitiator(r) == jobInitiatorAgent && s.desktopOnboardingActive() {
-		http.Error(w, "桌面端正在进行首次引导，请先在 Cage 窗口完成或关闭引导后再启动环境", http.StatusConflict)
+		http.Error(w, "桌面端正在进行首次引导，请先在 Cage 窗口完成引导；如需由 Agent 继续，请先调用 initialization.set 并传入 {\"action\":\"release\"}", http.StatusConflict)
 		return
 	}
 	var request struct {

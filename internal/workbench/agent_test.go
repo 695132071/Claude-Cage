@@ -374,3 +374,53 @@ func requestWithHeader(s *Server, method, path, body, header, value string) *htt
 	s.handler().ServeHTTP(w, r)
 	return w
 }
+
+func TestAgentReleasesDesktopOnboardingWithoutQuittingWindow(t *testing.T) {
+	s := agentTestController(t)
+	desktopActive := func() bool {
+		t.Helper()
+		raw, err := AgentCall(context.Background(), s.configPath, "initialization.status", nil)
+		var view initializationView
+		if err != nil || json.Unmarshal(raw, &view) != nil {
+			t.Fatalf("initialization.status: %s %v", raw, err)
+		}
+		return view.DesktopActive
+	}
+	poll := func() {
+		t.Helper()
+		for _, path := range []string{"/api/status", "/api/environment/initialization"} {
+			if w := requestWithHeader(s, "GET", path, "", jobInitiatorHeader, jobInitiatorSetup); w.Code != 200 {
+				t.Fatalf("setup poll %s: %d %s", path, w.Code, w.Body.String())
+			}
+		}
+	}
+	poll()
+	if !desktopActive() {
+		t.Fatal("onboarding poll did not claim the lease")
+	}
+	if _, err := AgentCall(context.Background(), s.configPath, "initialization.set", json.RawMessage(`{"action":"release"}`)); err != nil {
+		t.Fatalf("release: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(s.profile, "initialization.json")); err != nil {
+		t.Fatal("release did not record the started setup, so a reopened window would claim it again", err)
+	}
+	// The still-open onboarding screen keeps polling.
+	poll()
+	if desktopActive() {
+		t.Fatal("onboarding polling reclaimed a released lease")
+	}
+	var ae *AgentError
+	if _, err := AgentCall(context.Background(), s.configPath, "environment.start", json.RawMessage(`{"guest_system":"macos"}`)); !errors.As(err, &ae) || strings.Contains(ae.Message, "首次引导") {
+		t.Fatalf("released onboarding still blocked the agent: %v", err)
+	}
+	// Starting the install from the window takes setup back.
+	if w := initializationRequest(s, "install", true); w.Code != 200 {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	if !desktopActive() {
+		t.Fatal("a desktop install did not reclaim onboarding")
+	}
+	if _, err := AgentCall(context.Background(), s.configPath, "environment.start", json.RawMessage(`{}`)); !errors.As(err, &ae) || ae.Code != "state_conflict" {
+		t.Fatalf("agent start during reclaimed onboarding: %v", err)
+	}
+}
