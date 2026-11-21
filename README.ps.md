@@ -78,7 +78,7 @@ Claude Cage ټرمینل، براوزر، سمونګر، رسمي Claude Desktop
 
 ## ډاونلوډ او نصب کړئ
 
-Cage د macOS، Windows او Linux ملاتړ کوي: Apple Silicon له macOS 14+ سره، Windows 10 22H2 / 11 x64 او Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac، Windows ARM64 او Linux ARM64 لا نه ملاتړ کېږي. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage د macOS، Windows او Linux ملاتړ کوي: Apple Silicon او Intel Mac له macOS 14+ سره، Windows 10 22H2 / 11 x64 او Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 او Linux ARM64 لا نه ملاتړ کېږي. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. اپلیکیشن ډاونلوډ کړئ: [macOS / Windows / Linux](https://claude-cage.com/ps/#download).
 2. macOS: د نصب کولو کڅوړه خلاص کړئ او ډریګ کړئ **Cage** دننه **غوښتنلیکونه**; بیا یې د غوښتنلیکونو څخه پیل کړئ. Windows: [د نصب لارښود](docs/windows.md#安装并开始工作) · Linux: [د نصب لارښود](docs/linux.md#安装并开始工作).

@@ -78,7 +78,7 @@ Claude Cage ተርሚናልን፣ አሳሽን፣ አርታዒን፣ ኦፊሴ�
 
 ## ማውረድ እና መጫን
 
-Cage macOS፣ Windows እና Linux ይደግፋል፦ Apple Silicon ከ macOS 14+፣ Windows 10 22H2 / 11 x64 እና Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac፣ Windows ARM64 እና Linux ARM64 ገና አይደገፉም። [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage macOS፣ Windows እና Linux ይደግፋል፦ Apple Silicon እና Intel Mac ከ macOS 14+፣ Windows 10 22H2 / 11 x64 እና Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 እና Linux ARM64 ገና አይደገፉም። [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. መተግበሪያውን ያውርዱ: [macOS / Windows / Linux](https://claude-cage.com/am/#download).
 2. macOS: የመጫኛ ጥቅሉን ይክፈቱ እና ይጎትቱ **Cage** ውስጥ **መተግበሪያዎች**; ከዚያ ከመተግበሪያዎች ያስጀምሩት። Windows: [የመጫኛ መመሪያ](docs/windows.md#安装并开始工作) · Linux: [የመጫኛ መመሪያ](docs/linux.md#安装并开始工作).

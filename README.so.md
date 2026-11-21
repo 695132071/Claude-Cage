@@ -78,7 +78,7 @@ Waxa kaliya ee aad u baahan tahay waa barta ugu dambeysa ee wakiil shabakad la i
 
 ## Soo deji oo rakib
 
-Cage wuxuu taageeraa macOS, Windows iyo Linux: Apple Silicon oo leh macOS 14+, Windows 10 22H2 / 11 x64 iyo Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac, Windows ARM64 iyo Linux ARM64 weli lama taageero. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage wuxuu taageeraa macOS, Windows iyo Linux: Apple Silicon iyo Intel Mac oo leh macOS 14+, Windows 10 22H2 / 11 x64 iyo Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 iyo Linux ARM64 weli lama taageero. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. Soo dejiso abka: [macOS / Windows / Linux](https://claude-cage.com/so/#download).
 2. macOS: Fur xirmada rakibaadda oo jiid **Cage** galay **Codsiyada**; ka dibna ka bilow Applications. Windows: [Hagaha rakibidda](docs/windows.md#安装并开始工作) · Linux: [Hagaha rakibidda](docs/linux.md#安装并开始工作).

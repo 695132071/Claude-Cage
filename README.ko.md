@@ -78,7 +78,7 @@ https://github.com/Lee-xeo/Claude-Cage의 최신 소스 코드를 받아 빌드�
 
 ## 다운로드 및 설치
 
-Cage는 macOS, Windows, Linux를 지원합니다. 대상은 macOS 14+의 Apple Silicon Mac, Windows 10 22H2 / 11 x64, Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac, Windows ARM64, Linux ARM64는 아직 지원하지 않습니다. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage는 macOS, Windows, Linux를 지원합니다. 대상은 macOS 14+의 Apple Silicon Mac과 Intel Mac, Windows 10 22H2 / 11 x64, Debian 12 / Ubuntu 22.04 / 24.04 x86_64입니다. Windows ARM64, Linux ARM64는 아직 지원하지 않습니다. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. 앱 다운로드: [macOS / Windows / Linux](https://claude-cage.com/ko/#download).
 2. macOS: 설치 패키지를 열고 드래그하세요. **Cage** 으로 **응용**; 그런 다음 응용 프로그램에서 실행하십시오. Windows: [설치 안내](docs/windows.md#安装并开始工作) · Linux: [설치 안내](docs/linux.md#安装并开始工作).

@@ -78,7 +78,7 @@ Claude Cage аб’ядноўвае тэрмінал, браўзер, рэдак
 
 ## Спампоўка і ўстаноўка
 
-Cage падтрымлівае macOS, Windows і Linux: Apple Silicon з macOS 14+, Windows 10 22H2 / 11 x64 і Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac, Windows ARM64 і Linux ARM64 пакуль не падтрымліваюцца. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage падтрымлівае macOS, Windows і Linux: Apple Silicon і Intel Mac з macOS 14+, Windows 10 22H2 / 11 x64 і Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 і Linux ARM64 пакуль не падтрымліваюцца. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. Спампаваць праграму: [macOS / Windows / Linux](https://claude-cage.com/be/#download).
 2. macOS: Адкрыйце ўсталявальны пакет і перацягнуць **Cage** у **Прыкладанні**; затым запусціце яго з праграм. Windows: [Інструкцыя па ўсталяванні](docs/windows.md#安装并开始工作) · Linux: [Інструкцыя па ўсталяванні](docs/linux.md#安装并开始工作).

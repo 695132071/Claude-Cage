@@ -78,7 +78,7 @@ Todo lo que necesita es un punto final de proxy de red confiable. Este proyecto 
 
 ## Descarga e instalación
 
-Cage admite macOS, Windows y Linux: Apple Silicon con macOS 14+, Windows 10 22H2 / 11 x64 y Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Intel Mac, Windows ARM64 y Linux ARM64 aún no son compatibles. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
+Cage admite macOS, Windows y Linux: Apple Silicon e Intel Mac con macOS 14+, Windows 10 22H2 / 11 x64 y Debian 12 / Ubuntu 22.04 / 24.04 x86_64. Windows ARM64 y Linux ARM64 aún no son compatibles. [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md).
 
 1. Descargar aplicación: [macOS / Windows / Linux](https://claude-cage.com/es/#download).
 2. macOS: Abra el paquete de instalación y arrastre **Cage** en **Aplicaciones**; luego ejecútelo desde Aplicaciones. Windows: [Guía de instalación](docs/windows.md#安装并开始工作) · Linux: [Guía de instalación](docs/linux.md#安装并开始工作).
