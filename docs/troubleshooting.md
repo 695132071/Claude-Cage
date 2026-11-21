@@ -14,7 +14,7 @@
 
 **GitHub 显示 404，或看不到安装包。** 仓库与公开发布的附件无需仓库授权。从[项目主页](https://claude-cage.com/#download)点击“下载应用”并选择平台，检查网络与链接是否完整。macOS 使用 `.dmg`，Windows 使用 `.exe` 安装器，Debian/Ubuntu Linux 使用 `.deb`。Release 中的源码压缩包用于开发，不能当作安装包使用；尚无公开安装包的平台会提供安装与构建说明。
 
-**Mac 提示应用损坏、无法验证或不支持。** 确认使用 Apple Silicon、macOS 14+，重新下载对应 Release 的完整安装包，并核对该 Release 的签名、公证说明和校验文件。保留系统提示的原文反馈问题；不要通过关闭 Gatekeeper 或删除隔离属性来掩盖发行问题。
+**Mac 提示应用损坏、无法验证或不支持。** 确认使用 macOS 14+，且下载的 DMG 与芯片一致（Apple Silicon 为 `macos-arm64`，Intel 为 `macos-amd64`），重新下载对应 Release 的完整安装包，并核对该 Release 的签名、公证说明和校验文件。保留系统提示的原文反馈问题；不要通过关闭 Gatekeeper 或删除隔离属性来掩盖发行问题。
 
 **Windows 显示未知发布者，或 Linux 无法安装。** Windows 未签名预览包的身份限制与实测范围见 [Windows 指南](windows.md)和对应发行说明；不要把它当作已签名版本。Linux 先确认使用 Debian 12 / Ubuntu 22.04 / 24.04 x86_64，通过 APT 安装 `.deb` 的依赖，并按 [Linux 指南](linux.md)检查 KVM 权限。
 

@@ -80,7 +80,7 @@ Claude Cage 在一个小型的 Debian 13 环境里运行官方 Claude Code 和 C
 
 ## 下载与安装
 
-Cage 支持 macOS、Windows 和 Linux：macOS 14+ 的 Apple Silicon Mac、Windows 10 22H2 / 11 x64，以及 Debian 12 / Ubuntu 22.04 / 24.04 x86_64。Intel Mac、Windows ARM64 和 Linux ARM64 暂不支持。 [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md)。
+Cage 支持 macOS、Windows 和 Linux：macOS 14+ 的 Apple Silicon Mac 与 Intel Mac、Windows 10 22H2 / 11 x64，以及 Debian 12 / Ubuntu 22.04 / 24.04 x86_64。Windows ARM64 和 Linux ARM64 暂不支持。 [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md)。
 
 1. 打开[项目主页](https://claude-cage.com/#download)，点击“下载应用”并选择平台。
 2. macOS：打开安装包，将 **Cage** 拖入 **Applications（应用程序）**，再从“应用程序”启动。Windows：[安装说明](docs/windows.md#安装并开始工作) · Linux：[安装说明](docs/linux.md#安装并开始工作)。
@@ -90,7 +90,7 @@ Cage 支持 macOS、Windows 和 Linux：macOS 14+ 的 Apple Silicon Mac、Window
 
 Windows 安装向导和 Cage 首次打开时按主机的显示语言预选界面语言，第一屏可以改选。支持的语言见上方列表，之后也可在「设置 → 通用 → 界面语言」切换。 [界面语言说明](docs/guide/settings.md#界面语言)
 
-源码与安装包公开，版本说明和校验文件见 [GitHub Releases](https://github.com/Lee-xeo/Claude-Cage/releases)。从源码构建工作台需安装 `uv`，平台工具详见[构建说明](.github/CONTRIBUTING.md#工作台构建)。环境的要求、镜像来源与数据保留方式见[Debian 环境](docs/guide/guest-systems.md)。Intel Mac 的实验性开发构建见 [Intel Mac 开发说明](docs/intel-macos-development.md)。
+源码与安装包公开，版本说明和校验文件见 [GitHub Releases](https://github.com/Lee-xeo/Claude-Cage/releases)。从源码构建工作台需安装 `uv`，平台工具详见[构建说明](.github/CONTRIBUTING.md#工作台构建)。环境的要求、镜像来源与数据保留方式见[Debian 环境](docs/guide/guest-systems.md)。Intel Mac 的构建与验证见 [Intel Mac 说明](docs/intel-macos-development.md)。
 
 功能以所用构建为准，公开安装包的能力与验证范围以发行说明为准。
 
