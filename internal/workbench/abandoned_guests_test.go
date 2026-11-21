@@ -466,6 +466,27 @@ func TestSettingAsideRunningUbuntuEnvironmentChangesNothing(t *testing.T) {
 	}
 }
 
+// The programs started after the check, such as Debian's setup, take an
+// inherited LIMA_HOME for the user's own Lima home and refuse to run.
+func TestAbandonedVMCheckLeavesLimaHomeAlone(t *testing.T) {
+	s := testServer(t)
+	user := t.TempDir()
+	t.Setenv("LIMA_HOME", user)
+	if running, err := s.abandonedVMRunning(context.Background(), "base"); err != nil || running {
+		t.Fatal(running, err)
+	}
+	if got := os.Getenv("LIMA_HOME"); got != user {
+		t.Fatalf("LIMA_HOME left at %q", got)
+	}
+	os.Unsetenv("LIMA_HOME")
+	if running, err := s.abandonedVMRunning(context.Background(), "base"); err != nil || running {
+		t.Fatal(running, err)
+	}
+	if got, set := os.LookupEnv("LIMA_HOME"); set {
+		t.Fatalf("LIMA_HOME left at %q", got)
+	}
+}
+
 // An Ubuntu installation that already created its disk is set aside with
 // its record, which otherwise keeps every start refused.
 func TestSettingAsideStartedUbuntuInstallation(t *testing.T) {

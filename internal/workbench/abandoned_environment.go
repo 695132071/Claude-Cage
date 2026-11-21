@@ -52,11 +52,7 @@ func (s *Server) abandonedVMRunning(ctx context.Context, name string) (bool, err
 	if s.abandonedVMState != nil {
 		return s.abandonedVMState(ctx, name)
 	}
-	b, err := s.limaBackend()
-	if err != nil {
-		return false, err
-	}
-	inst, err := b.Get(ctx, name)
+	inst, err := vm.InstanceIn(ctx, s.deviceResetLimaHome(), name)
 	if errors.Is(err, vm.ErrNotFound) {
 		return false, nil
 	}
