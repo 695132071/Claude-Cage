@@ -23,6 +23,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
+	"github.com/sylvinus/agent-vm/internal/vm"
 )
 
 var loadConfig = cage.Load
@@ -284,7 +285,7 @@ func (s *Server) runCage(args ...string) error {
 			cmd.Dir = s.profile
 		}
 	}
-	cmd.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath)
+	cmd.Env = append(vm.ChildEnv(), cage.ConfigEnv+"="+s.configPath)
 	execution := s.jobs.execution()
 	if len(args) == 1 && args[0] == "setup" {
 		cmd.Env = append(cmd.Env, "CAGE_SETUP_PROGRESS=1")

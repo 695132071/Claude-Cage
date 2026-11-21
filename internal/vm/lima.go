@@ -100,6 +100,31 @@ func UserLimaHome() string {
 	return userLimaHome
 }
 
+// ChildEnv is this process's environment for another agent-vm process. The
+// LIMA_HOME NewLima set is for Lima's packages here only: a child would take
+// it for the user's own and refuse to share it with its VMs.
+func ChildEnv() []string {
+	limaHomeMu.Lock()
+	set, user := limaHomeSet, userLimaHome
+	limaHomeMu.Unlock()
+	env := os.Environ()
+	if set == "" {
+		return env
+	}
+	kept := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "LIMA_HOME" || runtime.GOOS == "windows" && strings.EqualFold(key, "LIMA_HOME") {
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	if user != "" {
+		kept = append(kept, "LIMA_HOME="+user)
+	}
+	return kept
+}
+
 // prepare writes the embedded share once, and points Lima's template store
 // at it. It refuses Lima's default.yaml and override.yaml, which Lima mixes
 // into every VM's config (shares, mount type...): agent-vm's VMs get what

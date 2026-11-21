@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -496,6 +497,47 @@ func TestUserLimaHome(t *testing.T) {
 	}
 	if got := UserLimaHome(); got != "" {
 		t.Errorf("unset: %q", got)
+	}
+}
+
+// A child agent-vm process sees the user's LIMA_HOME, not the one NewLima set.
+func TestChildEnvRestoresUserLimaHome(t *testing.T) {
+	oldSet, oldUser := limaHomeSet, userLimaHome
+	t.Cleanup(func() { limaHomeSet, userLimaHome = oldSet, oldUser })
+	homes := func(env []string) []string {
+		var found []string
+		for _, entry := range env {
+			if key, value, _ := strings.Cut(entry, "="); strings.EqualFold(key, "LIMA_HOME") {
+				found = append(found, value)
+			}
+		}
+		return found
+	}
+	ours := t.TempDir()
+
+	limaHomeSet, userLimaHome = "", ""
+	user := t.TempDir()
+	t.Setenv("LIMA_HOME", user)
+	if got := homes(ChildEnv()); !slices.Equal(got, []string{user}) {
+		t.Errorf("before NewLima: %q", got)
+	}
+	if _, err := NewLima(ours, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if got := homes(ChildEnv()); !slices.Equal(got, []string{user}) {
+		t.Errorf("with the user's LIMA_HOME: %q, want %q", got, user)
+	}
+
+	limaHomeSet, userLimaHome = "", ""
+	os.Unsetenv("LIMA_HOME")
+	if _, err := NewLima(ours, t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	if os.Getenv("LIMA_HOME") != ours {
+		t.Fatal("NewLima did not set LIMA_HOME")
+	}
+	if got := homes(ChildEnv()); len(got) != 0 {
+		t.Errorf("without the user's LIMA_HOME: %q", got)
 	}
 }
 
