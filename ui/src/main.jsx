@@ -1354,7 +1354,7 @@ function App() {
     viewingAccountDesktop,
     terminalChoice,
   ]);
-  const project = projectName(contentWorkspace, groups, tr("新项目"));
+  const project = tr(projectName(contentWorkspace, groups, tr("新项目")));
   const tabLayoutKey = status?.environment_identity_directory || status?.environment_directory || status?.workspace;
   const metadata = { ...(savedTabs[tabLayoutKey] || {}), ...(privateTabMetadata[tabLayoutKey] || {}) };
   for (const tab of tabs) {
@@ -1378,7 +1378,7 @@ function App() {
         )
       : dualBrowser ? browserTabs.filter(tab => current.id === rightId ? tab.id === rightId : tab.id !== rightId) : browserTabs;
   const renameTab = (tab) =>
-    setRename({ id: tab.id, title: tabName({ ...tab, incognito: false }, metadata, project) });
+    setRename({ id: tab.id, title: tabName({ ...tab, incognito: false }, metadata, project, tr) });
   const updateSharedMetadata = async (tab, changes) => {
     const updated = await api("/terminals/" + tab.sessionId + "/metadata", changes);
     setTabs(list => list.map(item => item.id === tab.id ? {
@@ -1472,7 +1472,7 @@ function App() {
     const detail = tab?.terminalKind === "claude-login" ? tr("登录 · {0}", account || tr("新账号"))
       : account ? tab.claude_account_source === "default" ? tr("Claude · {0}（启动时账号）", account) : `Claude · ${account}` : "";
     const location = split && tab ? `heading-${tab.id}` : "heading";
-    return <TerminalHeader tab={tab} project={projectName(path, groups, tr("新项目"))} metadata={metadata}
+    return <TerminalHeader tab={tab} project={tr(projectName(path, groups, tr("新项目")))} metadata={metadata}
       contentWorkspace={path} terminalDetail={detail} terminalDetailHint={tab?.claude_account_source === "default"
         ? "此终端按启动时的普通终端登录标记。若普通终端已换号，请重新打开工作会话确认身份。" : detail}
       busy={busy} onHome={() => setHome(true)}
@@ -2005,7 +2005,7 @@ function App() {
                         <ul className="project-connection-errors">
                           {status.project_errors.map(({ path, message, recovery }) => (
                             <li key={path}>
-                              <strong>{projectName(path, groups)}</strong>
+                              <strong>{tr(projectName(path, groups))}</strong>
                               <span className="project-error-path">{path}</span>
                               <p>{tr(message)}</p>
                               <ProjectRecovery recovery={recovery} disabled={!status.ready || busy}
@@ -2013,7 +2013,7 @@ function App() {
                             </li>
                           ))}
                         </ul>
-                      ) : <p>{status.project_error}</p>}
+                      ) : <p>{tr(status.project_error)}</p>}
                     </div>
                   )}
                   {status.abandoned_guests?.length > 0 && (
@@ -2283,7 +2283,7 @@ function App() {
           }
         >
           <div className="modal-body">
-            <p>{transfer.message}</p>
+            <p>{tr(transfer.message)}</p>
             <textarea
               aria-label={tr("待传递文本")}
               className="transfer-text"
