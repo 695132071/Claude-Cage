@@ -116,6 +116,13 @@ func (s *Server) environmentStorage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		location, err := cage.GetStorageLocation(s.profile)
+		if errors.Is(err, cage.ErrStorageMissing) {
+			jsonReply(w, struct {
+				cage.StorageLocation
+				Error string `json:"error"`
+			}{location, err.Error()})
+			return
+		}
 		if err != nil {
 			if errors.Is(err, cage.ErrStorageRuntimeRecovery) {
 				s.failStorageRecovery(err)
@@ -147,6 +154,7 @@ func (s *Server) environmentStorage(w http.ResponseWriter, r *http.Request) {
 		Directory string `json:"directory"`
 		Previous  string `json:"previous"`
 		Migrate   bool   `json:"migrate"`
+		Missing   bool   `json:"missing"`
 	}
 	if !readJSON(w, r, &input) {
 		return
@@ -156,10 +164,10 @@ func (s *Server) environmentStorage(w http.ResponseWriter, r *http.Request) {
 			return s.failStorageRecovery(err)
 		}
 		current, err := cage.GetStorageLocation(s.profile)
-		if err != nil {
+		if err != nil && !(input.Missing && errors.Is(err, cage.ErrStorageMissing)) {
 			return err
 		}
-		if current.Directory != input.Previous || current.HasEnvironment != input.Migrate {
+		if current.Directory != input.Previous || current.HasEnvironment != input.Migrate || current.Missing != input.Missing {
 			return errors.New("环境或存储位置已改变，请重新打开设置后再选择")
 		}
 		if err = cage.ValidateStorageTarget(s.profile, input.Directory); err != nil {
