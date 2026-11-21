@@ -121,12 +121,15 @@ func BindInterface(data []byte, name string) ([]byte, error) {
 	}
 	config["interface-name"] = name
 	// Older imports may carry a node-level binding, which overrides the global.
+	// This pass writes the runtime copy of every node, so nodes imported by
+	// earlier versions also get their SSH host key algorithms here.
 	if nodes, ok := config["proxies"].([]any); ok {
 		for _, item := range nodes {
 			if node, ok := item.(map[string]any); ok {
 				if _, bound := node["interface-name"]; bound {
 					node["interface-name"] = name
 				}
+				pinSSHHostKeyAlgorithms(node)
 			}
 		}
 	}
