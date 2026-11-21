@@ -57,7 +57,7 @@ Hysteria2 节点可使用 `mport` 指定端口跳跃范围、`pinSHA256` 指定�
 
 手动添加 SSH 节点时，可在“服务器公钥”中填写可信公钥，每行一条；留空时不校验服务器身份。
 
-SSH 节点（`type: ssh`）可以把自己的 VPS 直接作为固定出口，服务器上只需开启 SSH，无需另外部署代理服务。可用 `password` 或 `private-key` 认证；`private-key` 须直接填写 PEM 私钥内容（含 `-----BEGIN ... PRIVATE KEY-----`），引用本机私钥文件路径的节点会被跳过，加密私钥可配合 `private-key-passphrase`。建议用 `host-key` 固定服务器公钥（`ssh-keyscan` 输出中的 `ssh-ed25519 AAAA...` 部分），未填写时核心不校验服务器身份。SSH 节点仅转发 TCP。示例：
+SSH 节点（`type: ssh`）可以把自己的 VPS 直接作为固定出口，服务器上只需开启 SSH，无需另外部署代理服务。可用 `password` 或 `private-key` 认证；`private-key` 须直接填写 PEM 私钥内容（含 `-----BEGIN ... PRIVATE KEY-----`），引用本机私钥文件路径的节点会被跳过，加密私钥可配合 `private-key-passphrase`。建议用 `host-key` 固定服务器公钥（`ssh-keyscan` 输出中的 `ssh-ed25519 AAAA...` 部分），未填写时核心不校验服务器身份。未写 `host-key-algorithms` 时，Cage 按所填公钥的类型限定协商算法，服务器同时启用多种主机密钥时也会使用你固定的那一种；显式写了 `host-key-algorithms` 则按你写的为准。SSH 节点仅转发 TCP。示例：
 
 ```yaml
 proxies:
