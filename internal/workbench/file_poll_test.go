@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -65,6 +66,9 @@ func TestDesktopFilePollDistinguishesUnopenedAndBrokenDesktop(t *testing.T) {
 }
 
 func TestDesktopFilesPollAllMergesDefaultAndAccountDesktops(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX Unix-socket poll script runs in Linux guest")
+	}
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash unavailable")
@@ -176,6 +180,51 @@ curl() {
 	cmd.Stdin = strings.NewReader("DEFAULT_STATE=failed\nACCOUNT_STATE=active\n" + fixture + script)
 	if out, err := cmd.CombinedOutput(); err == nil {
 		t.Fatalf("expected failed default service to error, got: %s", out)
+	}
+}
+
+func TestMergeDesktopFilePollAndSocketValidation(t *testing.T) {
+	accountID := strings.Repeat("a", 24)
+	const defaultUploadID = "11111111-1111-4111-8111-111111111111"
+	const accountUploadID = "22222222-2222-4222-8222-222222222222"
+	const accountOpenID = "33333333-3333-4333-8333-333333333333"
+
+	s := testServer(t)
+	raw := map[string]any{
+		"sources": map[string]any{
+			accountID: map[string]any{
+				"available": true,
+				"uploads":   []any{map[string]any{"id": accountUploadID, "target": "desktop", "directory": true}},
+				"downloads": []any{},
+				"opens":     []any{map[string]any{"id": accountOpenID}},
+			},
+			"default": map[string]any{
+				"available": true,
+				"uploads":   []any{map[string]any{"id": defaultUploadID, "target": "desktop"}},
+				"downloads": []any{},
+				"opens":     []any{},
+			},
+		},
+	}
+	merged := s.mergeDesktopFilePoll(raw)
+	if merged["available"] != true {
+		t.Fatalf("expected available=true, got %#v", merged)
+	}
+	uploads := merged["uploads"].([]any)
+	if len(uploads) != 2 {
+		t.Fatalf("expected 2 merged uploads, got %#v", uploads)
+	}
+	if uploads[0].(map[string]any)["desktop"] != "default" || uploads[1].(map[string]any)["desktop"] != accountID {
+		t.Fatalf("unexpected desktop tags: %#v", uploads)
+	}
+	if got := s.desktopFileOwner(defaultUploadID); got != "" {
+		t.Fatalf("expected default owner empty, got %q", got)
+	}
+	if got := s.desktopFileOwner(accountUploadID); got != accountID {
+		t.Fatalf("expected owner %q, got %q", accountID, got)
+	}
+	if got := s.desktopFileOwner(accountOpenID); got != accountID {
+		t.Fatalf("expected open owner %q, got %q", accountID, got)
 	}
 
 	// Verify desktopFileSocket validation.
