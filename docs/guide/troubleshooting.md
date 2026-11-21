@@ -19,6 +19,7 @@ keywords: 错误 失败 白屏 断网 137 OOM 代理 账号 配对 SSH 损坏 �
 | Mac 显示损坏、无法验证或不支持 | 核对 Apple Silicon、macOS 14+，重新下载完整 DMG，检查该版签名、公证和校验说明。保留系统原文，不关闭系统验证来掩盖问题。 |
 | Windows 未知发布者 | 确认是否为明确标注的未签名预览，阅读对应发行说明；不能把它当作已签名发行。 |
 | Windows 启动虚拟机失败 | 检查 BIOS/UEFI 虚拟化和“Windows 虚拟机监控程序平台”，启用后重启。保留 WHPX 错误原文供定位。 |
+| 用户目录含空格，启动提示内部传输目录无法共享 | Lima 无法共享含空格的路径。把整个配置目录移到不含空格的路径并设置 `CLAUDE_CAGE_CONFIG`，步骤见[用户目录含空格时环境无法启动](https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/troubleshooting.md#用户目录含空格时环境无法启动)。 |
 | Linux 无法启动 | 确认 x86_64、支持发行版与 KVM 权限，使用 APT 补齐安装依赖。 |
 | 首页提示 macOS / Windows 客机已不再支持 | 当前版本只使用 Debian 13 环境。旧系统的磁盘和文件原样留在电脑上，Cage 不会删除；处理方式见[早期版本创建的其他系统](guest-systems.md#早期版本创建的其他系统)。 |
 | 缺少代理核心 | 重装对应平台完整应用，不要只复制单个命令行文件。 |
