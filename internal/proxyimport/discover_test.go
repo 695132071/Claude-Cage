@@ -45,7 +45,7 @@ items:
 `)
 	writeConfig(t, root, "profiles/active.yaml", testNode)
 	writeConfig(t, root, "profiles/script.js", `throw Error('must never execute')`)
-	loc := []Location{{"Clash Verge Rev", root, Verge}}
+	loc := []Location{{"Clash Verge Rev", root, Verge, ""}}
 	configs := Scan(loc, []byte("session"))
 	if len(configs) != 2 || configs[0].Nodes != 2 || configs[0].Warning == "" || configs[0].Error != "" || !configs[0].Current || !configs[1].Refreshable {
 		t.Fatalf("unexpected metadata: %s", mustJSON(t, configs))
@@ -105,7 +105,7 @@ items:
 `)
 	writeConfig(t, root, "profiles/script.yaml", testNode)
 	writeConfig(t, filepath.Dir(root), "outside.yaml", testNode)
-	configs := Scan([]Location{{"Clash Party", root, Party}}, []byte("session"))
+	configs := Scan([]Location{{"Clash Party", root, Party, ""}}, []byte("session"))
 	if len(configs) != 3 {
 		t.Fatalf("unexpected configs: %s", mustJSON(t, configs))
 	}
@@ -144,7 +144,7 @@ func TestScanRejectsEscapesAndPreservesSSRFields(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	writeConfig(t, outside, "secret.yaml", testNode)
 	if err := os.Symlink(filepath.Join(outside, "secret.yaml"), filepath.Join(root, "escape.yaml")); err == nil {
-		entries := Scan([]Location{{"Mihomo", root, Plain}}, []byte("key"))
+		entries := Scan([]Location{{"Mihomo", root, Plain, ""}}, []byte("key"))
 		if len(entries) != 1 || entries[0].Nodes != 0 || entries[0].Error == "" || len(entries[0].Data) != 0 {
 			t.Fatal("followed outside symlink")
 		}
@@ -153,7 +153,7 @@ func TestScanRejectsEscapesAndPreservesSSRFields(t *testing.T) {
 		t.Fatal("accepted parent traversal")
 	}
 	writeConfig(t, root, "gui-config.json", `{"localPort":8080,"configs":[{"server":"ssr.example","server_port":443,"password":"ssr-secret","method":"aes-256-cfb","protocol":"auth_aes128_md5","protocolparam":"user:secret","obfs":"tls1.2_ticket_auth","obfsparam":"cdn.example","remarks_base64":"U1NSIG5vZGU"}]}`)
-	entries := Scan([]Location{{"ShadowsocksR", root, Plain}}, []byte("key"))
+	entries := Scan([]Location{{"ShadowsocksR", root, Plain, ""}}, []byte("key"))
 	var entry Config
 	for _, e := range entries {
 		if e.Name == "gui-config.json" {
@@ -264,8 +264,8 @@ func TestScanFlClashForOixCloudEncryptedProfiles(t *testing.T) {
 	writeConfig(t, clashRoot, "config.yaml", testNode)
 
 	locs := []Location{
-		{"FlClash for oixCloud", oixRoot, OixCloud},
-		{"Clash / ClashX", clashRoot, Plain},
+		{"FlClash for oixCloud", oixRoot, OixCloud, ""},
+		{"Clash / ClashX", clashRoot, Plain, ""},
 	}
 	configs := Scan(locs, []byte("session"))
 	if len(configs) != 2 {
@@ -299,7 +299,7 @@ func TestScanFlClashForOixCloudEncryptedProfiles(t *testing.T) {
 	// If a plaintext YAML with nodes is present alongside encrypted profiles,
 	// it remains importable while the encrypted profiles still surface cleanly.
 	writeConfig(t, oixRoot, "profiles/plain.yaml", testNode)
-	withPlain := Scan([]Location{{"FlClash for oixCloud", oixRoot, OixCloud}}, []byte("session"))
+	withPlain := Scan([]Location{{"FlClash for oixCloud", oixRoot, OixCloud, ""}}, []byte("session"))
 	if len(withPlain) != 2 || withPlain[0].Error != "" || withPlain[0].Nodes != 1 || withPlain[1].Name != "加密配置" || withPlain[1].Error == "" {
 		t.Fatalf("mixed plaintext and encrypted profiles unexpected: %s", mustJSON(t, withPlain))
 	}
@@ -309,7 +309,7 @@ func TestScanFlClashForOixCloudEncryptedProfiles(t *testing.T) {
 	outsideProfiles := t.TempDir()
 	writeConfig(t, outsideProfiles, "secret.yaml", ageBinary)
 	if err := os.Symlink(outsideProfiles, filepath.Join(escapeRoot, "profiles")); err == nil {
-		escaped := Scan([]Location{{"FlClash for oixCloud", escapeRoot, OixCloud}}, []byte("session"))
+		escaped := Scan([]Location{{"FlClash for oixCloud", escapeRoot, OixCloud, ""}}, []byte("session"))
 		if len(escaped) != 0 {
 			t.Fatalf("followed outside profiles symlink: %s", mustJSON(t, escaped))
 		}
@@ -319,7 +319,7 @@ func TestScanFlClashForOixCloudEncryptedProfiles(t *testing.T) {
 	// encrypted reason rather than a generic parse error.
 	plainRoot := t.TempDir()
 	writeConfig(t, plainRoot, "locked.yaml", ageBinary)
-	plain := Scan([]Location{{"FlClash", plainRoot, Plain}}, []byte("session"))
+	plain := Scan([]Location{{"FlClash", plainRoot, Plain, ""}}, []byte("session"))
 	if len(plain) != 1 || !strings.Contains(plain[0].Error, "age") || !strings.Contains(plain[0].Error, "添加来源") {
 		t.Fatalf("standard client age file did not report encrypted reason: %s", mustJSON(t, plain))
 	}
