@@ -335,7 +335,14 @@ Function CheckDestination
   IfFileExists "$INSTDIR\Cage.install-id" existing
   ; IfFileExists with a wildcard also matches an empty directory.
   ${DirState} "$INSTDIR" $0
-  StrCmp $0 1 foreign done
+  ${If} $0 == 1
+    Goto foreign
+  ${EndIf}
+  ${If} $0 == -1
+  ${AndIf} ${FileExists} "$INSTDIR"
+    Goto foreign
+  ${EndIf}
+  Goto done
   existing:
     FileOpen $0 "$INSTDIR\Cage.install-id" r
     FileRead $0 $1
@@ -505,7 +512,10 @@ Section "Cage" Main
   !insertmacro InstallPhase "publishing_application"
   ClearErrors
   ${If} $BackupDir != ""
+  ${OrIf} ${FileExists} "$INSTDIR\*.*"
     ; The kept installation folder receives the staged entries one by one.
+    ; A pre-created empty folder whose handle is held by another process
+    ; stays in place after RMDir and is populated the same way.
     nsExec::ExecToStack '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\installation-files.ps1" -Operation attach -Target "$INSTDIR" -Source "$StageDir" $DiagnosticArguments'
     Pop $0
     Pop $1

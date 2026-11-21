@@ -270,8 +270,7 @@ func Start(ctx context.Context, profile string, s Store) error {
 		return err
 	}
 	path := filepath.Join(Dir(profile), "config.yaml")
-	bound, _ := BoundInterface(path)
-	if bound == name && Running(ctx, profile, s) {
+	if BindingMatches(path, name) && Running(ctx, profile, s) {
 		return nil
 	}
 	if err := Validate(ctx, profile, s); err != nil {

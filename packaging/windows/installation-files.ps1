@@ -190,6 +190,20 @@ function Save-Transfer($Transfer) {
     } finally { if (Test-Path -LiteralPath $temporary) { [IO.File]::Delete($temporary) } }
 }
 
+function Test-HasExistingContent([string]$Path) {
+    if (!$Path) { return $false }
+    $item = $null
+    try { $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop }
+    catch [Management.Automation.ItemNotFoundException], [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
+        return $false
+    } catch {
+        return $true
+    }
+    if (!$item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) { return $true }
+    try { return @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction Stop).Count -gt 0 }
+    catch { return $true }
+}
+
 function Complete-Transfer {
     $transfer = Get-Content -LiteralPath $Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($transfer.kind -ne 'cage-installation' -or !(Test-Path -LiteralPath (Join-Path $Target $identityName))) { throw '安装目录尚未恢复，事务回执已保留。' }
@@ -388,7 +402,7 @@ if ($Operation -eq 'prepare') {
     $diagnosticStep = 'abandoning_first_installation'
     $transfer = Get-Content -LiteralPath $Receipt -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($transfer.kind -ne 'cage-installation' -or $transfer.backupPath -or @($transfer.moves).Count -or @($transfer.files).Count -or
-        ($transfer.installPath -and (Test-Path -LiteralPath $transfer.installPath)) -or (Test-Path -LiteralPath $Target)) {
+        @($transfer.directories).Count -or (Test-HasExistingContent $transfer.installPath) -or (Test-HasExistingContent $Target)) {
         throw '安装事务涉及已有文件，回执已保留待核对。'
     }
     $receiptStream = Open-ReadLocked $Receipt

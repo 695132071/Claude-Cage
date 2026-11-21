@@ -75,6 +75,21 @@ export CLAUDE_CONFIG_DIR
 CLAUDE_CONFIG_DIR=$(python3 -I -c 'import runpy,sys;print(runpy.run_path("/usr/local/bin/client_runtime.py")["path"](sys.argv[1]))' "$config")
 export HOME="$base/home" XDG_RUNTIME_DIR="$RUNTIME_DIRECTORY"
 unset RUNTIME_DIRECTORY INVOCATION_ID JOURNAL_STREAM SYSTEMD_EXEC_PID
+rm -f "$XDG_RUNTIME_DIR/stopping"
+app=
+# shellcheck disable=SC2329
+on_term() {
+  if [[ -n "$app" ]]; then
+    kill -TERM "$app" 2>/dev/null || :
+  fi
+  if [[ -f "$XDG_RUNTIME_DIR/stopping" ]]; then
+    rm -f "$XDG_RUNTIME_DIR/stopping"
+    exit 0
+  fi
+  trap - TERM
+  kill -TERM "$$"
+}
+trap on_term TERM
 export PATH=/usr/bin:/bin XDG_CURRENT_DESKTOP=Openbox
 mkdir -p "$HOME" "$base/data" "$HOME/.local/share/applications" "$HOME/.config"
 # Give the login browser the same profile, network namespace and callback
@@ -177,14 +192,38 @@ cd "$HOME"
 # private, ephemeral runtime directory; no callback or cookie is inspected.
 input_session=()
 if [[ -x /usr/local/bin/cage-input-session ]]; then input_session=(/usr/local/bin/cage-input-session); fi
-DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' "${input_session[@]}" claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret --xdg-portal-required-version=3 > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
+DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' ${input_session[@]+"${input_session[@]}"} claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret --xdg-portal-required-version=3 > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
 app=$!
 printf '%s\n' "$app" > "$XDG_RUNTIME_DIR/app-pid"
 for _ in {1..250}; do
-  kill -0 "$app"
-  if xprop -root _NET_CLIENT_LIST | grep -q '0x[1-9a-f]'; then NOTIFY_SOCKET="$notify" systemd-notify --ready; wait "$app"; exit $?; fi
+  if ! kill -0 "$app" 2>/dev/null; then
+    status=0
+    wait "$app" || status=$?
+    if [[ -f "$XDG_RUNTIME_DIR/stopping" ]]; then
+      rm -f "$XDG_RUNTIME_DIR/stopping"
+      exit 0
+    fi
+    if [[ "$status" -ne 0 ]]; then
+      exit "$status"
+    fi
+    exit 1
+  fi
+  if xprop -root _NET_CLIENT_LIST 2>/dev/null | grep -q '0x[1-9a-f]'; then
+    NOTIFY_SOCKET="$notify" systemd-notify --ready
+    status=0
+    wait "$app" || status=$?
+    if [[ -f "$XDG_RUNTIME_DIR/stopping" ]]; then
+      rm -f "$XDG_RUNTIME_DIR/stopping"
+      exit 0
+    fi
+    exit "$status"
+  fi
   sleep .1
 done
+if [[ -f "$XDG_RUNTIME_DIR/stopping" ]]; then
+  rm -f "$XDG_RUNTIME_DIR/stopping"
+  exit 0
+fi
 exit 1
 SESSION
 user=$(id -un)
@@ -192,7 +231,7 @@ sudo systemd-run --quiet --no-block --collect --unit="$unit" --service-type=noti
   --property="User=$user" --property="RuntimeDirectory=$unit" --property=RuntimeDirectoryMode=0700 \
   --property=NotifyAccess=all --property=TimeoutStartSec=45 --property=TimeoutStopSec=8 \
   --property="ExecStop=/bin/bash /usr/local/lib/desktop-finish.sh $runtime $unit.service" \
-  --property=KillMode=control-group --property=PrivateTmp=yes "${props[@]}" \
+  --property=KillMode=control-group --property=PrivateTmp=yes ${props[@]+"${props[@]}"} \
   /usr/bin/dbus-run-session -- /bin/bash "$program" "$base" "$code"
 ok=
 trap 'if [[ -z "$ok" ]]; then sudo systemctl stop "$unit.service" >/dev/null 2>&1 || :; fi; rm -f -- "$program"' EXIT
