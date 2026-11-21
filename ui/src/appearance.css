@@ -64,21 +64,27 @@ button.primary:hover:not(:disabled) {
   display: flex;
   padding: 3px;
   background: var(--chrome);
-  border-radius: 9px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
   gap: 2px;
 }
 .appearance-mode button {
-  padding: 7px 10px;
+  padding: 6px 12px;
   border: 0;
+  border-radius: 7px;
   font-size: 0.857rem;
   min-height: 30px;
   background: transparent;
   color: var(--muted);
 }
+.appearance-mode button:hover:not(:disabled):not([aria-pressed="true"]) {
+  color: var(--strong);
+}
 .appearance-mode button[aria-pressed="true"] {
   background: var(--paper);
   color: var(--strong);
-  box-shadow: 0 1px 4px #00000012;
+  font-weight: 550;
+  box-shadow: var(--shadow-xs);
 }
 .theme-card-grid {
   display: grid;
@@ -89,12 +95,17 @@ button.primary:hover:not(:disabled) {
 }
 .appearance-theme-card {
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: 14px;
   overflow: hidden;
   background: var(--paper);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out);
+}
+.appearance-theme-card:hover {
+  border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
 }
 .appearance-theme-card.current {
-  border-color: var(--focus);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm);
 }
 .theme-card-heading {
   display: flex;
@@ -238,9 +249,11 @@ button.primary:hover:not(:disabled) {
   height: 20px;
   margin: 0;
   border-radius: 12px;
-  background: var(--line);
+  background: color-mix(in srgb, var(--muted) 32%, var(--line));
   position: relative;
   flex: none;
+  cursor: var(--control-cursor, default);
+  transition: background-color 160ms var(--ease-out);
 }
 .appearance-switch input:after {
   content: "";
@@ -251,7 +264,8 @@ button.primary:hover:not(:disabled) {
   left: 3px;
   background: var(--paper);
   border-radius: 50%;
-  transition: transform 120ms;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.22);
+  transition: transform 160ms var(--ease-out);
 }
 .appearance-switch input:checked {
   background: var(--accent);

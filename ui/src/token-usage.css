@@ -7,16 +7,18 @@
 .token-filters { display: flex; flex-wrap: wrap; gap: 16px; align-items: start; margin: 24px 0; }
 .token-filters label { display: flex; flex-direction: column; gap: 8px; min-width: 128px; max-width: 100%; font-size: .929rem; color: var(--muted); }
 .token-filters .inline-select-trigger { min-height: 36px; min-width: 128px; max-width: 272px; text-align: start; }
-.token-totals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 24px; padding: 0 0 24px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
-.token-totals dt { color: var(--muted); font-size: .929rem; margin-bottom: 8px; }
-.token-totals dd { margin: 0; font-size: 1.714rem; color: var(--strong); font-variant-numeric: tabular-nums; }
-.token-totals dd small { font-size: .929rem; color: var(--muted); }
-.token-section-heading h3 { margin: 0; color: var(--strong); font-size: 1.143rem; font-weight: 500; }
+.token-totals { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 14px; padding: 0 0 24px; margin: 0 0 24px; border-bottom: 1px solid var(--line); }
+.token-totals > div { padding: 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--chrome); }
+.token-totals dt { color: var(--muted); font-size: .857rem; margin-bottom: 6px; }
+.token-totals dd { margin: 0; font-size: 1.643rem; font-weight: 600; color: var(--strong); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.token-totals dd small { font-size: .857rem; font-weight: 400; color: var(--muted); }
+.token-section-heading h3 { margin: 0; color: var(--strong); font-size: 1.143rem; font-weight: 560; }
 .token-section-heading > span { color: var(--muted); font-size: .929rem; }
 .token-heat-scroll { overflow-x: auto; padding: 16px 2px 8px; }
 .token-heatmap { display: grid; grid-template-columns: repeat(var(--token-weeks),minmax(10px,1fr)); grid-template-rows: 24px repeat(7,minmax(10px,1fr)); gap: 4px; min-width: 680px; }
-.token-month { grid-row: 1; white-space: nowrap; font-size: .929rem; color: var(--muted); }
-.token-cell { display: block; min-height: 0; min-width: 0; width: 100%; aspect-ratio: 1; border: 1px solid transparent; border-radius: 3px; padding: 0; background: var(--chrome-dark); }
+.token-month { grid-row: 1; white-space: nowrap; font-size: .857rem; color: var(--muted); }
+.token-cell { display: block; min-height: 0; min-width: 0; width: 100%; aspect-ratio: 1; border: 1px solid transparent; border-radius: 3px; padding: 0; background: var(--chrome-dark); transition: transform 110ms var(--ease-out), border-color 110ms var(--ease-out); }
+.token-cell:not(.token-future):hover { transform: scale(1.2); border-color: var(--strong); z-index: 1; position: relative; }
 .token-cell.level--1 { background: var(--chrome); border-color: var(--line); }
 .token-cell.level-0 { background: var(--chrome-dark); border-color: var(--focus); }
 .token-cell.level-1 { background: color-mix(in srgb,var(--success) 20%,var(--paper)); }
@@ -41,9 +43,9 @@
 .token-client-track { height: 4px; background: var(--chrome-dark); border-radius: 3px; margin-top: 4px; }
 .token-client-track span { display: block; height: 100%; background: var(--success); border-radius: inherit; }
 .token-coverage { font-size: .929rem; color: var(--muted); line-height: 1.7; margin: 16px 0 0; }
-.token-segments { display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: var(--chrome); }
-.token-segments button { border: none; background: transparent; color: var(--muted); padding: 6px 12px; min-height: 32px; font-size: .929rem; }
-.token-segments button[aria-pressed="true"] { background: var(--paper); color: var(--strong); box-shadow: 0 1px 4px #00000012; }
+.token-segments { display: flex; gap: 3px; padding: 3px; border: 1px solid var(--line-subtle); border-radius: 9px; background: var(--chrome); }
+.token-segments button { border: none; border-radius: 6px; background: transparent; color: var(--muted); padding: 5px 12px; min-height: 30px; font-size: .857rem; }
+.token-segments button[aria-pressed="true"] { background: var(--paper); color: var(--strong); font-weight: 550; box-shadow: var(--shadow-xs); }
 .token-curve-scroll { overflow-x: auto; margin-top: 16px; }
 .token-curve { display: block; width: 100%; min-width: 800px; overflow: visible; }
 .token-curve text { font-family: inherit; fill: var(--muted); font-size: 16px; }
