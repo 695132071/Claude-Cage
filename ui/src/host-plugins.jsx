@@ -8,7 +8,8 @@ import { runtimeURL } from "./client-context.mjs";
 import { useWindowVisibility } from "./window-visibility";
 import { sameState } from "./workspace-state.mjs";
 import "./host-plugins.css";
-import { translate, useTranslation } from "./interface-language.mjs";
+import { activeInterfaceLanguage, translate, useTranslation } from "./interface-language.mjs";
+import { formatMarketAuthor, localizedPluginText } from "./plugin-i18n.mjs";
 
 const permissions = {
   files: { title: "读写文件", text: "读取或修改这台电脑上的文件。", icon: FolderOpen },
@@ -33,9 +34,13 @@ function missingProgramGuide(program) {
 }
 
 const words = name => name.split(/[-_\s]+/).filter(Boolean);
-export const pluginTitle = plugin => plugin.built_in && builtIn[plugin.name] && translate(builtIn[plugin.name].title) || plugin.display_name
+export const pluginTitle = (plugin, fallbackSource = null) => plugin.built_in && builtIn[plugin.name] && translate(builtIn[plugin.name].title)
+  || localizedPluginText(plugin, "displayName", activeInterfaceLanguage(), fallbackSource)
+  || plugin.display_name
   || words(plugin.name).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || plugin.name;
-const pluginText = plugin => plugin.built_in && builtIn[plugin.name] && translate(builtIn[plugin.name].description) || plugin.description || translate("插件没有提供说明");
+const pluginText = (plugin, fallbackSource = null) => plugin.built_in && builtIn[plugin.name] && translate(builtIn[plugin.name].description)
+  || localizedPluginText(plugin, "description", activeInterfaceLanguage(), fallbackSource)
+  || plugin.description || translate("插件没有提供说明");
 const permissionText = list => list?.length ? list.map(name => permissions[name]?.title ? translate(permissions[name].title) : name).join(translate("、")) : translate("未声明任何权限");
 // The app explains in problem when a plugin needs a newer app: a guest plugin,
 // an unmet engines range or more than one MCP server. Otherwise an unsupported
@@ -165,6 +170,7 @@ export function pluginEntries(model) {
 
 function entryInfo(entry, view) {
   const item = entry.plugin || entry.offer;
+  const fallback = entry.listing || entry.offer;
   const plugin = entry.plugin;
   let state = { tone: "", label: "可安装" };
   if (plugin) {
@@ -176,7 +182,7 @@ function entryInfo(entry, view) {
       : plugin.loaded ? { tone: "online", label: "运行中" }
       : view.running ? { tone: "", label: "未加载" } : { tone: "waiting", label: "等待启动" };
   } else if (!item.supported) state = { tone: "problem", label: unsupportedLabel(item) };
-  return { item, title: pluginTitle(item), text: plugin?.problem || pluginText(item), version: item.version, state };
+  return { item, title: pluginTitle(item, fallback), text: plugin?.problem || pluginText(item, fallback), version: item.version, state };
 }
 
 export function pluginPageTitle(model, page) {
@@ -184,7 +190,7 @@ export function pluginPageTitle(model, page) {
   if (page.kind !== "plugin") return translate("插件设置");
   const { installed, available } = pluginEntries(model);
   const entry = [...installed, ...available].find(item => item.name === page.name);
-  return entry ? pluginTitle(entry.plugin || entry.offer) : pluginTitle({ name: page.name });
+  return entry ? pluginTitle(entry.plugin || entry.offer, entry.listing || entry.offer) : pluginTitle({ name: page.name });
 }
 
 export function PluginIcon({ name, src, builtIn: isBuiltIn, size: pixels = 36 }) {
@@ -316,8 +322,18 @@ const matches = (entry, query) => {
   const needle = query.trim().toLowerCase();
   if (!needle) return true;
   const item = entry.plugin || entry.offer;
-  const categories = categoriesOf(entry.offer || entry.listing || item).map(name => categoryNames[name]);
-  return [entry.name, pluginTitle(item), pluginText(item), ...categories].some(text => text.toLowerCase().includes(needle));
+  const fallback = entry.listing || entry.offer;
+  const categories = categoriesOf(entry.offer || entry.listing || item).map(name => translate(categoryNames[name]));
+  const author = (entry.offer || entry.listing)?.author?.name || "";
+  return [
+    entry.name,
+    pluginTitle(item, fallback),
+    pluginText(item, fallback),
+    item.display_name || "",
+    item.description || "",
+    author,
+    ...categories,
+  ].some(text => text.toLowerCase().includes(needle));
 };
 
 export function HostPluginsSidebar({ visible, model, page, onPage, onBack, onConfirm }) {
@@ -397,9 +413,7 @@ export function HostPluginsSidebar({ visible, model, page, onPage, onBack, onCon
 }
 
 function marketByline(item) {
-  const name = item.author?.name?.trim();
-  if (!name) return translate("作者未注明");
-  return item.author.official ? translate("Cage 官方 · {0}", name) : translate("社区作者 · {0}", name);
+  return formatMarketAuthor(item?.author, translate);
 }
 
 function MarketCard({ entry, view, busy, onOpen, onInstall }) {
@@ -702,7 +716,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             {plugin && <StateChip state={info.state} />}
             <PurposeTags item={plugin || offer} />
           </div>
-          <p>{pluginText(plugin || offer)}</p>
+          <p>{pluginText(plugin || offer, listing)}</p>
           <div className="plugin-hero-actions">
             {plugin && <label className={`plugin-enable ${on ? "on" : ""}`}>
               <span className="plugin-switch small">

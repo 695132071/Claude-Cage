@@ -22,11 +22,12 @@ import (
 
 // hostPluginView is one plugin as the plugin page shows it.
 type hostPluginView struct {
-	Name        string   `json:"name"`
-	DisplayName string   `json:"display_name,omitempty"`
-	Version     string   `json:"version,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Permissions []string `json:"permissions"`
+	Name        string                              `json:"name"`
+	DisplayName string                              `json:"display_name,omitempty"`
+	Version     string                              `json:"version,omitempty"`
+	Description string                              `json:"description,omitempty"`
+	I18n        map[string]hostbridge.LocalizedText `json:"i18n,omitempty"`
+	Permissions []string                            `json:"permissions"`
 	// Categories are the plugin's market sections this application knows.
 	Categories []string `json:"categories,omitempty"`
 	// Kind is host or guest: where the plugin's programs run.
@@ -188,6 +189,7 @@ func (s *Server) hostToolsView() hostToolsView {
 		}
 		unavailable := manifest.Unavailable(version.Version, true)
 		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
+			I18n:        hostbridge.LoadI18n(filepath.Join(view.Directory, entry.Name())),
 			Categories:  hostbridge.ShownCategories(manifest.Categories),
 			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
 			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
@@ -497,12 +499,13 @@ func (s *Server) hostMarketEntries(ctx context.Context, refresh bool) ([]hostbri
 }
 
 type hostMarketEntryView struct {
-	Name        string                   `json:"name"`
-	DisplayName string                   `json:"display_name,omitempty"`
-	Version     string                   `json:"version"`
-	Description string                   `json:"description,omitempty"`
-	Author      *hostbridge.MarketAuthor `json:"author,omitempty"`
-	Permissions []string                 `json:"permissions"`
+	Name        string                              `json:"name"`
+	DisplayName string                              `json:"display_name,omitempty"`
+	Version     string                              `json:"version"`
+	Description string                              `json:"description,omitempty"`
+	Author      *hostbridge.MarketAuthor            `json:"author,omitempty"`
+	I18n        map[string]hostbridge.LocalizedText `json:"i18n,omitempty"`
+	Permissions []string                            `json:"permissions"`
 	Categories  []string                 `json:"categories,omitempty"`
 	Kind        string                   `json:"kind,omitempty"`
 	Contributes *hostContributesView     `json:"contributes,omitempty"`
@@ -587,7 +590,7 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 		if len(platforms) == 0 {
 			platforms = []string{"darwin", "windows", "linux"}
 		}
-		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description, Author: entry.Author,
+		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description, Author: entry.Author, I18n: entry.I18n,
 			Permissions: entry.Permissions, Categories: hostbridge.ShownCategories(entry.Categories), Kind: entry.Kind, Contributes: hostContributes(entry.Contributes), Problem: hostPluginUnavailable(unavailable),
 			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != "",
 			Runtime: entry.Runtime, Platforms: platforms, Source: entry.Source}

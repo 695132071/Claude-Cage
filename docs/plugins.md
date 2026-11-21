@@ -70,6 +70,7 @@ Cage 的核心路线是把 Claude 的运行外壳关在轻量化的本地隔离�
 ```
 my-plugin/
 ├── plugin.json      清单
+├── i18n.json        多国语言说明（上架插件市场必需）
 ├── icon.svg         图标，可省略
 ├── server.py        MCP 服务
 └── view/            页面，可省略
@@ -206,6 +207,30 @@ my-plugin/
 ```
 
 旧格式里不能写 `engines`、`kind`（`host` 除外）和 `activationEvents`，可以写 `categories`。
+
+### 多国语言说明 `i18n.json` 与作者归属
+
+Cage 界面会按当前软件界面语言自动展示插件的名称与说明（精确匹配语言代码，再按主语言码回退，未命中时回退到 `plugin.json` 中的英文 `displayName` 与 `description`）。
+
+多语言翻译放在插件目录内的 `i18n.json`（不写进 `plugin.json`，以兼容较早版本的 Cage）：
+
+```json
+{
+  "zh-CN": {
+    "displayName": "系统状态",
+    "description": "在独立页面和 Claude 工具中展示当前环境的处理器负载、内存与磁盘使用情况。"
+  },
+  "zh-TW": {
+    "displayName": "系統狀態",
+    "description": "在獨立頁面與 Claude 工具中顯示目前環境的處理器負載、記憶體與磁碟使用情況。"
+  }
+}
+```
+
+- 每个语言条目支持 `displayName`（可选，最多 80 字符）和 `description`（必需，最多 600 字符），且不得包含保留词或控制字符。
+- 提交到官方插件市场 [cage-plugins](https://github.com/Lee-xeo/cage-plugins) 时：
+  - `i18n.json` 必须完整覆盖 Cage 支持的全部 15 种界面语言（`zh-CN`、`zh-TW`、`ru`、`ar`、`fa`、`ko`、`es`、`my`、`be`、`ps`、`prs`、`am`、`so`、`ti`、`fr`，与 `internal/uilocale/languages.json` 一致）。
+  - 需在市场仓库根目录的 `authors.json` 中登记插件名与贡献者的 GitHub 用户名；市场客户端对官方维护的插件显示「Cage 官方」，对社区贡献插件直接显示 GitHub 用户名。
 
 ### 工具的命名和说明
 

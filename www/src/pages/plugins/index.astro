@@ -177,8 +177,10 @@ const description =
           const metaParts: string[] = [formatPlatformList(plugin.platforms)];
           if (plugin.source?.project) {
             metaParts.push(plugin.source.license ? `${plugin.source.project} · ${plugin.source.license}` : plugin.source.project);
+          } else if (plugin.author?.official) {
+            metaParts.push('Cage 官方');
           } else if (plugin.author?.name) {
-            metaParts.push(plugin.author.official ? `Cage 官方 · ${plugin.author.name}` : plugin.author.name);
+            metaParts.push(plugin.author.name);
           } else if (plugin.minBytes > 0) {
             metaParts.push(formatBytes(plugin.minBytes));
           }
