@@ -317,6 +317,9 @@ func readWithin(root, relative string) ([]byte, error) {
 
 func nodeData(root, providers string, data []byte) ([]byte, string, error) {
 	var input struct {
+		DNS struct {
+			NodeDNS []string `yaml:"proxy-server-nameserver"`
+		} `yaml:"dns"`
 		Proxies   []map[string]any `yaml:"proxies"`
 		Payload   []map[string]any `yaml:"payload"`
 		Providers map[string]struct {
@@ -384,7 +387,11 @@ func nodeData(root, providers string, data []byte) ([]byte, string, error) {
 			unique = append(unique, n)
 		}
 	}
-	result, err := json.Marshal(map[string]any{"proxies": unique})
+	output := map[string]any{"proxies": unique}
+	if len(input.DNS.NodeDNS) > 0 {
+		output["dns"] = map[string]any{"proxy-server-nameserver": input.DNS.NodeDNS}
+	}
+	result, err := json.Marshal(output)
 	warning := ""
 	if missing > 0 {
 		warning = fmt.Sprintf("有 %d 份节点列表未能从本机缓存读取，这些节点不会导入。可先在原软件中更新配置，再重新检测。", missing)
