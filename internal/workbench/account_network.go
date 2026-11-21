@@ -296,30 +296,50 @@ func (s *Server) setAccountNode(list *claudeAccountList, in claudeAccountInput) 
 			return errors.New("请先关闭该账号的 Desktop，再切换出口")
 		}
 		if a.ProxyNodeID != "" {
-			m := &s.accountNetworks
-			m.mu.Lock()
-			relayPID := 0
-			if link := m.links[a.ID]; link != nil {
-				select {
-				case <-link.done:
-				default:
-					relayPID = link.pid
-				}
-			}
-			m.mu.Unlock()
-			ns := "net-" + a.ID
-			pids, err := s.guest(ctx, "if test -e /run/netns/"+ns+"; then sudo ip netns pids "+ns+"; fi")
-			if err != nil {
-				return errors.New("无法确认账号进程状态，暂未更改出口")
-			}
-			for _, pid := range strings.Fields(string(pids)) {
-				if pid != strconv.Itoa(relayPID) {
-					return errors.New("该账号仍有后台进程，请结束后再切换出口")
-				}
+			if err := s.checkAccountNetworkIdle(ctx, a.ID, "无法确认账号进程状态，暂未更改出口", "该账号仍有后台进程，请结束后再切换出口"); err != nil {
+				return err
 			}
 		}
 	}
 	a.ProxyNodeID = node
 	a.DesktopDedicatedNetwork = false
 	return nil
+}
+
+func (s *Server) checkAccountNetworkIdle(ctx context.Context, id, probeErrMsg, busyErrMsg string) error {
+	m := &s.accountNetworks
+	m.mu.Lock()
+	relayPID := 0
+	if link := m.links[id]; link != nil {
+		select {
+		case <-link.done:
+		default:
+			relayPID = link.pid
+		}
+	}
+	m.mu.Unlock()
+	ns := "net-" + id
+	pids, err := s.guest(ctx, "if test -e /run/netns/"+ns+"; then sudo ip netns pids "+ns+"; fi")
+	if err != nil {
+		return errors.New(probeErrMsg)
+	}
+	for _, pid := range strings.Fields(string(pids)) {
+		if pid != strconv.Itoa(relayPID) {
+			return errors.New(busyErrMsg)
+		}
+	}
+	return nil
+}
+
+func (s *Server) stopAccountNetworkLink(id string) {
+	m := &s.accountNetworks
+	m.mu.Lock()
+	link := m.links[id]
+	if link != nil {
+		delete(m.links, id)
+	}
+	m.mu.Unlock()
+	if link != nil && link.cancel != nil {
+		link.cancel()
+	}
 }

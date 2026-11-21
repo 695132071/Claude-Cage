@@ -238,6 +238,9 @@
   min-height: 26px; font-size: 0.82rem; color: var(--ink);
 }
 .claude-profile-actions .quiet-button:hover:enabled, .claude-profile-actions .text-button:hover:enabled { color: var(--strong); text-decoration: underline; }
+.claude-profile-actions .claude-profile-delete { color: var(--muted); }
+.claude-profile-actions .claude-profile-delete:hover:enabled,
+.claude-profile-actions .claude-profile-delete:focus-visible { color: var(--danger); }
 .claude-profile-actions .quiet-button { gap: 4px; }
 .claude-quota-age { margin-left: auto; display: flex; flex-wrap: wrap; gap: 2px 8px; font-variant-numeric: tabular-nums; }
 .claude-profile .field-help { margin: 7px 0; }

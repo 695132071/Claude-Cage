@@ -332,6 +332,7 @@ func (list *claudeAccountList) bindDesktop(id string, observation claudeGuestSna
 		list.Accounts = append(list.Accounts, claudeAccount{ID: randomToken()[:24], Source: "managed", Status: "signed_out", CodeUnlinked: true, Label: observation.email(), Email: observation.email(), Organization: observation.Organization})
 		target = &list.Accounts[len(list.Accounts)-1]
 	}
+	list.undismissDefault(subject)
 	dest := target.DesktopInstanceID
 	if dest != "" && dest != id {
 		if list.DesktopRedirects == nil {
