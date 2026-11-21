@@ -69,6 +69,8 @@ cage agent host.inspect
 
 `init` 仅创建缺失的默认配置；已有有效配置会保留，损坏配置会报错。`service.start` 只启动缺失的本机后台，复用同一构建的现有后台，拒绝替换不匹配的构建。它不启动虚拟机。`doctor` 只读取当前状态，不启动服务、不更改网络或应用修复。
 
+`service.start` 继承调用者进程所在的权限与沙箱上下文，无法脱离调用者沙箱运行；在受限的 Agent 沙箱中仅放开 Cage 配置目录的写入权限不足以调用系统虚拟化接口或运行虚拟机。若 Agent 运行在受限沙箱内，请在宿主普通环境中启动原生 Cage 桌面应用，让后台服务在沙箱外运行后再由 Agent 连接操作。`host.inspect` 是在当前 CLI 进程内执行的本地探测：在 macOS 受限沙箱中读取 `kern.hv_support` 可能返回权限错误（如 `Operation not permitted`），这只说明当前调用上下文无权检测，不代表主机缺乏虚拟化或已运行的原生桌面后台不可用；不要据此触发重建、重装或误判主机不兼容，应在普通终端运行 `sysctl kern.hv_support` 核对，或结合已运行原生后台的 `status`、`guest.options` 判断状态（`guest.options` 返回 `available: false` 也反映当前环境就绪状态，而非硬件虚拟化检测结果）。
+
 账户存在且已解锁时继续下一步。否则让用户在 Cage 中创建或解锁；用户选择通过 Agent 提供密码时，可用下面的私有输入格式调用 `account.create` 或 `account.unlock`。命令行参数不接受密码。账户创建只适用于真正空白的 profile。
 
 ```json
