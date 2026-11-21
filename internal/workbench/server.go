@@ -112,6 +112,8 @@ type Server struct {
 	hostMarket                                       hostMarketCache
 	hostGrants                                       *hostGrants
 	hostGrantsOnce                                   sync.Once
+	// pluginSettingsMu serializes reading and writing plugin-settings.json.
+	pluginSettingsMu sync.Mutex
 	// tailnetTool stands in for the running Tailscale plugin in tests.
 	tailnetTool             func(context.Context, string, json.RawMessage) (*mcp.CallToolResult, error)
 	hostViewMu              sync.Mutex

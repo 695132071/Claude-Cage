@@ -182,6 +182,18 @@ func programInstallHint(program string) string {
 	}
 }
 
+// MissingSettingsError reports that a plugin is not started because settings
+// it requires have no value.
+type MissingSettingsError struct {
+	Plugin string
+	// Settings are the titles of the settings to fill in.
+	Settings []string
+}
+
+func (e *MissingSettingsError) Error() string {
+	return fmt.Sprintf("plugin %s needs these settings: %s", e.Plugin, strings.Join(e.Settings, ", "))
+}
+
 // MissingProjectDirError reports that a plugin needs an open project folder to
 // expand ProjectDirPlaceholder.
 type MissingProjectDirError struct {
@@ -233,6 +245,9 @@ type External struct {
 	// ProjectDir is substituted for ${PROJECT_DIR} in host plugin arguments.
 	ProjectDir string
 	Approve    func(context.Context, ToolRequest) error
+	// Env, if set, gives the variables added for the plugin's program on
+	// this computer, read again each time it starts.
+	Env func(context.Context) ([]string, error)
 	// Spawn, if set, makes the command that runs the plugin's program
 	// somewhere other than this computer; Dir is then only where its files
 	// are kept here.
@@ -323,6 +338,9 @@ func (e *External) open(ctx context.Context, projectDir string) (*mcp.ClientSess
 			if errors.Is(err, ErrNoProjectDir) {
 				return nil, nil, &MissingProjectDirError{Plugin: e.Manifest.Name}
 			}
+			if missing, ok := errors.AsType[*MissingSettingsError](err); ok {
+				return nil, nil, missing
+			}
 			return nil, nil, fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
 		}
 	} else {
@@ -341,6 +359,16 @@ func (e *External) open(ctx context.Context, projectDir string) (*mcp.ClientSess
 			bareProgram = program
 		}
 		env := userEnv()
+		if e.Env != nil {
+			extra, err := e.Env(ctx)
+			if err != nil {
+				if missing, ok := errors.AsType[*MissingSettingsError](err); ok {
+					return nil, nil, missing
+				}
+				return nil, nil, fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
+			}
+			env = withEnv(env, extra)
+		}
 		// A bare name is found on the PATH the program is given, which may
 		// be longer than this process's own.
 		if filepath.Base(program) == program {
@@ -585,6 +613,9 @@ type LoadOptions struct {
 	// ${PROJECT_DIR} in host plugin arguments.
 	ProjectDir string
 	Approve    func(context.Context, ToolRequest) error
+	// Env gives the variables from the user's settings for a plugin that
+	// runs on this computer; see External.Env.
+	Env func(ctx context.Context, manifest Manifest) ([]string, error)
 	// Guest makes the command that runs a guest plugin's server, given its
 	// manifest and where its files are here. Nil where there is nowhere to
 	// run one.
@@ -640,6 +671,8 @@ func LoadPlugins(ctx context.Context, dir string, options LoadOptions) ([]*Exter
 		plugin := &External{Manifest: manifest, Dir: path, ProjectDir: options.ProjectDir, Approve: approve}
 		if manifest.Kind == KindGuest {
 			plugin.Spawn = func(ctx context.Context) (*exec.Cmd, error) { return options.Guest(ctx, manifest, path) }
+		} else if options.Env != nil {
+			plugin.Env = func(ctx context.Context) ([]string, error) { return options.Env(ctx, manifest) }
 		}
 		if err := plugin.Start(ctx); err != nil {
 			failures = append(failures, err)
@@ -666,6 +699,30 @@ func LoadPlugins(ctx context.Context, dir string, options LoadOptions) ([]*Exter
 		loaded = append(loaded, plugin)
 	}
 	return loaded, failures
+}
+
+// withEnv is env with the variables of extra set, replacing any of the same
+// name. Windows does not tell names apart by case.
+func withEnv(env, extra []string) []string {
+	if len(extra) == 0 {
+		return env
+	}
+	same := func(a, b string) bool {
+		if runtime.GOOS == "windows" {
+			return strings.EqualFold(a, b)
+		}
+		return a == b
+	}
+	out := slices.Clone(env)
+	for _, entry := range extra {
+		name, _, _ := strings.Cut(entry, "=")
+		out = slices.DeleteFunc(out, func(old string) bool {
+			oldName, _, _ := strings.Cut(old, "=")
+			return same(oldName, name)
+		})
+		out = append(out, entry)
+	}
+	return out
 }
 
 func fileExists(path string) bool {
