@@ -18,7 +18,7 @@
 
 **Windows 显示未知发布者，或 Linux 无法安装。** Windows 未签名预览包的身份限制与实测范围见 [Windows 指南](windows.md)和对应发行说明；不要把它当作已签名版本。Linux 先确认使用 Debian 12 / Ubuntu 22.04 / 24.04 x86_64，通过 APT 安装 `.deb` 的依赖，并按 [Linux 指南](linux.md)检查 KVM 权限。
 
-**首页提示 macOS / Windows 客机已不再支持。** 当前版本只使用 Debian 13 环境。旧系统的磁盘和文件原样留在电脑上，Cage 不会删除；处理方式见[早期版本创建的其他系统](guide/guest-systems.md#早期版本创建的其他系统)。
+**首页提示 macOS / Windows / Ubuntu 客机已不再支持。** 当前版本只使用 Debian 13 环境。旧系统的磁盘和文件原样留在电脑上，Cage 不会删除。旧 Ubuntu 环境会挡住新环境的创建，需在首页点击“保留旧 Ubuntu 环境并新建 Debian”；处理方式见[早期版本创建的其他系统](guide/guest-systems.md#早期版本创建的其他系统)。
 
 **提示缺少代理核心。** 完整应用随附 Mihomo。重新安装对应平台的完整安装包，不要只拷贝其中的命令行文件。请使用对应平台的完整安装包。
 
