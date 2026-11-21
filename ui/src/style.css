@@ -1632,6 +1632,11 @@ svg {
   margin-bottom: 4px;
   border-bottom: 1px solid var(--line-subtle);
 }
+.sidebar-nav-divider {
+  height: 1px;
+  margin: 5px 8px;
+  background: var(--line-subtle);
+}
 .workspace-sidebar:has(.account-menu) .sidebar-navigation {
   overflow-y: auto;
 }
@@ -2273,17 +2278,20 @@ svg {
   box-shadow: var(--shadow-sm);
 }
 .welcome h1 {
-  font-size: 2.2857rem;
-  font-weight: 600;
+  font-size: 2.1429rem;
+  font-weight: 620;
   letter-spacing: -0.03em;
-  margin: 0;
+  margin: 0 0 24px;
   color: var(--strong);
   overflow-wrap: anywhere;
 }
+.welcome h1:has(+ .welcome-subtitle) {
+  margin-bottom: 0;
+}
 .welcome-subtitle {
-  font-size: 1rem;
-  line-height: 1.7;
-  margin: 12px 0 32px;
+  font-size: 0.9286rem;
+  line-height: 1.65;
+  margin: 10px 0 24px;
   color: var(--muted);
 }
 .start-project-box {

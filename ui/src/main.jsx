@@ -1862,19 +1862,15 @@ function App() {
                           ? tr("为 Claude 准备独立工作区")
                           : tr("先启动 Cage 环境")}
                   </h1>
-                  <p className="welcome-subtitle">
-                    <SafetyMessage message={busy
-                      ? tr(status.job.message)
-                      : running
-                        ? !status.ready
+                  {(busy || (running && (!status.ready || network.mode !== "open"))) && (
+                    <p className="welcome-subtitle">
+                      <SafetyMessage message={busy
+                        ? tr(status.job.message)
+                        : !status.ready
                           ? status.environment_update_error || "浏览器连接尚未就绪，可以恢复连接或继续使用终端。"
-                          : network.mode === "open"
-                            ? "环境已连接，网络检查通过。可以浏览网页或打开本地项目。"
-                            : tr("{0}。终端与本地文件仍可使用。", tr(network.label))
-                        : setupProxy
-                          ? "先连接你的代理，再启动浏览器、终端和编辑器。无需安装额外的代理软件。"
-                          : "准备独立的浏览器和终端，完成网络检查后开始工作。"} />
-                  </p>
+                          : tr("{0}。终端与本地文件仍可使用。", tr(network.label))} />
+                    </p>
+                  )}
                   {!running && (
                     <ol className="onboarding-steps" aria-label={tr("开始使用 Cage")}>
                       {["配置代理", "启动环境", "开始工作"].map(
@@ -1906,8 +1902,8 @@ function App() {
                           {running
                             ? runtimeLabel
                             : setupProxy
-                              ? tr("自备代理订阅、YAML 配置或节点")
-                              : tr("代理已配置，首次启动会下载开发环境")}
+                              ? tr("配置代理")
+                              : tr("启动环境")}
                         </small>
                       </span>
                     </div>
@@ -1982,18 +1978,9 @@ function App() {
                     </div>
                   )}
                   {terminalMenuAt("shortcuts")}
-                  {!running && (
-                    <p className="welcome-hint">
-                      {setupProxy
-                        ? tr("Cage 不提供代理或 Claude 账户。连接后，在 Cage 内完成 Claude 登录。")
-                        : tr("首次安装时可在操作详情中查看下载和配置进度；中断后可以继续安装。")}
-                    </p>
-                  )}
                   {running && status.ready && (
                     <p className="welcome-hint">
                       {tr("打开项目后，在终端输入") + " "}<code>claude</code>{tr("，按提示登录你的账户。")}
-                      <br />
-                      {isRemoteClient() ? tr("打开的项目位于云端，编辑和删除会直接影响云端文件。") : tr("打开的项目与本机共享，编辑和删除文件会同步。")}
                     </p>
                   )}
                   </>}
