@@ -59,6 +59,14 @@ func TestExecutionFailureNamesInterruptedTLSHandshake(t *testing.T) {
 	}
 }
 
+func TestExecutionFailureNamesInterruptedPackageInstallation(t *testing.T) {
+	output := "Debian mirror unavailable; using the next source: [url]\nE: dpkg was interrupted, you must manually run 'sudo dpkg --configure -a' to correct the problem.\n"
+	message := executionFailure("启动环境", errors.New("exit status 100"), output).Error()
+	if !strings.Contains(message, "上次中断的软件安装未能自动补完") || strings.Contains(message, "可识别") {
+		t.Fatalf("%q", message)
+	}
+}
+
 func TestExecutionFailureNamesMissingQEMU(t *testing.T) {
 	for _, line := range []string{
 		`level=fatal msg="exec: \"qemu-img\": executable file not found in %PATH%"`,
