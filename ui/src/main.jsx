@@ -268,7 +268,9 @@ function App() {
   const paneSide = id => !split ? "" : id === active ? layout.side :
     layout.side === "left" ? "right" : "left";
   const running = Boolean(status?.vm_running);
-  const pluginsAvailable = Boolean(status?.local_vm_storage) && !isRemoteClient();
+  const currentClient = getClientContext();
+  const remotePluginsSupported = isRemoteClient() && Boolean(currentClient.connection?.manifest?.capabilities?.remote_plugins);
+  const pluginsAvailable = Boolean(status?.local_vm_storage) || remotePluginsSupported;
   // The plugin list stays current, slowly, so plugin pages can sit in the main sidebar.
   const hostPlugins = useHostPlugins(pluginsAvailable && (pluginSidebar || managementPage === "plugins" ? true : "light"));
   const pages = pluginPages(hostPlugins);
@@ -1716,7 +1718,7 @@ function App() {
                 <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" && pluginPage ? pluginPageTitle(hostPlugins, pluginPage) : managementPage === "plugin-view" ? openPage?.title || tr("插件页面") : tr("Claude 账号管理")}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "plugin-view" ? <PluginView key={pluginView} plugin={openPage?.plugin || pluginView.split("/")[0]} view={openPage?.view || { id: pluginView.split("/")[1] || "" }}
+                {managementPage === "plugin-view" ? <PluginView key={`${currentClient.connection_id || "local"}:${pluginView}`} plugin={openPage?.plugin || pluginView.split("/")[0]} view={openPage?.view || { id: pluginView.split("/")[1] || "" }}
                   onConfirm={confirm} onNotify={notify} onOpenUrl={async url => Boolean(await openBrowserPage(url, false))} />
                 : managementPage === "plugins" ? pluginPage && <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={openPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}

@@ -477,6 +477,28 @@ func (e *External) Register(server *mcp.Server) {
 	}
 }
 
+// ModelTools are the tools the plugin offers the model, once started.
+func (e *External) ModelTools() []*mcp.Tool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var tools []*mcp.Tool
+	for _, tool := range e.tools {
+		if toolFor(tool, forModel) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
+}
+
+// CallForModel calls one of the plugin's model-visible tools through the
+// plugin's normal approval gate.
+func (e *External) CallForModel(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+	if !slices.ContainsFunc(e.ModelTools(), func(tool *mcp.Tool) bool { return tool.Name == name }) {
+		return nil, &RefusedError{fmt.Errorf("plugin %s, tool %s: not offered to the model", e.Manifest.Name, name)}
+	}
+	return e.call(ctx, name, arguments, false)
+}
+
 // PageTools are the tools the plugin's own page may call, as the plugin
 // describes them, once started.
 func (e *External) PageTools() []*mcp.Tool {

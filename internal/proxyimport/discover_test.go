@@ -236,3 +236,27 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(data)
 }
+
+func TestNodeDataPreservesOnlySourceNodeDNS(t *testing.T) {
+	input := []byte(`proxies: [{name: node, type: http, server: node.example.test, port: 8080}]
+dns:
+  proxy-server-nameserver: [https://resolver.example.test:44443/dns-query]
+  nameserver: [https://private-business.example.test/dns-query]
+  proxy-server-nameserver-policy: {'+.*': https://private-policy.example.test/dns-query}
+  listen: 0.0.0.0:53
+`)
+	data, warning, err := nodeData(t.TempDir(), "", input)
+	if err != nil || warning != "" {
+		t.Fatal(err, warning)
+	}
+	s, _ := managedproxy.Load(t.TempDir())
+	if err := s.Import("source", "", data, "source", 0, ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Sources[0].NodeDNS) != 1 || s.Sources[0].NodeDNS[0] != "https://resolver.example.test:44443/dns-query" {
+		t.Fatal("local import lost subscription node DNS")
+	}
+	if strings.Contains(string(data), "private-") || strings.Contains(string(data), "listen") {
+		t.Fatal("local import copied unrelated subscription DNS")
+	}
+}

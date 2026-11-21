@@ -29,12 +29,22 @@ type Plugin interface {
 	Register(server *mcp.Server)
 }
 
+// namedPlugin is an optional interface implemented by plugins that can report
+// the model tool names they currently register, so ephemeral bridges never
+// shadow base tools.
+type namedPlugin interface {
+	Tools() []string
+}
+
 // Bridge is a running MCP endpoint.
 type Bridge struct {
-	token    string
-	listener net.Listener
-	server   *http.Server
-	once     sync.Once
+	token       string
+	listener    net.Listener
+	server      *http.Server
+	base        []Plugin
+	ephemeralMu sync.RWMutex
+	ephemeral   []Plugin
+	once        sync.Once
 }
 
 // NewToken returns a random bearer token.
@@ -55,11 +65,18 @@ func Start(token string, plugins ...Plugin) (*Bridge, error) {
 	if err != nil {
 		return nil, err
 	}
-	b := &Bridge{token: token, listener: listener}
+	base := append([]Plugin(nil), plugins...)
+	b := &Bridge{token: token, listener: listener, base: base}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		// One server per request keeps clients from seeing each other's state.
 		server := mcp.NewServer(&mcp.Implementation{Name: "computer", Version: "1"}, nil)
-		for _, plugin := range plugins {
+		for _, plugin := range b.base {
+			plugin.Register(server)
+		}
+		b.ephemeralMu.RLock()
+		ephemeral := append([]Plugin(nil), b.ephemeral...)
+		b.ephemeralMu.RUnlock()
+		for _, plugin := range ephemeral {
 			plugin.Register(server)
 		}
 		return server
@@ -70,6 +87,27 @@ func Start(token string, plugins ...Plugin) (*Bridge, error) {
 	b.server = &http.Server{Handler: b.authorize(handler), ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = b.server.Serve(listener) }()
 	return b, nil
+}
+
+// BaseToolNames returns the tool names currently registered by base plugins.
+func (b *Bridge) BaseToolNames() map[string]bool {
+	taken := map[string]bool{}
+	for _, plugin := range b.base {
+		if named, ok := plugin.(namedPlugin); ok {
+			for _, name := range named.Tools() {
+				taken[name] = true
+			}
+		}
+	}
+	return taken
+}
+
+// SetEphemeral replaces the temporary plugins exposed alongside the base
+// plugins. Passing no plugins clears all temporary tools immediately.
+func (b *Bridge) SetEphemeral(plugins ...Plugin) {
+	b.ephemeralMu.Lock()
+	b.ephemeral = append([]Plugin(nil), plugins...)
+	b.ephemeralMu.Unlock()
 }
 
 // Addr is the loopback host:port the bridge listens on.

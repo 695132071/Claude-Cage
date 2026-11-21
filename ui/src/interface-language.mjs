@@ -19,6 +19,10 @@ export function useInterfaceLanguage() {
   return useSyncExternalStore(subscribe, () => state);
 }
 
+export function activeInterfaceLanguage() {
+  return state.active;
+}
+
 export async function prepareInterfaceLanguage(active) {
   if (active === defaultLanguage) return {};
   const load = catalogs[`./locales/${active}.json`];

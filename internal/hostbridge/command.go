@@ -76,6 +76,14 @@ func (c Command) tool() *mcp.Tool {
 	}
 }
 
+// Tools reports the model tool names registered by Command.
+func (c Command) Tools() []string {
+	if c.Jobs != nil {
+		return []string{"run_command", "command_job"}
+	}
+	return []string{"run_command"}
+}
+
 // Register adds the run_command tool.
 func (c Command) Register(server *mcp.Server) {
 	mcp.AddTool(server, c.tool(), func(ctx context.Context, _ *mcp.CallToolRequest, in commandInput) (*mcp.CallToolResult, commandOutput, error) {
