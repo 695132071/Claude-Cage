@@ -45,7 +45,7 @@ items:
 `)
 	writeConfig(t, root, "profiles/active.yaml", testNode)
 	writeConfig(t, root, "profiles/script.js", `throw Error('must never execute')`)
-	loc := []Location{{"Clash Verge Rev", root, Verge}}
+	loc := []Location{{"Clash Verge Rev", root, Verge, ""}}
 	configs := Scan(loc, []byte("session"))
 	if len(configs) != 2 || configs[0].Nodes != 2 || configs[0].Warning == "" || configs[0].Error != "" || !configs[0].Current || !configs[1].Refreshable {
 		t.Fatalf("unexpected metadata: %s", mustJSON(t, configs))
@@ -105,7 +105,7 @@ items:
 `)
 	writeConfig(t, root, "profiles/script.yaml", testNode)
 	writeConfig(t, filepath.Dir(root), "outside.yaml", testNode)
-	configs := Scan([]Location{{"Clash Party", root, Party}}, []byte("session"))
+	configs := Scan([]Location{{"Clash Party", root, Party, ""}}, []byte("session"))
 	if len(configs) != 3 {
 		t.Fatalf("unexpected configs: %s", mustJSON(t, configs))
 	}
@@ -144,7 +144,7 @@ func TestScanRejectsEscapesAndPreservesSSRFields(t *testing.T) {
 	root, outside := t.TempDir(), t.TempDir()
 	writeConfig(t, outside, "secret.yaml", testNode)
 	if err := os.Symlink(filepath.Join(outside, "secret.yaml"), filepath.Join(root, "escape.yaml")); err == nil {
-		entries := Scan([]Location{{"Mihomo", root, Plain}}, []byte("key"))
+		entries := Scan([]Location{{"Mihomo", root, Plain, ""}}, []byte("key"))
 		if len(entries) != 1 || entries[0].Nodes != 0 || entries[0].Error == "" || len(entries[0].Data) != 0 {
 			t.Fatal("followed outside symlink")
 		}
@@ -153,7 +153,7 @@ func TestScanRejectsEscapesAndPreservesSSRFields(t *testing.T) {
 		t.Fatal("accepted parent traversal")
 	}
 	writeConfig(t, root, "gui-config.json", `{"localPort":8080,"configs":[{"server":"ssr.example","server_port":443,"password":"ssr-secret","method":"aes-256-cfb","protocol":"auth_aes128_md5","protocolparam":"user:secret","obfs":"tls1.2_ticket_auth","obfsparam":"cdn.example","remarks_base64":"U1NSIG5vZGU"}]}`)
-	entries := Scan([]Location{{"ShadowsocksR", root, Plain}}, []byte("key"))
+	entries := Scan([]Location{{"ShadowsocksR", root, Plain, ""}}, []byte("key"))
 	var entry Config
 	for _, e := range entries {
 		if e.Name == "gui-config.json" {

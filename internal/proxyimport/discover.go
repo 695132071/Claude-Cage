@@ -50,11 +50,15 @@ const (
 	// Party is Clash Party (formerly Mihomo Party). Its root config.yaml holds
 	// app settings, while mihomo runs from work/ with work/config.yaml.
 	Party
+	// Surge reads the INI-style .conf profiles of Surge for Mac.
+	Surge
 )
 
 type Location struct {
 	Client, Directory string
 	Layout            Layout
+	// Selected is the file name of the profile the client uses, when known.
+	Selected string
 }
 
 // Locations also makes platform path rules testable without probing another
@@ -80,28 +84,29 @@ func Locations(platform, home, dataHome, configHome string) []Location {
 		partyHome = dataHome
 	}
 	out := []Location{
-		{"FlClash", filepath.Join(dataHome, "com.follow.clash"), Plain},
-		{"FlClash", filepath.Join(dataHome, "com.follow.clash", "profiles"), Plain},
-		{"Clash Verge Rev", filepath.Join(dataHome, "io.github.clash-verge-rev.clash-verge-rev"), Verge},
+		{"FlClash", filepath.Join(dataHome, "com.follow.clash"), Plain, ""},
+		{"FlClash", filepath.Join(dataHome, "com.follow.clash", "profiles"), Plain, ""},
+		{"Clash Verge Rev", filepath.Join(dataHome, "io.github.clash-verge-rev.clash-verge-rev"), Verge, ""},
 		// Clash Neo is a Verge fork and keeps the same profile layout.
-		{"Clash Neo", filepath.Join(dataHome, "io.github.clash-neo"), Verge},
-		{"Clash Party", filepath.Join(partyHome, "mihomo-party"), Party},
-		{"Clash Verge", filepath.Join(configHome, "clash-verge"), Verge},
-		{"Clash / ClashX", filepath.Join(configHome, "clash"), Plain},
-		{"Mihomo", filepath.Join(configHome, "mihomo"), Plain},
-		{"ShadowsocksR", filepath.Join(configHome, "shadowsocksr"), Plain},
-		{"Shadowsocks", filepath.Join(configHome, "shadowsocks"), Plain},
+		{"Clash Neo", filepath.Join(dataHome, "io.github.clash-neo"), Verge, ""},
+		{"Clash Party", filepath.Join(partyHome, "mihomo-party"), Party, ""},
+		{"Clash Verge", filepath.Join(configHome, "clash-verge"), Verge, ""},
+		{"Clash / ClashX", filepath.Join(configHome, "clash"), Plain, ""},
+		{"Mihomo", filepath.Join(configHome, "mihomo"), Plain, ""},
+		{"ShadowsocksR", filepath.Join(configHome, "shadowsocksr"), Plain, ""},
+		{"Shadowsocks", filepath.Join(configHome, "shadowsocks"), Plain, ""},
 	}
 	if platform == "darwin" {
-		out = append(out, Location{"ShadowsocksX-NG", filepath.Join(home, ".ShadowsocksX-NG"), Plain})
+		out = append(out, Location{Client: "ShadowsocksX-NG", Directory: filepath.Join(home, ".ShadowsocksX-NG"), Layout: Plain})
+		out = append(out, surgeProfileDirectories(home)...)
 	}
 	if platform == "windows" {
 		out = append(out,
-			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash"), Plain},
-			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash", "profiles"), Plain},
-			Location{"Clash / Mihomo", filepath.Join(home, ".config", "clash"), Plain},
-			Location{"Clash Verge", filepath.Join(home, ".config", "clash-verge"), Verge},
-			Location{"ShadowsocksR", filepath.Join(dataHome, "ShadowsocksR"), Plain})
+			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash"), Plain, ""},
+			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash", "profiles"), Plain, ""},
+			Location{"Clash / Mihomo", filepath.Join(home, ".config", "clash"), Plain, ""},
+			Location{"Clash Verge", filepath.Join(home, ".config", "clash-verge"), Verge, ""},
+			Location{"ShadowsocksR", filepath.Join(dataHome, "ShadowsocksR"), Plain, ""})
 	}
 	return out
 }
@@ -141,6 +146,11 @@ func Scan(locations []Location, key []byte) []Config {
 			identity := filepath.Join(root, file)
 			if err != nil {
 				c.Error = "无法读取这份配置，请检查文件权限或改为手动导入"
+			} else if loc.Layout == Surge {
+				c.Data, c.Warning, err = surgeData(root, file)
+				if err != nil {
+					c.Error = err.Error()
+				}
 			} else {
 				c.Data, c.Warning, err = nodeData(root, providers, data)
 				if err != nil {
@@ -151,7 +161,9 @@ func Scan(locations []Location, key []byte) []Config {
 				var preview managedproxy.Store
 				if err := preview.Import(c.Name, "", c.Data, "preview", 0, ""); err != nil {
 					c.Error = "这份配置没有可导入的节点；请从原软件导出含节点的 Clash/Mihomo 配置"
-					if errors.Is(err, managedproxy.ErrLocalProxyNode) {
+					// A Surge profile is converted here, so the importer's reasons
+					// (such as a chain through a group) describe that profile.
+					if errors.Is(err, managedproxy.ErrLocalProxyNode) || loc.Layout == Surge {
 						c.Error = err.Error()
 					}
 				} else {
@@ -249,6 +261,22 @@ func Scan(locations []Location, key []byte) []Config {
 					name = "已保存的配置"
 				}
 				add(filepath.Join("profiles", item.File), "", name, item.URL, item.UID == index.Current)
+			}
+		case Surge:
+			files, err := os.ReadDir(root)
+			if err != nil {
+				continue
+			}
+			count := 0
+			for _, file := range files {
+				if file.IsDir() || !strings.EqualFold(filepath.Ext(file.Name()), ".conf") {
+					continue
+				}
+				if count >= 32 {
+					break
+				}
+				count++
+				add(file.Name(), "", strings.TrimSuffix(file.Name(), filepath.Ext(file.Name())), "", file.Name() == loc.Selected)
 			}
 		default:
 			files, err := os.ReadDir(root)
