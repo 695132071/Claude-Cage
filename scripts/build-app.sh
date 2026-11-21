@@ -24,7 +24,7 @@ check_destination() {
     exit 1
   fi
   local running_pids
-  running_pids="$(/usr/sbin/lsof -t "$target/Contents/MacOS/Cage" "$target/Contents/Resources/cage" 2>/dev/null || true)"
+  running_pids="$(/usr/sbin/lsof -n -P -a -d txt -t -- "$target/Contents/MacOS/Cage" "$target/Contents/Resources/cage" 2>/dev/null || true)"
   if [[ -n "$running_pids" ]]; then
     echo 'Cage is running from this destination. Quit it before replacing the App.' >&2; exit 1
   fi
