@@ -357,3 +357,38 @@ dns:
 		t.Fatal("local import copied unrelated subscription DNS")
 	}
 }
+
+func TestScanVergeImportsConfigsWithLocalOrMixedNodeDNS(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "clash-verge.yaml", testNode+`dns:
+  proxy-server-nameserver:
+    - udp://127.0.0.1:7874
+`)
+	writeConfig(t, root, "profiles.yaml", `current: mixed
+items:
+  - {uid: mixed, name: MixedDNS, type: remote, file: mixed.yaml, url: 'https://sub.example/token'}
+  - {uid: scalar, name: ScalarDNS, type: local, file: scalar.yaml}
+`)
+	writeConfig(t, root, "profiles/mixed.yaml", testNode+`dns:
+  proxy-server-nameserver: [119.29.29.29, 'https://dns.alidns.com/dns-query', 'tls://223.5.5.5', 223.5.5.5]
+`)
+	writeConfig(t, root, "profiles/scalar.yaml", testNode+"dns: false\n")
+
+	configs := Scan([]Location{{"Clash Verge Rev", root, Verge, ""}}, []byte("session"))
+	if len(configs) != 3 {
+		t.Fatalf("expected 3 configs, got %s", mustJSON(t, configs))
+	}
+	byName := map[string]Config{}
+	for _, c := range configs {
+		if c.Error != "" || c.Nodes != 1 {
+			t.Fatalf("config %q failed to import: %s", c.Name, mustJSON(t, c))
+		}
+		byName[c.Name] = c
+	}
+	if strings.Contains(string(byName["当前生效配置"].Data), "127.0.0.1") {
+		t.Fatal("runtime config retained local UDP DNS")
+	}
+	if !strings.Contains(string(byName["MixedDNS"].Data), "https://dns.alidns.com/dns-query") || strings.Contains(string(byName["MixedDNS"].Data), "119.29.29.29") || strings.Contains(string(byName["MixedDNS"].Data), "tls://") {
+		t.Fatalf("mixed DNS not filtered to remote HTTPS DoH: %s", string(byName["MixedDNS"].Data))
+	}
+}

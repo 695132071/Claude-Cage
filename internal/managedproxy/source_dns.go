@@ -12,8 +12,11 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Adopt only the subscription's node resolver list. Its business resolvers,
-// policies, hosts, routes and DNS listener remain outside the import boundary.
+// Adopt only safe remote HTTPS DoH entries from the subscription's node
+// resolver list. Standard non-HTTP Clash/Mihomo resolvers (plain IPv4/IPv6,
+// udp://, tcp://, tls://, quic://, h3://, dhcp://, system) are ignored rather
+// than blocking import, while HTTP(S) entries are strictly validated so unsafe
+// or malformed DoH URLs still fail refresh and keep the previous configuration.
 func subscriptionNodeDNS(data []byte) ([]string, error) {
 	var input struct {
 		DNS yaml.Node `yaml:"dns"`
@@ -27,7 +30,78 @@ func subscriptionNodeDNS(data []byte) ([]string, error) {
 	if input.DNS.Decode(&dns) != nil {
 		return nil, errors.New("订阅的节点 DNS 需要填写 HTTPS DoH 地址列表")
 	}
-	return validateSourceDNS(dns.Servers)
+	var candidates []string
+	for _, raw := range dns.Servers {
+		trimmed := strings.TrimSpace(raw)
+		if isIgnoredNonHTTPResolver(trimmed) {
+			continue
+		}
+		candidates = append(candidates, trimmed)
+	}
+	return validateSourceDNS(candidates)
+}
+
+func isIgnoredNonHTTPResolver(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	if lower == "system" || strings.HasPrefix(lower, "dhcp://") ||
+		strings.HasPrefix(lower, "udp://") || strings.HasPrefix(lower, "tcp://") ||
+		strings.HasPrefix(lower, "tls://") || strings.HasPrefix(lower, "quic://") ||
+		strings.HasPrefix(lower, "h3://") {
+		return true
+	}
+	// Plain IP or IP:port (e.g. 119.29.29.29, 223.5.5.5:53, [2400:3200::1]).
+	if !strings.Contains(raw, "://") {
+		host := raw
+		if idx := strings.LastIndex(host, ":"); idx != -1 && !strings.Contains(host[idx+1:], "]") {
+			if port, err := strconv.Atoi(host[idx+1:]); err == nil && port >= 1 && port <= 65535 {
+				host = host[:idx]
+			}
+		}
+		if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterNodeDNS returns up to 4 unique, safe remote HTTPS DoH resolver URLs
+// from servers, dropping local, non-HTTPS, credentialed, or fragmented entries.
+func FilterNodeDNS(servers []string) []string {
+	var out []string
+	local := newLocalServers()
+	for _, raw := range servers {
+		raw = strings.TrimSpace(raw)
+		if !isSafeSourceDNS(raw, local) {
+			continue
+		}
+		if !slices.Contains(out, raw) {
+			out = append(out, raw)
+			if len(out) == 4 {
+				break
+			}
+		}
+	}
+	return out
+}
+
+func isSafeSourceDNS(raw string, local localServers) bool {
+	if raw == "" || len(raw) > 2048 {
+		return false
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || local.contains(u.Hostname()) {
+		return false
+	}
+	if port := u.Port(); port != "" {
+		n, err := strconv.Atoi(port)
+		if err != nil || n < 1 || n > 65535 {
+			return false
+		}
+	}
+	return true
 }
 
 func validateSourceDNS(servers []string) ([]string, error) {
