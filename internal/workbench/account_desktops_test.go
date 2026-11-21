@@ -271,7 +271,7 @@ func TestLinuxAccountDesktopDeleteScript(t *testing.T) {
 	}
 }
 
-func TestLinuxAccountDesktopScriptWiresPortalAndSharedX11(t *testing.T) {
+func TestLinuxAccountDesktopScriptWiresPortalAndIsolatedInput(t *testing.T) {
 	if bash, err := exec.LookPath("bash"); err == nil {
 		cmd := exec.Command(bash, "-n")
 		cmd.Stdin = strings.NewReader(linuxAccountDesktop)
@@ -284,10 +284,14 @@ func TestLinuxAccountDesktopScriptWiresPortalAndSharedX11(t *testing.T) {
 		"/usr/local/bin/cage-desktop-files &",
 		"export GTK_USE_PORTAL=1",
 		"--xdg-portal-required-version=3",
-		"--property=BindPaths=/tmp/.X11-unix",
+		"/usr/local/bin/cage-input-session",
+		"--property=PrivateTmp=yes",
 	} {
 		if !strings.Contains(linuxAccountDesktop, want) {
 			t.Fatalf("linux-account-desktop.sh missing %q", want)
 		}
+	}
+	if strings.Contains(linuxAccountDesktop, "BindPaths=/tmp/.X11-unix") {
+		t.Fatal("linux-account-desktop.sh must keep /tmp/.X11-unix isolated under PrivateTmp")
 	}
 }

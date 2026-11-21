@@ -175,7 +175,9 @@ cd "$HOME"
 # Desktop emits the active identity from its native account provider after
 # the renderer confirms the login. Keep the filtered stream in the unit's
 # private, ephemeral runtime directory; no callback or cookie is inspected.
-DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret --xdg-portal-required-version=3 > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
+input_session=()
+if [[ -x /usr/local/bin/cage-input-session ]]; then input_session=(/usr/local/bin/cage-input-session); fi
+DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' "${input_session[@]}" claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret --xdg-portal-required-version=3 > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
 app=$!
 printf '%s\n' "$app" > "$XDG_RUNTIME_DIR/app-pid"
 for _ in {1..250}; do
@@ -186,9 +188,6 @@ done
 exit 1
 SESSION
 user=$(id -un)
-if [[ -d /tmp/.X11-unix ]]; then
-  props+=("--property=BindPaths=/tmp/.X11-unix")
-fi
 sudo systemd-run --quiet --no-block --collect --unit="$unit" --service-type=notify \
   --property="User=$user" --property="RuntimeDirectory=$unit" --property=RuntimeDirectoryMode=0700 \
   --property=NotifyAccess=all --property=TimeoutStartSec=45 --property=TimeoutStopSec=8 \

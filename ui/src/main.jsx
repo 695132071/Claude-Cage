@@ -365,7 +365,7 @@ function App() {
   const clipboardRef = useRef(null);
   const accountDesktopControl = useRef(null);
   useEffect(() => {
-    if (!status?.ready || !nativeAvailable()) return;
+    if (!status?.ready || viewingAccountDesktop || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
@@ -375,7 +375,7 @@ function App() {
     clipboardRef.current = clipboard;
     window.cageSyncClipboard = () => clipboard.sync();
     return () => { clipboardRef.current = null; clipboard.dispose(); delete window.cageSyncClipboard; };
-  }, [status?.ready, clipboardConnection]);
+  }, [status?.ready, viewingAccountDesktop, clipboardConnection]);
   useEffect(() => {
     clipboardRef.current?.setVisible(windowVisible);
   }, [windowVisible]);

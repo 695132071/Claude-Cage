@@ -56,6 +56,8 @@ type Server struct {
 	clipboardFiles                                   map[string]clipboardFileSelection
 	clipboardRelease                                 func([]string)
 	clipboardCancel                                  context.CancelFunc
+	clipboardDone                                    chan struct{}
+	clipboardDesktop                                 string
 	clipboardGuestSession                            string
 	phones                                           mobilePairing
 	instanceID                                       string

@@ -11,11 +11,13 @@ import {
 } from "lucide-react";
 import RFB from "../.generated/novnc/core/rfb.js";
 import { InlineSelect } from "./inline-select";
-import { api, nativeAvailable } from "./api";
+import { api, native, nativeAvailable } from "./api";
 import { AccountIconNumber } from "./agent-icon";
 import { BrowserUploads } from "./browser-uploads";
 import { ProjectDialog } from "./project-dialog";
 import { sendFiles } from "./file-transfer";
+import { shareClipboard } from "./shared-clipboard.mjs";
+import { desktopInputChannel } from "./desktop-input-channel.mjs";
 import { installRemoteInput } from "./remote-input";
 import { guestKeys } from "./guest-keys.mjs";
 import { runtimeSocketURL } from "./client-context.mjs";
@@ -343,10 +345,31 @@ function DesktopPane({
   const box = useRef(null);
   const rfb = useRef(null);
   const input = useRef(null);
+  const clipboardRef = useRef(null);
+  const clipboardReady = useRef(false);
   const current = useRef({ visible: visible && focused, keyboard, systemClipboard, onStatus, onFallback });
   current.current = { visible: visible && focused, keyboard, systemClipboard, onStatus, onFallback };
   const [message, setMessage] = useState("");
   const [attempt, retry] = useState(0);
+  useEffect(() => {
+    if (!focused) input.current?.deactivate();
+  }, [focused]);
+  useEffect(() => {
+    if (!visible || !focused || !nativeAvailable()) return;
+    clipboardReady.current = false;
+    const clipboard = shareClipboard({
+      connect: () => new WebSocket(runtimeSocketURL(entry(account.id) + "/clipboard")),
+      native,
+      onStatus: (text) => current.current.onStatus?.(text),
+      setActive: (active) => { clipboardReady.current = Boolean(active); },
+    });
+    clipboardRef.current = clipboard;
+    return () => {
+      clipboardReady.current = false;
+      clipboardRef.current = null;
+      clipboard.dispose();
+    };
+  }, [account.id, account.generation, visible, focused]);
   useEffect(() => {
     onControl(account.id, {
       focus: () => rfb.current?.focus(),
@@ -360,11 +383,13 @@ function DesktopPane({
     if (!container) return;
     let live = true,
       client,
-      keys;
+      keys,
+      channel;
+    const valid = () => live && current.current.visible;
     setMessage("正在连接…");
     const path = entry(account.id);
     api(path + "/vnc-credentials")
-      .then(({ password }) => {
+      .then(({ password, native_input }) => {
         if (!live) return;
         client = new RFB(container, runtimeSocketURL(path + "/vnc"), {
           credentials: { password },
@@ -379,6 +404,14 @@ function DesktopPane({
           if (!live) return;
           setMessage("");
           input.current?.dispose();
+          channel?.dispose();
+          channel = desktopInputChannel(() => new WebSocket(runtimeSocketURL(path + "/input")));
+          const request = async (value) => {
+            if (value.mode !== "cancel" && !valid()) throw new Error("输入实例已切换，请重新点击输入框");
+            const result = await channel.request(value);
+            if (value.mode !== "cancel" && !valid()) throw new Error("输入实例已切换，请重新点击输入框");
+            return result;
+          };
           input.current = installRemoteInput(
             {
               events: client,
@@ -391,32 +424,57 @@ function DesktopPane({
             container,
             {
               systemClipboard: () => current.current.systemClipboard,
-              pasteContent: (content) => {
-                const valid = () => live && current.current.visible;
-                return client.cagePasteContent(
-                  content,
-                  (payload) => {
-                    if (!valid()) throw new Error("输入目标已切换，请重新传递文件");
-                    if (payload.files || payload.fileSelection) {
-                      return sendFiles(payload, "desktop", undefined, {
-                        valid,
-                        desktop: account.id,
-                      });
-                    }
-                    throw new Error("请使用剪贴板同步或以文件方式拖入图片");
-                  },
-                  valid,
-                );
+              clipboardActive: () => clipboardReady.current,
+              syncClipboard: async () => {
+                const clipboard = clipboardRef.current;
+                if (!clipboard || !clipboardReady.current) throw new Error("剪贴板连接尚未就绪");
+                await clipboard.sync();
+                if (!valid() || clipboard !== clipboardRef.current) throw new Error("粘贴实例已切换");
               },
-              insertText: (text) => client.cagePasteText(text),
+              caretRect: native_input ? (session) => request({ mode: "status", session }) : undefined,
+              insertComposition: native_input
+                ? (_id, value) => client.cageRunInput(async () => {
+                    const result = await request(value);
+                    if (value.mode !== "cancel" && !result.available) {
+                      throw new Error("输入位置已失去焦点，请重新点击输入框");
+                    }
+                    return result;
+                  })
+                : undefined,
+              insertText: (text) => !native_input
+                ? client.cagePasteContent(Promise.resolve({ text }), undefined, valid)
+                : client.cageRunInput(async () => {
+                    const state = await request({ mode: "status" });
+                    if (!state.available) throw new Error("输入位置已失去焦点，请重新点击输入框");
+                    const session = crypto.randomUUID().replaceAll("-", "");
+                    const begun = await request({ mode: "begin", context: state.context, session, sequence: 0 });
+                    if (!begun.available) throw new Error("输入位置已失去焦点，请重新点击输入框");
+                    const result = await request({ mode: "commit", session, sequence: 1, text });
+                    if (!result.available) throw new Error("文字输入未完成，请重新点击输入框");
+                  }),
+              pasteContent: (content) => client.cagePasteContent(
+                content,
+                (payload) => {
+                  if (!valid()) throw new Error("输入目标已切换，请重新传递文件");
+                  if (payload.files || payload.fileSelection) {
+                    return sendFiles(payload, "desktop", undefined, {
+                      valid,
+                      desktop: account.id,
+                    });
+                  }
+                  throw new Error("请从本机复制图片后，在此实例按粘贴快捷键，或以文件方式拖入图片");
+                },
+                valid,
+              ),
+              inputLabel: "Claude Desktop 输入",
               tabId: () => `desktop:${account.id}`,
               mode: () => current.current.keyboard,
-              isActive: () => current.current.visible,
+              isActive: valid,
               onStatus: (text) => current.current.onStatus?.(text),
               onFallback: (...args) => current.current.onFallback?.(...args),
             },
           );
-          if (current.current.visible && !document.activeElement?.closest(".chrome")) {
+          if (valid() && !document.activeElement?.closest(".chrome")) {
             client.focus();
           }
         });
@@ -424,6 +482,8 @@ function DesktopPane({
           keys?.stop();
           input.current?.dispose();
           input.current = null;
+          channel?.dispose();
+          channel = undefined;
           if (live) setMessage("画面已断开");
         });
       })
@@ -434,6 +494,7 @@ function DesktopPane({
       live = false;
       input.current?.dispose();
       input.current = null;
+      channel?.dispose();
       keys?.stop();
       rfb.current = null;
       client?.disconnect();

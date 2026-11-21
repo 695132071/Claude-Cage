@@ -13,6 +13,7 @@ from pathlib import Path
 import queue
 import shutil
 import stat
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -330,11 +331,45 @@ def pixel_signature(width, height, rowstride, channels, pixels):
     return digest.digest()
 
 
-def clipboard_worker(name, connection, xauthority=None):
+def desktop_display(instance, runtime_root=Path('/run')):
+    if len(instance) != 24 or any(c not in '0123456789abcdef' for c in instance):
+        raise ValueError('Invalid desktop instance')
+    directory = runtime_root / ('desktop-' + instance)
+    display_file, authority = directory / 'display', directory / 'Xauthority'
+    if directory.is_symlink() or display_file.is_symlink() or authority.is_symlink():
+        raise ValueError('Invalid desktop runtime')
+    number = display_file.read_text().strip()
+    if not number.isascii() or not number.isdigit() or len(number) > 5 or not authority.is_file():
+        raise ValueError('Invalid desktop display')
+    return ':' + number, str(authority)
+
+
+def bridge_desktop(instance):
+    display, authority = desktop_display(instance)
+    result = subprocess.run(['systemctl', 'show', 'desktop-' + instance + '.service',
+                             '--property=MainPID', '--value'],
+                            check=True, capture_output=True, text=True, timeout=5)
+    pid = int(result.stdout.strip())
+    if pid <= 1:
+        raise ValueError('Desktop instance is not running')
+    # Only the X11 worker joins the application's namespaces. The parent
+    # retains the common file-transfer cache and its ownership registry.
+    descriptors = [os.open('/proc/' + str(pid) + '/ns/' + name, os.O_RDONLY)
+                   for name in ('mnt', 'net')]
+    try:
+        bridge(displays=((display, 'cage'),), authorities={display: authority},
+               namespace_fds=descriptors,
+               display_exists=lambda _name: Path('/proc/' + str(pid)).is_dir())
+    finally:
+        for descriptor in descriptors:
+            os.close(descriptor)
+
+
+def clipboard_worker(name, connection, authority=None):
     os.environ['NO_AT_BRIDGE'] = '1'
     os.environ['DISPLAY'] = name
-    if xauthority:
-        os.environ['XAUTHORITY'] = xauthority
+    if authority:
+        os.environ['XAUTHORITY'] = authority
     elif name == ':78':
         os.environ['XAUTHORITY'] = '/run/cage-desktop/Xauthority'
     else:
@@ -559,41 +594,15 @@ def bridge_wait_timeout(worker_count, total_displays, cleanup_ready, cache_retry
     return timeout
 
 
-def discover_desktop_displays(run_root=Path('/run')):
-    found = []
-    try:
-        entries = sorted(run_root.iterdir(), key=lambda entry: entry.name)
-    except OSError:
-        return found
-    for entry in entries:
-        name = entry.name
-        if not (len(name) == 32 and name.startswith('desktop-') and all(c in '0123456789abcdef' for c in name[8:])):
-            continue
-        try:
-            auth = entry / 'Xauthority'
-            if not auth.is_file():
-                continue
-            raw = (entry / 'display').read_text().strip()
-            if not raw.isdigit():
-                continue
-            display = ':' + raw
-            if display not in (':77', ':78'):
-                found.append((display, 'cage', str(auth)))
-        except OSError:
-            continue
-    return found
-
-
 def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, stdout=None,
            registry=None, spawn_worker=None, display_exists=None, materialize=materialize_guest_files,
-           discover_displays=None):
+           authorities=None, namespace_fds=()):
     # GTK's providers use a default display. Keep one small worker per X11
     # session, under that application's UID, and merge only clipboard events.
     import multiprocessing
     import pwd
     import selectors
     workers = {}
-    worker_auth = {}
     commands = queue.Queue()
     pending = {}
     last = None
@@ -606,9 +615,6 @@ def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, s
     stdin_fd = sys.stdin.fileno() if stdin_fd is None else stdin_fd
     stdout = sys.stdout if stdout is None else stdout
     display_exists = display_exists or (lambda name: Path('/tmp/.X11-unix/X' + name[1:]).exists())
-    dynamic_discovery = discover_displays is not None or (spawn_worker is None and displays == ((':77', 'cage-browser'), (':78', 'cage')))
-    if discover_displays is None:
-        discover_displays = discover_desktop_displays if dynamic_discovery else (lambda: [])
     current_files = {}
     next_cache_check = 0.0
     cleanup_needed = True
@@ -622,30 +628,28 @@ def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, s
         for value in pending.values():
             selected.extend(value.get('files', []))
         return selected
-    def run_worker(name, connection, uid, gid, home, xauthority):
+    def run_worker(name, connection, uid, gid, home):
+        for descriptor in namespace_fds:
+            os.setns(descriptor, 0)
+            os.close(descriptor)
         os.initgroups(pwd.getpwuid(uid).pw_name, gid)
         os.setgid(gid)
         os.setuid(uid)
         os.environ['HOME'] = home
-        clipboard_worker(name, connection, xauthority)
+        clipboard_worker(name, connection, (authorities or {}).get(name))
     context = None if spawn_worker is not None else multiprocessing.get_context('fork')
     if spawn_worker is None:
-        def spawn_worker(name, user, xauthority=None):
+        def spawn_worker(name, user):
             account = pwd.getpwnam(user)
             parent, child = context.Pipe()
-            process = context.Process(target=run_worker, args=(name, child, account.pw_uid, account.pw_gid, account.pw_dir, xauthority))
+            process = context.Process(target=run_worker, args=(name, child, account.pw_uid, account.pw_gid, account.pw_dir))
             process.start(); child.close()
             return process, parent
-    def start_worker(name, user, xauthority):
-        if getattr(getattr(spawn_worker, '__code__', None), 'co_argcount', 2) >= 3:
-            return spawn_worker(name, user, xauthority)
-        return spawn_worker(name, user)
     selector = selectors.DefaultSelector()
     selector.register(stdin_fd, selectors.EVENT_READ, ('stdin', None))
     incoming = b''
     def remove_worker(name):
         previous = workers.pop(name, None)
-        worker_auth.pop(name, None)
         if not previous:
             return
         process, connection = previous
@@ -661,26 +665,15 @@ def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, s
         current_files.pop(name, None)
     def sync_workers():
         nonlocal announced
-        desired = {}
-        for item in displays:
-            name, user = item[0], item[1]
-            xauth = item[2] if len(item) > 2 else ('/run/cage-desktop/Xauthority' if name == ':78' else None)
-            desired[name] = (user, xauth)
-        for name, user, xauth in discover_displays():
-            if name not in desired:
-                desired[name] = (user, xauth)
-        for name in list(workers):
+        for name, user in displays:
             previous = workers.get(name)
-            spec = desired.get(name)
-            if not previous or not previous[0].is_alive() or spec is None or worker_auth.get(name) != spec[1] or not display_exists(name):
-                if previous and previous[0].is_alive():
+            if previous and (not previous[0].is_alive() or not display_exists(name)):
+                if previous[0].is_alive():
                     previous[0].terminate()
                 remove_worker(name)
-        for name, (user, xauth) in desired.items():
             if name not in workers and display_exists(name):
-                process, parent = start_worker(name, user, xauth)
+                process, parent = spawn_worker(name, user)
                 workers[name] = (process, parent)
-                worker_auth[name] = xauth
                 selector.register(parent.fileno(), selectors.EVENT_READ, ('worker', name))
                 if initialized:
                     parent.send(last)
@@ -695,8 +688,6 @@ def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, s
             sync_workers()
             cleanup_ready = cleanup_needed and bool(workers) and all(name in current_files for name in workers)
             timeout = bridge_wait_timeout(len(workers), len(displays), cleanup_ready, cache_retry, next_cache_check, time.monotonic())
-            if dynamic_discovery and timeout > 2.0:
-                timeout = 2.0
             for key, _ in selector.select(timeout=timeout):
                 if key.data[0] == 'stdin':
                     chunk = os.read(stdin_fd, 65536)
@@ -813,7 +804,9 @@ def bridge(displays=((':77', 'cage-browser'), (':78', 'cage')), stdin_fd=None, s
 
 
 if __name__ == '__main__':
-    if sys.argv[1:] == ['--import'] or len(sys.argv) == 4 and sys.argv[1:3] == ['--import', '--session']:
+    if len(sys.argv) == 3 and sys.argv[1] == '--desktop':
+        bridge_desktop(sys.argv[2])
+    elif sys.argv[1:] == ['--import'] or len(sys.argv) == 4 and sys.argv[1:3] == ['--import', '--session']:
         print(json.dumps({'paths': import_files(sys.stdin.buffer, sys.argv[3] if len(sys.argv) == 4 else '')}))
     elif len(sys.argv) == 4 and sys.argv[1] == '--export-user' and sys.argv[2] in ('cage', 'cage-browser') and sys.argv[3] == '--paths-stdin':
         import pwd
