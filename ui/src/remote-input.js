@@ -13,7 +13,8 @@ import {
 export function installRemoteInput(
   transport,
   container,
-  { mode, systemClipboard = () => true, onStatus, onFallback, isActive,
+  { mode, systemClipboard = () => true, clipboardActive = () => window.cageSharedClipboardActive,
+    syncClipboard = () => window.cageSyncClipboard(), onStatus, onFallback, isActive,
     insertText, insertComposition, caretRect, surface, inputLabel = "Cage 网页输入", tabId: getTargetId = () => "", pasteContent, preparePaste, setCopyContext, copyText },
 ) {
   const listeners = [],
@@ -63,7 +64,7 @@ export function installRemoteInput(
     isActive() &&
     (nativeOwned || container.contains(document.activeElement) ||
       document.activeElement === target);
-  const sharedClipboard = () => systemClipboard() && window.cageSharedClipboardActive;
+  const sharedClipboard = () => systemClipboard() && clipboardActive();
   const shortcutModifier = () => {
     return physical.has("ControlRight") ? [0xffe4, "ControlRight"] : [0xffe3, "ControlLeft"];
   };
@@ -420,7 +421,7 @@ export function installRemoteInput(
   const receiveCopy = async ({ id, text, clipboard, context, document: sourceDocument, error }) => {
     if (sharedClipboard()) return;
     const valid = () => !disposed && Boolean(copyContext) && context === copyContext && id === getTargetId() && focused() &&
-      document.visibilityState !== "hidden" && document.hasFocus();
+      document.visibilityState !== "hidden" && (nativeOwned || document.hasFocus());
     if (!valid()) return;
     if (error) { copyRequested = false; clearTimeout(copyTimer); say("复制未完成，请重新选择内容后重试。"); return; }
     const revision = copyRevision;
@@ -476,7 +477,7 @@ export function installRemoteInput(
     if (copyText) {
       const context = copyContext, id = getTargetId();
       const valid = () => !disposed && isActive() && context === copyContext && id === getTargetId() &&
-        document.visibilityState !== "hidden" && document.hasFocus();
+        document.visibilityState !== "hidden" && (nativeOwned || document.hasFocus());
       return transport.runKeyAction(async sendKey => {
         const before = await caretRect?.();
         const sendCopy = async () => {
@@ -539,7 +540,7 @@ export function installRemoteInput(
       say("正在粘贴…");
       return transport.runKeyAction(async sendKey => {
         const before = await caretRect?.();
-        await window.cageSyncClipboard();
+        await syncClipboard();
         const after = await caretRect?.();
         if (disposed || !isActive() || id !== getTargetId() ||
             (before?.available && (!after?.available || before.context !== after.context))) {
@@ -789,6 +790,15 @@ export function installRemoteInput(
     readAndPaste,
     paste,
     text: () => lastText,
+    deactivate() {
+      focusHandoff = null;
+      if (composing && compositionSession) {
+        queueComposition({ mode: "cancel", text: "", selectionStart: 0, selectionEnd: 0 });
+      }
+      resetComposition();
+      deactivateNative();
+      release();
+    },
     edit(action) {
       if (composing) return false;
       if (action === "copy") copy();

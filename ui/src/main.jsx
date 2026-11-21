@@ -365,6 +365,7 @@ function App() {
   };
   const clipboardConnection = getClientContext().connection_id;
   const clipboardRef = useRef(null);
+  const accountDesktopControl = useRef(null);
   useEffect(() => {
     if (!status?.ready || viewingAccountDesktop || !nativeAvailable()) return;
     const clipboard = shareClipboard({
@@ -380,7 +381,7 @@ function App() {
   useEffect(() => {
     clipboardRef.current?.setVisible(windowVisible);
   }, [windowVisible]);
-  const desktopFiles = useDesktopFiles(Boolean(status?.ready && !viewingAccountDesktop), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
+  const desktopFiles = useDesktopFiles(Boolean(status?.ready), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
   const refreshSettings = async () => {
@@ -1231,6 +1232,8 @@ function App() {
         return false;
       if (terminal)
         return terminalControls.current.get(current.id)?.edit(command) || false;
+      if (viewingAccountDesktop)
+        return accountDesktopControl.current?.edit(command) || false;
       return remote.current?.edit(command) || false;
     };
     window.cageWorkbenchAction = async (command) => {
@@ -1348,6 +1351,7 @@ function App() {
     savedTabs,
     selectedProject,
     desktopOpen,
+    viewingAccountDesktop,
     terminalChoice,
   ]);
   const project = projectName(contentWorkspace, groups, tr("新项目"));
@@ -1677,6 +1681,7 @@ function App() {
             desktopOpen={!managementPage && desktopOpen}
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
             accountDesktops={status.account_desktops_supported ? accountDesktops : null}
+            onDesktopRename={(desktop) => setRename({ id: desktop.id, title: desktop.label || "", desktop: true })}
             onClaudeDesktop={() => { accountDesktops.clear(); setManagementPage(""); setHome(false); setDesktopOpen(true); }}
             onEditor={openEditor}
             onSettings={openSettings}
@@ -1733,7 +1738,18 @@ function App() {
           <main className={`workspace ${split ? "workspace-split" : ""}`} ref={workspaceBox} hidden={Boolean(managementPage)}
             style={{ "--split-left": `${100 * (dualBrowser && nativeSplit?.fraction || 0.5)}%` }}>
             {dropSide && <div aria-hidden="true" className={`split-drop split-${dropSide}`}>{dropSide === "left" ? tr("放到左侧") : tr("放到右侧")}</div>}
-            {!storageRecovery && desktopOpen && accountDesktops.panes.length>0 && <DesktopPanes model={accountDesktops} visible={!settingsOpen && !managementPage && windowVisible}/>}
+            {!storageRecovery && desktopOpen && accountDesktops.panes.length>0 && <DesktopPanes
+              ref={accountDesktopControl}
+              model={accountDesktops}
+              visible={!settingsOpen && !managementPage && windowVisible}
+              keyboard={status.keyboard}
+              systemClipboard={browser.capabilities?.systemClipboard !== false}
+              uploads={desktopFiles.uploads}
+              status={status}
+              onProjectOpened={() => refreshStatus.current?.()}
+              onStatus={notify}
+              onFallback={(text, message) => setTransfer({ text, message })}
+            />}
             {!storageRecovery && desktopOpen && !accountDesktops.panes.length && <ClaudeDesktop
               uploads={desktopFiles.uploads}
               onProjectOpened={() => refreshStatus.current?.()}
@@ -2147,17 +2163,17 @@ function App() {
       )}
       {rename && (
         <Modal
-          title={tr("重命名标签")}
-          onClose={() => setRename(null)}
+          title={rename.desktop ? tr("重命名 Desktop") : tr("重命名标签")}
+          onClose={rename.saving ? undefined : () => setRename(null)}
           footer={
             <>
               <span className="save-note">{tr("仅修改工作台中显示的名称")}</span>
-              <button onClick={() => setRename(null)}>{tr("取消")}</button>
+              <button disabled={rename.saving} onClick={() => setRename(null)}>{tr("取消")}</button>
               <button
                 className="primary"
                 form="rename-tab"
                 type="submit"
-                disabled={!rename.title.trim()}
+                disabled={!rename.title.trim() || rename.saving}
               >
                 {tr("保存名称")}
               </button>
@@ -2169,7 +2185,18 @@ function App() {
             id="rename-tab"
             onSubmit={async (event) => {
               event.preventDefault();
-              if (!rename.title.trim()) return;
+              if (!rename.title.trim() || rename.saving) return;
+              if (rename.desktop) {
+                setRename((current) => current && { ...current, saving: true });
+                try {
+                  await accountDesktops.rename({ id: rename.id }, rename.title.trim());
+                  setRename(null);
+                } catch (error) {
+                  setRename((current) => current && { ...current, saving: false });
+                  notify(error.message);
+                }
+                return;
+              }
               if (rename.session) {
                 try {
                   await api("/cli/sessions/" + rename.id + "/metadata", {title:rename.title.trim()});
@@ -2195,10 +2222,11 @@ function App() {
               setRename(null);
             }}
           >
-            <label htmlFor="tab-title">{tr("标签名称")}</label>
+            <label htmlFor="tab-title">{rename.desktop ? tr("Desktop 名称") : tr("标签名称")}</label>
             <input
               id="tab-title"
               autoFocus
+              disabled={rename.saving}
               maxLength={100}
               value={rename.title}
               onChange={(event) =>

@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { Check, Pencil, Plus, RefreshCw, TerminalSquare, Timer } from "lucide-react";
+import { Check, Pencil, Plus, RefreshCw, TerminalSquare, Timer, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { InlineSelect } from "./inline-select";
 import crabIcon from "./claude-account-crab.svg";
@@ -251,13 +251,14 @@ function accountCaption(profile) {
   return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
 }
 
-function ProfileCard({ proxySources, desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
+function ProfileCard({ proxySources, desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft, removeAccount }) {
   const tr = useTranslation();
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState("");
   const [group, setGroup] = useState(profile.handoff_group || "");
   const displayName = profile.label || profile.email;
   const fromTerminal = profile.source === "default";
+  const isDraft = !fromTerminal && !profile.email && ["pending", "signed_out", "duplicate"].includes(profile.status);
   const savedLabel = label.trim() || profile.email;
   const usage = useUsageCheck(profile, usageEnvironment, perform, change);
   return <article className="claude-profile" aria-label={accountCaption(profile)} data-enabled={profile.enabled}>
@@ -327,8 +328,19 @@ function ProfileCard({ proxySources, desktopNetwork, profile, environment, usage
           <TerminalSquare size={14} />{profile.status === "ready" ? tr("重新授权 Code") : tr("授权 Code")}</button>}
       <button className="quiet-button" disabled={busy || !!usageEnvironment || usage.state === "checking"} onClick={usage.check}>
         <RefreshCw size={14} />{tr("检查状态")}</button>
-      {!fromTerminal && !profile.email && !active && ["pending", "signed_out", "duplicate"].includes(profile.status) &&
-        <button className="text-button" disabled={busy} onClick={() => perform(() => cancelDraft(profile))}>{tr("撤销添加")}</button>}
+      {isDraft ? (
+        !active && <button className="text-button" disabled={busy} onClick={() => perform(() => cancelDraft(profile))}>{tr("撤销添加")}</button>
+      ) : (
+        <button
+          type="button"
+          className="quiet-button claude-profile-delete"
+          disabled={busy || active > 0}
+          title={active > 0 ? tr("请先关闭该账号的终端，再删除账号") : undefined}
+          onClick={(event) => perform(() => removeAccount(profile, event.currentTarget))}
+        >
+          <Trash2 size={14} />{tr("删除账号")}
+        </button>
+      )}
       <UsageNote profile={profile} state={usage.state} />
     </div>
   </article>;
@@ -396,6 +408,26 @@ export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, runni
       confirm: "撤销添加" })) {
       await load({ action: "cancel", id: profile.id });
     }
+  };
+  const removeAccount = async (profile, anchor) => {
+    const last = accounts.length === 1;
+    const displayName = profile.label || profile.email;
+    const hasIsolatedDesktop = Boolean(profile.desktop_instance_id && profile.desktop_instance_id !== "default");
+    await onConfirm({
+      title: translate("删除账号「{0}」？", displayName),
+      body: last
+        ? translate("这是列表中的最后一个账号。删除后会从账号管理与调度中移除，新建 Claude 终端将沿用环境原有的登录。虚拟机内的会话历史和资料会保留。")
+        : hasIsolatedDesktop
+          ? translate("删除后会从账号管理、调度和 Desktop 列表中移除此账号。请先关闭该账号的终端与 Desktop；虚拟机内的会话历史和资料会保留。")
+          : translate("删除后会从账号管理与调度中移除此账号。虚拟机内的会话历史和资料会保留。"),
+      confirm: translate("删除账号"),
+      pendingLabel: translate("正在删除…"),
+      danger: true,
+      anchor,
+      submit: async () => {
+        await load({ action: "delete", id: profile.id });
+      },
+    });
   };
   const joinDetected = async () => {
     try { await load({ action: "join", identity: detected.identity }); }
@@ -465,7 +497,7 @@ export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, runni
           perform={perform} change={load}
           join={() => perform(joinDetected)} />}
         {accounts?.map((profile) => <ProfileCard proxySources={proxySources} desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
-          busy={busy || environmentBusy} perform={perform} change={load} login={login} cancelDraft={cancelDraft}
+          busy={busy || environmentBusy} perform={perform} change={load} login={login} cancelDraft={cancelDraft} removeAccount={removeAccount}
           active={activeCounts.get(profile.id)?.all || 0} defaultActive={activeCounts.get(profile.id)?.fromDefault || 0} />)}
       </QuotaClock>
     </div>
