@@ -2668,5 +2668,13 @@
   "保留旧 Ubuntu 环境并新建 Debian": "Conserver l'ancien environnement Ubuntu et créer un environnement Debian",
   "保留旧 Ubuntu 环境并新建 Debian？": "Conserver l'ancien environnement Ubuntu et créer un environnement Debian ?",
   "旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。": "L'ancien environnement Ubuntu sera déplacé tel quel dans le dossier state/guests-removed du répertoire de données, sans supprimer aucun fichier. Cage téléchargera et créera ensuite un nouvel environnement Debian ; les fichiers et les connexions de l'ancien environnement ne seront pas repris dans le nouveau.",
-  "保留并新建 Debian": "Conserver et créer Debian"
+  "保留并新建 Debian": "Conserver et créer Debian",
+  "删除 {0}？": "Supprimer {0} ?",
+  "删除会先关闭此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "La suppression fermera d'abord cette instance Desktop et effacera ses données locales d'application ainsi que son état de connexion dans l'environnement. Le compte Claude et l'historique des sessions Claude Code ne seront pas supprimés.",
+  "删除会移除此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "La suppression retirera cette instance Desktop et effacera ses données locales d'application ainsi que son état de connexion dans l'environnement. Le compte Claude et l'historique des sessions Claude Code ne seront pas supprimés.",
+  "删除实例": "Supprimer l'instance",
+  "正在删除…": "Suppression…",
+  "另一个操作仍在进行，请稍候": "Une autre opération est toujours en cours, veuillez patienter",
+  "重命名 Desktop": "Renommer Desktop",
+  "Desktop 名称": "Nom du Desktop"
 }

@@ -9,6 +9,23 @@ scope=$3
 unit="desktop-$id"
 base="$HOME/.local/share/desktop-profiles/$id"
 runtime="/run/$unit"
+if [[ $scope == delete ]]; then
+  if [[ -d $base ]]; then
+    exec 9>"$base/launch.lock"
+    flock -w 55 9
+  fi
+  state=$(systemctl show --property=ActiveState --value "$unit.service" 2>/dev/null || :)
+  if [[ $state != "" && $state != inactive && $state != failed ]]; then
+    sudo systemctl stop "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.service"
+  fi
+  sudo systemctl reset-failed "$unit.service" 2>/dev/null || :
+  if [[ -d $base ]]; then
+    exec 9>&-
+    chmod -R u+rwX -- "$base" 2>/dev/null || :
+    rm -rf -- "$base"
+  fi
+  exit 0
+fi
 mkdir -p "$base"
 exec 9>"$base/launch.lock"
 flock -w 55 9

@@ -1675,6 +1675,7 @@ function App() {
             desktopOpen={!managementPage && desktopOpen}
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
             accountDesktops={status.account_desktops_supported ? accountDesktops : null}
+            onDesktopRename={(desktop) => setRename({ id: desktop.id, title: desktop.label || "", desktop: true })}
             onClaudeDesktop={() => { accountDesktops.clear(); setManagementPage(""); setHome(false); setDesktopOpen(true); }}
             onEditor={openEditor}
             onSettings={openSettings}
@@ -2145,17 +2146,17 @@ function App() {
       )}
       {rename && (
         <Modal
-          title={tr("重命名标签")}
-          onClose={() => setRename(null)}
+          title={rename.desktop ? tr("重命名 Desktop") : tr("重命名标签")}
+          onClose={rename.saving ? undefined : () => setRename(null)}
           footer={
             <>
               <span className="save-note">{tr("仅修改工作台中显示的名称")}</span>
-              <button onClick={() => setRename(null)}>{tr("取消")}</button>
+              <button disabled={rename.saving} onClick={() => setRename(null)}>{tr("取消")}</button>
               <button
                 className="primary"
                 form="rename-tab"
                 type="submit"
-                disabled={!rename.title.trim()}
+                disabled={!rename.title.trim() || rename.saving}
               >
                 {tr("保存名称")}
               </button>
@@ -2167,7 +2168,18 @@ function App() {
             id="rename-tab"
             onSubmit={async (event) => {
               event.preventDefault();
-              if (!rename.title.trim()) return;
+              if (!rename.title.trim() || rename.saving) return;
+              if (rename.desktop) {
+                setRename((current) => current && { ...current, saving: true });
+                try {
+                  await accountDesktops.rename({ id: rename.id }, rename.title.trim());
+                  setRename(null);
+                } catch (error) {
+                  setRename((current) => current && { ...current, saving: false });
+                  notify(error.message);
+                }
+                return;
+              }
               if (rename.session) {
                 try {
                   await api("/cli/sessions/" + rename.id + "/metadata", {title:rename.title.trim()});
@@ -2193,10 +2205,11 @@ function App() {
               setRename(null);
             }}
           >
-            <label htmlFor="tab-title">{tr("标签名称")}</label>
+            <label htmlFor="tab-title">{rename.desktop ? tr("Desktop 名称") : tr("标签名称")}</label>
             <input
               id="tab-title"
               autoFocus
+              disabled={rename.saving}
               maxLength={100}
               value={rename.title}
               onChange={(event) =>

@@ -187,6 +187,9 @@ func (s *Server) cancelClaudeDraft(id string) (claudeAccountList, error) {
 			return list, errors.New("请先关闭该账号的 Desktop，再撤销添加")
 		}
 	}
+	if a.DesktopInstanceID != "" {
+		delete(list.DesktopLabels, a.DesktopInstanceID)
+	}
 	list.Accounts = slices.DeleteFunc(list.Accounts, func(a claudeAccount) bool { return a.ID == id })
 	err = s.saveClaudeAccounts(list)
 	if err == nil {

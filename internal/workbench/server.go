@@ -47,6 +47,7 @@ type Server struct {
 	shellLoginWatch                                  shellLoginWatchState
 	desktopCatalogRevision                           atomic.Uint64
 	desktopLoginWatch                                desktopWatchState
+	desktopAction                                    func(context.Context, string, claudeAccount, string) error
 	desktopViews                                     displayViewDemand
 	desktopDisplayUpdate                             func(bool) error
 	browserViews                                     displayViewDemand
@@ -487,6 +488,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/vnc", s.vnc)
 	mux.HandleFunc("GET /api/desktop-instances", s.desktopCatalog)
 	mux.HandleFunc("POST /api/desktop-instances", s.newAccountDesktop)
+	mux.HandleFunc("DELETE /api/desktop-instances/{id}", s.deleteAccountDesktop)
+	mux.HandleFunc("POST /api/desktop-instances/{id}/metadata", s.updateAccountDesktopMetadata)
 	mux.HandleFunc("GET /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("POST /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("GET /api/claude-desktop", s.claudeDesktopStatus)

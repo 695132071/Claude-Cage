@@ -69,6 +69,7 @@ type claudeGuestSnapshot struct {
 type claudeAccountList struct {
 	PendingDesktop   string            `json:"pending_desktop,omitempty"`
 	DesktopRedirects map[string]string `json:"desktop_redirects,omitempty"`
+	DesktopLabels    map[string]string `json:"desktop_labels,omitempty"`
 	PendingProxyNode string            `json:"pending_proxy_node,omitempty"`
 	LastNumber       uint32            `json:"last_number,omitempty"`
 	Accounts         []claudeAccount   `json:"accounts"`
@@ -229,6 +230,10 @@ func (list claudeAccountList) find(id string) *claudeAccount {
 
 func validClaudeLabel(label string) bool {
 	return label != "" && utf8.RuneCountInString(label) <= 64 && strings.IndexFunc(label, unicode.IsControl) < 0
+}
+
+func validDesktopLabel(label string) bool {
+	return label != "" && utf8.ValidString(label) && utf8.RuneCountInString(label) <= 100 && strings.IndexFunc(label, unicode.IsControl) < 0
 }
 
 func (list *claudeAccountList) change(input claudeAccountInput) error {

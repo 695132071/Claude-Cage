@@ -113,8 +113,14 @@ func (s *Server) accountDesktop(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) changeAccountDesktop(parent context.Context, instance string, account claudeAccount, action string) error {
+	if s.desktopAction != nil {
+		return s.desktopAction(parent, instance, account, action)
+	}
 	var err error
 	scope := "stop"
+	if action == "delete" {
+		scope = "delete"
+	}
 	var key []byte
 	if action == "start" {
 		scope = "shared"
@@ -144,6 +150,9 @@ func (s *Server) changeAccountDesktop(parent context.Context, instance string, a
 	cmd.Stdin = bytes.NewReader(key)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
+		if action == "delete" {
+			return errors.New("无法清理客机内的 Desktop 实例数据，暂未删除记录，请重试")
+		}
 		msg := "Desktop 操作失败，请确认已安装 Claude Desktop 并检查客机服务"
 		if bytes.Contains(output, []byte("专属网络尚未就绪")) {
 			msg = "此账号的专属网络尚未就绪"

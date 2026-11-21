@@ -2668,5 +2668,13 @@
   "保留旧 Ubuntu 环境并新建 Debian": "Hay deegaanka Ubuntu ee hore oo samee Debian cusub",
   "保留旧 Ubuntu 环境并新建 Debian？": "Ma la hayaa deegaanka Ubuntu ee hore oo la sameeyaa Debian cusub?",
   "旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。": "Deegaanka Ubuntu ee hore sidiisa ayaa loo rarayaa galka state/guests-removed ee ku jira galka xogta, fayl lama tirtirayo. Kadib Cage wuxuu soo dejinayaa oo samaynayaa deegaan Debian cusub; faylasha iyo xaaladda gelitaanka ee deegaanka hore looma gudbinayo deegaanka cusub.",
-  "保留并新建 Debian": "Hay oo samee Debian"
+  "保留并新建 Debian": "Hay oo samee Debian",
+  "删除 {0}？": "Tirtir {0}?",
+  "删除会先关闭此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "Tirtiriddu waxay marka hore xidhi doontaa nuqulkan Desktop waxayna tirtiri doontaa xogta barnaamijka maxalliga ah iyo xaaladda gelitaanka ee ku jirta deegaanka. Koontada Claude ama taariikhda kulamada Claude Code lama tirtiri doono.",
+  "删除会移除此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "Tirtiriddu waxay meesha ka saari doontaa nuqulkan Desktop waxayna tirtiri doontaa xogta barnaamijka maxalliga ah iyo xaaladda gelitaanka ee ku jirta deegaanka. Koontada Claude ama taariikhda kulamada Claude Code lama tirtiri doono.",
+  "删除实例": "Tirtir nuqulka (instance)",
+  "正在删除…": "Waa la tirtirayaa…",
+  "另一个操作仍在进行，请稍候": "Hawl kale ayaa weli socota, fadlan sug",
+  "重命名 Desktop": "Magac u beddel Desktop",
+  "Desktop 名称": "Magaca Desktop"
 }

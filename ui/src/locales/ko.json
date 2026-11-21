@@ -2668,5 +2668,13 @@
   "保留旧 Ubuntu 环境并新建 Debian": "이전 Ubuntu 환경을 보관하고 Debian 새로 만들기",
   "保留旧 Ubuntu 环境并新建 Debian？": "이전 Ubuntu 환경을 보관하고 Debian을 새로 만들까요?",
   "旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。": "이전 Ubuntu 환경은 데이터 디렉터리의 state/guests-removed 폴더로 그대로 옮겨지며, 어떤 파일도 삭제되지 않습니다. 이어서 Cage가 새 Debian 환경을 다운로드하고 만듭니다. 이전 환경의 파일과 로그인 상태는 새 환경으로 옮겨지지 않습니다.",
-  "保留并新建 Debian": "보관하고 Debian 만들기"
+  "保留并新建 Debian": "보관하고 Debian 만들기",
+  "删除 {0}？": "{0}을(를) 삭제할까요?",
+  "删除会先关闭此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "삭제하면 먼저 이 Desktop 인스턴스를 닫고 환경 내 로컬 앱 데이터와 로그인 상태를 지웁니다. Claude 계정이나 Claude Code 세션 기록은 삭제되지 않습니다.",
+  "删除会移除此 Desktop 实例，并清除该实例在环境内的本地应用数据与登录状态。不会删除 Claude 账号或 Claude Code 会话历史。": "삭제하면 이 Desktop 인스턴스를 제거하고 환경 내 로컬 앱 데이터와 로그인 상태를 지웁니다. Claude 계정이나 Claude Code 세션 기록은 삭제되지 않습니다.",
+  "删除实例": "인스턴스 삭제",
+  "正在删除…": "삭제 중…",
+  "另一个操作仍在进行，请稍候": "다른 작업이 아직 진행 중입니다. 잠시 기다려 주세요",
+  "重命名 Desktop": "Desktop 이름 바꾸기",
+  "Desktop 名称": "Desktop 이름"
 }
