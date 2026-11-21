@@ -2002,6 +2002,21 @@ function App() {
                     <div className="start-error" role="status">
                       <strong>{status.abandoned_guests.map(name => ({ macos: "macOS", windows: "Windows", ubuntu: "Ubuntu" })[name] || name).join(" / ")}{" " + tr("客机已不再支持")}</strong>
                       <p>{tr("原有客机数据仍原样保留在磁盘上，未做任何改动；如不再需要，可以手动删除。")}</p>
+                      {status.abandoned_environment && !running && status.local_vm_storage && !isRemoteClient() && (
+                        <button
+                          className="text-button"
+                          disabled={busy}
+                          onClick={async () => {
+                            if (await confirm({
+                              title: tr("保留旧 Ubuntu 环境并新建 Debian？"),
+                              body: tr("旧 Ubuntu 环境会原样移到数据目录的 state/guests-removed 文件夹，不删除任何文件。随后 Cage 下载并创建新的 Debian 环境；旧环境里的文件和登录状态不会带到新环境。"),
+                              confirm: tr("保留并新建 Debian"),
+                            })) startEnvironment({ set_aside_abandoned: true });
+                          }}
+                        >
+                          {tr("保留旧 Ubuntu 环境并新建 Debian")}
+                        </button>
+                      )}
                     </div>
                   )}
                   {!storageRecovery && !setupProgress && status.job?.error && (

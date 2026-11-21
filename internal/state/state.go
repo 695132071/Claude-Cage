@@ -107,6 +107,16 @@ func (d Dir) ReadMarker(kind, vm string) string {
 
 var markers = []string{VersionOf, BuiltByOf, SSHFSOf, TermOf, FileMountsOf, MountsOf, CacheOf, ScratchOf, PolicyOf}
 
+// Owned names, relative to the folder, what it keeps of vm: its markers and
+// its staged single files.
+func Owned(vm string) []string {
+	names := make([]string, 0, len(markers)+1)
+	for _, kind := range markers {
+		names = append(names, kind+vm)
+	}
+	return append(names, filepath.Join("file-mounts", vm))
+}
+
 // Rename moves what is known of the VM from to its new name to: its
 // markers, and its staged single files (its shares are set again before it
 // next boots, from where they now are).
