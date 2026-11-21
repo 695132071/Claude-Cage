@@ -160,7 +160,7 @@ cage agent call settings.patch --input /private/path/settings-apply.json --wait 
 cage agent call environment.start --input /private/path/guest-choice.json --wait 30m
 ```
 
-已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。如果桌面端窗口正处于首次引导（`initialization.status` 返回 `desktop_active: true`），通过 Agent 调用 `environment.start` 会直接返回 `state_conflict`，避免与桌面引导并发冲突；可在桌面端完成引导或关闭引导窗口后再继续。请求中断时先核对安装状态再决定下一步。
+已有环境的 `environment.start` 可以不带输入。首次创建时传入 `{"guest_system":"debian-13"}`，可用系统以 `guest.options` 为准。传入 `macos` 或 `windows-11`、或数据目录里留有它们的安装记录时，请求会被拒绝并说明原因，原有数据保持不变；`status` 的 `abandoned_guests` 列出数据目录里仍留有哪类旧系统的数据。如果桌面端窗口正处于首次引导（`initialization.status` 返回 `desktop_active: true`），通过 Agent 调用 `environment.start` 会直接返回 `state_conflict`，避免与桌面引导并发冲突。用户已同意由 Agent 继续时，调用 `initialization.set` 并传入 `{"action":"release"}` 释放桌面引导，无需退出 Cage 窗口（退出会锁定本机账户）；之后引导页面只跟随显示安装进度，用户在窗口中重新开始安装时会再次占用引导。请求中断时先核对安装状态再决定下一步。
 
 需要用户完成的步骤出现时，报告具体需要做的事和恢复查询命令。不要用无限重试掩盖等待用户操作。安装进度在作业的 `setup_progress` 中；`prepared`、安装完成、运行和联网分别检查。
 

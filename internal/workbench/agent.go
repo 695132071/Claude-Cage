@@ -69,8 +69,8 @@ func AgentOperations() []AgentOperation {
 	}
 	get("guest.options", "Whether the environment is new, and any installation an earlier version left unfinished", "/api/environment/guest-systems")
 	get("initialization.status", "Read initial setup state; desktop_active indicates desktop first-run onboarding is active", "/api/environment/initialization")
-	post("initialization.set", "action: begin, install or complete; complete requires verified readiness", "/api/environment/initialization", object(map[string]string{"action": "string"}))
-	post("environment.start", "Start or resume installation. Omit guest_system for an existing environment; returns state_conflict while desktop first-run onboarding is active", "/api/start", from(guestInstallRequest{}))
+	post("initialization.set", "action: begin, install, release or complete; release lets the agent start the environment while desktop first-run onboarding is open; complete requires verified readiness", "/api/environment/initialization", object(map[string]string{"action": "string"}))
+	post("environment.start", "Start or resume installation. Omit guest_system for an existing environment; returns state_conflict while desktop first-run onboarding is active unless initialization.set release was called", "/api/start", from(guestInstallRequest{}))
 	post("environment.stop", "Stop the environment and active terminals; preserves persistent data", "/api/stop", object(nil))
 	get("environment.versions", "Read installed component and tool versions", "/api/environment/versions")
 	post("environment.update", "Update guest components; may restart guest services", "/api/environment/update", object(nil))

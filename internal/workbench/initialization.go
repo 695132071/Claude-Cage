@@ -40,14 +40,36 @@ func (s *Server) writeInitialization(r *http.Request, record initializationRecor
 
 const desktopOnboardingLease = 15 * time.Second
 
+// touchDesktopOnboarding renews the lease from the onboarding screen's polls.
+// After an agent releases it, polling alone does not reclaim it; only a
+// desktop setup action (claimDesktopOnboarding) does.
 func (s *Server) touchDesktopOnboarding() {
 	s.mu.Lock()
+	if !s.desktopOnboardingReleased {
+		s.desktopOnboardingUntil = time.Now().Add(desktopOnboardingLease)
+	}
+	s.mu.Unlock()
+}
+
+func (s *Server) claimDesktopOnboarding() {
+	s.mu.Lock()
+	s.desktopOnboardingReleased = false
 	s.desktopOnboardingUntil = time.Now().Add(desktopOnboardingLease)
+	s.mu.Unlock()
+}
+
+// releaseDesktopOnboarding hands first-run setup to the agent without
+// quitting the window, which would also lock the account.
+func (s *Server) releaseDesktopOnboarding() {
+	s.mu.Lock()
+	s.desktopOnboardingReleased = true
+	s.desktopOnboardingUntil = time.Time{}
 	s.mu.Unlock()
 }
 
 func (s *Server) clearDesktopOnboarding() {
 	s.mu.Lock()
+	s.desktopOnboardingReleased = false
 	s.desktopOnboardingUntil = time.Time{}
 	s.mu.Unlock()
 }
@@ -191,14 +213,21 @@ func (s *Server) initialization(w http.ResponseWriter, r *http.Request) {
 		if state.Required {
 			err = s.writeInitialization(r, initializationRecord{Version: 1, Started: state.Started})
 			if err == nil && requestInitiator(r) != jobInitiatorAgent {
-				s.touchDesktopOnboarding()
+				s.claimDesktopOnboarding()
 			}
 		}
 	case "install":
 		if state.Required {
 			err = s.writeInitialization(r, initializationRecord{Version: 1, Started: true})
 			if err == nil && requestInitiator(r) != jobInitiatorAgent {
-				s.touchDesktopOnboarding()
+				s.claimDesktopOnboarding()
+			}
+		}
+	case "release":
+		if state.Required {
+			err = s.writeInitialization(r, initializationRecord{Version: 1, Started: state.Started})
+			if err == nil {
+				s.releaseDesktopOnboarding()
 			}
 		}
 	case "complete":
