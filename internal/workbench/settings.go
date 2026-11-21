@@ -277,7 +277,14 @@ func validateWorkspace(path, profile string) (string, error) {
 	}
 	abs, err = paths.Resolve(abs)
 	if err != nil {
-		return "", errors.New("项目目录不存在或无法访问")
+		if errors.Is(err, os.ErrNotExist) {
+			return "", errors.New("项目目录不存在或无法访问")
+		}
+		reason := err
+		if pe := (*os.PathError)(nil); errors.As(err, &pe) {
+			reason = pe.Err
+		}
+		return "", errors.New("项目目录无法访问：" + reason.Error())
 	}
 	st, err := os.Stat(abs)
 	if err != nil || !st.IsDir() {
