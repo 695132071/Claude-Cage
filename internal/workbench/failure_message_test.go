@@ -46,6 +46,19 @@ func TestExecutionFailureNamesUnmountablePath(t *testing.T) {
 	}
 }
 
+func TestExecutionFailureNamesInterruptedTLSHandshake(t *testing.T) {
+	for _, line := range []string{
+		"curl: (35) TLS connect error: error:0A000126:SSL routines::unexpected eof while reading",
+		"curl: (35) OpenSSL SSL_connect: SSL_ERROR_SYSCALL in connection to downloads.claude.ai:443",
+	} {
+		output := "curl is already the newest version (8.14.1-2+deb13u7).\n正在验证 Anthropic 安装源…\n" + line + "\n"
+		message := executionFailure("安装或更新环境软件", errors.New("exit status 35"), output).Error()
+		if !strings.Contains(message, "TLS") || !strings.Contains(message, "TLS 1.2") || strings.Contains(message, "可识别") {
+			t.Fatalf("%q -> %q", line, message)
+		}
+	}
+}
+
 func TestExecutionFailureNamesMissingQEMU(t *testing.T) {
 	for _, line := range []string{
 		`level=fatal msg="exec: \"qemu-img\": executable file not found in %PATH%"`,
