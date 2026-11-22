@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	workspaceControlPlugin      = "workspace-control"
+	workspaceControlPlugin      = "use-cage"
 	workspaceControlManageTool  = "workspace_manage_extension"
 	workspaceControlReloadDelay = 150 * time.Millisecond
 )
@@ -144,6 +144,28 @@ type workspaceExtensionSummary struct {
 	Core        bool   `json:"core,omitempty"`
 }
 
+func neutralExtensionAlias(name string) string {
+	switch name {
+	case cagePluginName:
+		return cagePluginGuestFolderName
+	case workspaceControlPlugin:
+		return "workspace-control"
+	default:
+		return name
+	}
+}
+
+func resolveExtensionAlias(name string) string {
+	switch name {
+	case cagePluginGuestFolderName:
+		return cagePluginName
+	case "workspace-control":
+		return workspaceControlPlugin
+	default:
+		return name
+	}
+}
+
 func (b *workspaceControlBridge) handleStatus(w http.ResponseWriter, r *http.Request) {
 	s := b.owner
 	appearance := s.readSavedAppearance()
@@ -155,8 +177,8 @@ func (b *workspaceControlBridge) handleStatus(w http.ResponseWriter, r *http.Req
 	extensions := make([]workspaceExtensionSummary, 0, len(toolsView.Plugins))
 	for _, p := range toolsView.Plugins {
 		extensions = append(extensions, workspaceExtensionSummary{
-			Name:        p.Name,
-			DisplayName: p.DisplayName,
+			Name:        neutralExtensionAlias(p.Name),
+			DisplayName: neutralCatalogText(p.DisplayName),
 			Version:     p.Version,
 			Enabled:     p.Enabled,
 			Loaded:      p.Loaded,
@@ -373,20 +395,21 @@ func (b *workspaceControlBridge) handleExtensions(w http.ResponseWriter, r *http
 	s := b.owner
 	switch body.Action {
 	case "enable", "disable":
-		if body.Name == hostCommandsPlugin {
+		targetName := resolveExtensionAlias(body.Name)
+		if targetName == hostCommandsPlugin {
 			http.Error(w, "built-in core tools cannot be changed by this action", http.StatusForbidden)
 			return
 		}
-		if !hostbridge.ValidPluginName(body.Name) {
+		if !hostbridge.ValidPluginName(targetName) {
 			http.Error(w, "invalid extension name", http.StatusBadRequest)
 			return
 		}
-		if err := s.setHostPluginOn(body.Name, body.Action == "enable"); err != nil {
+		if err := s.setHostPluginOn(targetName, body.Action == "enable"); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
 		b.scheduleReload()
-		jsonReply(w, map[string]any{"ok": true, "action": body.Action, "name": body.Name, "reloading": true})
+		jsonReply(w, map[string]any{"ok": true, "action": body.Action, "name": neutralExtensionAlias(targetName), "reloading": true})
 	case "reload":
 		b.scheduleReload()
 		jsonReply(w, map[string]any{"ok": true, "action": "reload", "reloading": true})

@@ -632,6 +632,9 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 		}
 		view.Entries = append(view.Entries, item)
 	}
+	if err == nil && len(entries) > 0 {
+		s.refreshGuestMarketCatalogAsync()
+	}
 	jsonReply(w, view)
 }
 

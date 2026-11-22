@@ -15,12 +15,12 @@ import (
 
 func TestDefaultPluginsBundledAndDigestMatchesDeployed(t *testing.T) {
 	defaults := DefaultPlugins()
-	if len(defaults) == 0 {
-		t.Fatal("expected at least one bundled default plugin")
+	if len(defaults) < 2 {
+		t.Fatalf("expected at least two bundled default plugins, got %d", len(defaults))
 	}
-	studio, ok := DefaultPluginByName("extension-studio")
+	studio, ok := DefaultPluginByName("cage-plugin")
 	if !ok {
-		t.Fatal("expected extension-studio in bundled defaults")
+		t.Fatal("expected cage-plugin in bundled defaults")
 	}
 	if studio.Manifest.Kind != KindGuest {
 		t.Fatalf("kind = %q, want %q", studio.Manifest.Kind, KindGuest)
@@ -33,14 +33,14 @@ func TestDefaultPluginsBundledAndDigestMatchesDeployed(t *testing.T) {
 	}
 
 	dir := t.TempDir()
-	digest, err := InstallDefaultPlugin("extension-studio", dir)
+	digest, err := InstallDefaultPlugin("cage-plugin", dir)
 	if err != nil {
 		t.Fatalf("InstallDefaultPlugin: %v", err)
 	}
 	if digest != studio.Digest {
 		t.Fatalf("digest mismatch: installed %s vs embedded %s", digest, studio.Digest)
 	}
-	deployedDigest, err := PluginDigest(filepath.Join(dir, "extension-studio"), "extension-studio")
+	deployedDigest, err := PluginDigest(filepath.Join(dir, "cage-plugin"), "cage-plugin")
 	if err != nil {
 		t.Fatalf("PluginDigest: %v", err)
 	}
@@ -48,40 +48,40 @@ func TestDefaultPluginsBundledAndDigestMatchesDeployed(t *testing.T) {
 		t.Fatalf("deployed PluginDigest %s != embedded %s", deployedDigest, studio.Digest)
 	}
 	// Installing again must not overwrite an existing folder.
-	if _, err := InstallDefaultPlugin("extension-studio", dir); err == nil {
+	if _, err := InstallDefaultPlugin("cage-plugin", dir); err == nil {
 		t.Fatal("expected error when default plugin already exists")
 	}
 
-	ctrl, ok := DefaultPluginByName("workspace-control")
+	ctrl, ok := DefaultPluginByName("use-cage")
 	if !ok {
-		t.Fatal("expected workspace-control in bundled defaults")
+		t.Fatal("expected use-cage in bundled defaults")
 	}
 	if ctrl.Manifest.Kind != KindHost || len(ctrl.Manifest.Permissions) != 0 {
-		t.Fatalf("unexpected workspace-control manifest: %+v", ctrl.Manifest)
+		t.Fatalf("unexpected use-cage manifest: %+v", ctrl.Manifest)
 	}
 	if len(ctrl.I18n) != 15 {
-		t.Fatalf("workspace-control i18n languages = %d, want 15", len(ctrl.I18n))
+		t.Fatalf("use-cage i18n languages = %d, want 15", len(ctrl.I18n))
 	}
-	ctrlDigest, err := InstallDefaultPlugin("workspace-control", dir)
+	ctrlDigest, err := InstallDefaultPlugin("use-cage", dir)
 	if err != nil {
-		t.Fatalf("InstallDefaultPlugin(workspace-control): %v", err)
+		t.Fatalf("InstallDefaultPlugin(use-cage): %v", err)
 	}
-	deployedCtrlDigest, err := PluginDigest(filepath.Join(dir, "workspace-control"), "workspace-control")
+	deployedCtrlDigest, err := PluginDigest(filepath.Join(dir, "use-cage"), "use-cage")
 	if err != nil || deployedCtrlDigest != ctrlDigest || ctrlDigest != ctrl.Digest {
-		t.Fatalf("workspace-control digest mismatch: %s vs %s vs %s (%v)", deployedCtrlDigest, ctrlDigest, ctrl.Digest, err)
+		t.Fatalf("use-cage digest mismatch: %s vs %s vs %s (%v)", deployedCtrlDigest, ctrlDigest, ctrl.Digest, err)
 	}
 }
 
-func TestWorkspaceControlToolWordingIsNeutral(t *testing.T) {
+func TestUseCageToolWordingIsNeutral(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
 	installRoot := t.TempDir()
-	if _, err := InstallDefaultPlugin("workspace-control", installRoot); err != nil {
+	if _, err := InstallDefaultPlugin("use-cage", installRoot); err != nil {
 		t.Fatal(err)
 	}
-	ctrlDir := filepath.Join(installRoot, "workspace-control")
+	ctrlDir := filepath.Join(installRoot, "use-cage")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -91,7 +91,7 @@ func TestWorkspaceControlToolWordingIsNeutral(t *testing.T) {
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd, TerminateDuration: 2 * time.Second}, nil)
 	if err != nil {
-		t.Fatalf("connect workspace-control: %v", err)
+		t.Fatalf("connect use-cage: %v", err)
 	}
 	defer session.Close()
 
@@ -104,7 +104,7 @@ func TestWorkspaceControlToolWordingIsNeutral(t *testing.T) {
 	}
 	for _, tool := range listed.Tools {
 		if word, found := CheckWording(tool); found {
-			t.Fatalf("workspace-control tool %s violates CheckWording with %q", tool.Name, word)
+			t.Fatalf("use-cage tool %s violates CheckWording with %q", tool.Name, word)
 		}
 	}
 	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "workspace_list_capabilities", Arguments: map[string]any{}})
@@ -120,30 +120,68 @@ func TestWorkspaceControlToolWordingIsNeutral(t *testing.T) {
 	}
 }
 
-func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
+func TestCagePluginSearchAndCreateEndToEndAndNeutrality(t *testing.T) {
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
 	installRoot := t.TempDir()
-	if _, err := InstallDefaultPlugin("extension-studio", installRoot); err != nil {
+	if _, err := InstallDefaultPlugin("cage-plugin", installRoot); err != nil {
 		t.Fatal(err)
 	}
-	studioDir := filepath.Join(installRoot, "extension-studio")
+	studioDir := filepath.Join(installRoot, "cage-plugin")
 	draftsDir := t.TempDir()
 	submissionsDir := t.TempDir()
+	catalogPath := filepath.Join(t.TempDir(), "market-catalog.json")
+	sampleCatalog := `{
+  "updated_at": "2026-11-22T17:20:00Z",
+  "plugins": [
+    {
+      "name": "blender",
+      "display_name": "Blender",
+      "version": "1.0.0",
+      "description": "Connect to a running Blender instance for 3D scene modeling.",
+      "categories": ["desktop", "productivity"],
+      "permissions": ["network"],
+      "target": "local",
+      "installed": false,
+      "supported": true,
+      "has_mcp": true
+    },
+    {
+      "name": "excel-workbooks",
+      "display_name": "Excel Workbooks",
+      "version": "1.2.0",
+      "description": "Read and edit Excel spreadsheet workbooks.",
+      "categories": ["files"],
+      "permissions": [],
+      "target": "workspace",
+      "installed": true,
+      "installed_version": "1.2.0",
+      "supported": true,
+      "has_mcp": true
+    }
+  ]
+}`
+	if err := os.WriteFile(catalogPath, []byte(sampleCatalog), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, python, filepath.Join(studioDir, "server.py"))
 	cmd.Dir = studioDir
-	cmd.Env = append(os.Environ(), "EXT_DRAFTS_DIR="+draftsDir, "EXT_SUBMISSIONS_DIR="+submissionsDir)
+	cmd.Env = append(os.Environ(),
+		"PLUGIN_DRAFTS_DIR="+draftsDir,
+		"PLUGIN_SUBMISSIONS_DIR="+submissionsDir,
+		"PLUGIN_MARKET_CATALOG="+catalogPath,
+	)
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
 	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd, TerminateDuration: 2 * time.Second}, nil)
 	if err != nil {
-		t.Fatalf("connect extension-studio: %v", err)
+		t.Fatalf("connect cage-plugin: %v", err)
 	}
 	defer session.Close()
 
@@ -151,8 +189,8 @@ func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(listed.Tools) != 5 {
-		t.Fatalf("got %d tools, want 5", len(listed.Tools))
+	if len(listed.Tools) != 6 {
+		t.Fatalf("got %d tools, want 6", len(listed.Tools))
 	}
 	for _, tool := range listed.Tools {
 		if word, found := CheckWording(tool); found {
@@ -175,30 +213,46 @@ func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
 		return sb.String(), res.IsError
 	}
 
-	// Verify the returned guide never exposes reserved environment/product wording.
-	guide, isErr := callText("ext_get_guide", map[string]any{})
-	if isErr || guide == "" {
-		t.Fatalf("ext_get_guide failed: err=%v text=%q", isErr, guide)
+	// 1) Search finds a ready-made market plugin first.
+	marketOut, isErr := callText("search_plugins", map[string]any{"query": "3D blender"})
+	if isErr || !strings.Contains(marketOut, `"blender"`) || !strings.Contains(marketOut, "Plugins Market") {
+		t.Fatalf("unexpected blender search result: err=%v out=%s", isErr, marketOut)
 	}
-	if word, found := CheckWording(&mcp.Tool{Name: "guide", Description: guide}); found {
-		t.Fatalf("ext_get_guide output leaks reserved word %q", word)
+	// 2) Search recognizes an already installed plugin.
+	instOut, isErr := callText("search_plugins", map[string]any{"query": "spreadsheet"})
+	if isErr || !strings.Contains(instOut, `"excel-workbooks"`) || !strings.Contains(instOut, "already installed") {
+		t.Fatalf("unexpected installed search result: err=%v out=%s", isErr, instOut)
+	}
+	// 3) Search with no match guides creating a custom plugin.
+	missOut, isErr := callText("search_plugins", map[string]any{"query": "quantum-banana"})
+	if isErr || !strings.Contains(missOut, "plugin_scaffold") {
+		t.Fatalf("expected creation guidance on miss: err=%v out=%s", isErr, missOut)
 	}
 
-	// Scaffold a Python MCP + view extension.
-	scaffoldOut, isErr := callText("ext_scaffold", map[string]any{
+	// Verify the returned guide never exposes reserved environment/product wording.
+	guide, isErr := callText("plugin_get_guide", map[string]any{})
+	if isErr || guide == "" {
+		t.Fatalf("plugin_get_guide failed: err=%v text=%q", isErr, guide)
+	}
+	if word, found := CheckWording(&mcp.Tool{Name: "guide", Description: guide}); found {
+		t.Fatalf("plugin_get_guide output leaks reserved word %q", word)
+	}
+
+	// Scaffold a Python MCP + view plugin.
+	scaffoldOut, isErr := callText("plugin_scaffold", map[string]any{
 		"name":         "demo-widget",
 		"template":     "mcp-with-view-python",
 		"display_name": "Demo Widget",
 		"description":  "Shows a simple timestamp status panel.",
 	})
 	if isErr {
-		t.Fatalf("ext_scaffold error: %s", scaffoldOut)
+		t.Fatalf("plugin_scaffold error: %s", scaffoldOut)
 	}
 
-	// Validate the freshly scaffolded extension (includes live MCP smoke test).
-	valOut, isErr := callText("ext_validate", map[string]any{"name": "demo-widget"})
+	// Validate the freshly scaffolded plugin (includes live MCP smoke test).
+	valOut, isErr := callText("plugin_validate", map[string]any{"name": "demo-widget"})
 	if isErr {
-		t.Fatalf("ext_validate failed: %s", valOut)
+		t.Fatalf("plugin_validate failed: %s", valOut)
 	}
 	var report struct {
 		OK     bool     `json:"ok"`
@@ -223,7 +277,7 @@ func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
 	if err := os.WriteFile(htmlPath, append(origHTML, []byte("<script>alert(1)</script>")...), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	badOut, _ := callText("ext_validate", map[string]any{"name": "demo-widget"})
+	badOut, _ := callText("plugin_validate", map[string]any{"name": "demo-widget"})
 	if !strings.Contains(badOut, "inline <script>") {
 		t.Fatalf("expected CSP inline script error, got: %s", badOut)
 	}
@@ -231,12 +285,12 @@ func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
 	if err := os.WriteFile(htmlPath, origHTML, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	subOut, isErr := callText("ext_submit_draft", map[string]any{
+	subOut, isErr := callText("plugin_submit_draft", map[string]any{
 		"name":    "demo-widget",
 		"summary": "Initial demo widget with sidebar view",
 	})
 	if isErr {
-		t.Fatalf("ext_submit_draft failed: %s", subOut)
+		t.Fatalf("plugin_submit_draft failed: %s", subOut)
 	}
 
 	// Host-side ValidateDraftDir should translate extension.json into valid plugin.json.

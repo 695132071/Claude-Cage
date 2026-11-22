@@ -23,8 +23,8 @@ import (
 )
 
 // guestSubmissionRoot is the neutral folder inside the workspace environment
-// where extension-studio freezes validated drafts for user review.
-const guestSubmissionRoot = ".local/share/extension-submissions"
+// where cage-plugin freezes validated drafts for user review.
+const guestSubmissionRoot = ".local/share/plugin-submissions"
 
 const (
 	draftListLimit     = 4 << 20

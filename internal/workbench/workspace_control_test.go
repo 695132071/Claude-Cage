@@ -135,19 +135,19 @@ func TestWorkspaceControlBridgeSecurityAndEndToEndMCP(t *testing.T) {
 		t.Fatalf("expected 403 disabling commands, got %d", res.StatusCode)
 	}
 
-	// Non-core extension can be disabled and re-enabled.
-	res = callBridge(http.MethodPost, "/extensions", `{"action":"disable","name":"extension-studio"}`)
+	// Non-core extension can be disabled and re-enabled (using its neutral alias).
+	res = callBridge(http.MethodPost, "/extensions", `{"action":"disable","name":"plugin-studio"}`)
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 disabling extension-studio, got %d", res.StatusCode)
+		t.Fatalf("expected 200 disabling plugin-studio, got %d", res.StatusCode)
 	}
-	if !strings.Contains(s.preferences.HostPluginsOff, "extension-studio") {
-		t.Fatalf("expected extension-studio disabled in preferences: %q", s.preferences.HostPluginsOff)
+	if !strings.Contains(s.preferences.HostPluginsOff, "cage-plugin") {
+		t.Fatalf("expected cage-plugin disabled in preferences: %q", s.preferences.HostPluginsOff)
 	}
-	res = callBridge(http.MethodPost, "/extensions", `{"action":"enable","name":"extension-studio"}`)
+	res = callBridge(http.MethodPost, "/extensions", `{"action":"enable","name":"plugin-studio"}`)
 	res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		t.Fatalf("expected 200 enabling extension-studio, got %d", res.StatusCode)
+		t.Fatalf("expected 200 enabling plugin-studio, got %d", res.StatusCode)
 	}
 
 	// End-to-end: launch the deployed workspace-control MCP server with scoped env.

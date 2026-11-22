@@ -41,29 +41,37 @@ IGNORED_DIR_NAMES = {"__pycache__", ".git", ".pytest_cache"}
 
 
 def drafts_root() -> Path:
-    custom = os.environ.get("EXT_DRAFTS_DIR", "").strip()
+    custom = os.environ.get("PLUGIN_DRAFTS_DIR", "").strip()
     if custom:
         return Path(custom)
-    return Path.home() / ".local" / "share" / "extension-drafts"
+    return Path.home() / ".local" / "share" / "plugin-drafts"
 
 
 def submissions_root() -> Path:
-    custom = os.environ.get("EXT_SUBMISSIONS_DIR", "").strip()
+    custom = os.environ.get("PLUGIN_SUBMISSIONS_DIR", "").strip()
     if custom:
         return Path(custom)
-    return Path.home() / ".local" / "share" / "extension-submissions"
+    return Path.home() / ".local" / "share" / "plugin-submissions"
+
+
+def market_catalog_path() -> Path:
+    custom = os.environ.get("PLUGIN_MARKET_CATALOG", "").strip()
+    if custom:
+        return Path(custom)
+    return Path(__file__).resolve().parent / "market-catalog.json"
 
 
 GUIDE_SECTIONS: dict[str, str] = {
-    "overview": """# Custom Extension Authoring Guide
+    "overview": """# Custom Plugin Authoring Guide
 
-An extension is a folder containing `extension.json`, an optional stdio MCP server, and an optional sandboxed sidebar HTML view.
+A plugin is a folder containing `extension.json`, an optional stdio MCP server, and an optional sandboxed sidebar HTML view.
 
 ## Workflow
-1. Call `ext_scaffold` to create a working draft under the drafts directory.
+0. First call `search_plugins` to check whether a ready-made plugin already exists in the plugin market or is already installed. If a good match exists, recommend installing or using it instead of rebuilding from scratch.
+1. If no existing plugin fits the need, call `plugin_scaffold` to create a working draft under the drafts directory.
 2. Edit files inside the draft directory (write `extension.json`, your MCP server, and optional `view/` files).
-3. Call `ext_validate` to run manifest checks, file/CSP checks, and a live MCP `initialize` + `tools/list` smoke test.
-4. Fix any reported errors and call `ext_submit_draft`. The user will review the files and permissions in the workbench and click Install & Reload.
+3. Call `plugin_validate` to run manifest checks, file/CSP checks, and a live MCP `initialize` + `tools/list` smoke test.
+4. Fix any reported errors and call `plugin_submit_draft`. The user will review the files and permissions in the workbench and click Install & Reload.
 
 ## Neutral Manifest (`extension.json`)
 Required fields:
@@ -126,7 +134,36 @@ Declare up to 20 user-configurable settings. Values are passed to your MCP serve
 
 TOOLS: list[dict[str, Any]] = [
     {
-        "name": "ext_get_guide",
+        "name": "search_plugins",
+        "description": "Search available plugins in the plugin market and currently installed plugins by keyword or category. Call this first when the user asks for a new capability; if no existing plugin matches, build one with plugin_scaffold.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Search keywords matching plugin name, title, description, or category (e.g. 'excel', 'blender', 'pdf', 'browser'). Omit to list available plugins.",
+                },
+                "category": {
+                    "type": "string",
+                    "enum": ["desktop", "developer", "system", "network", "files", "productivity", "example"],
+                    "description": "Optional category filter.",
+                },
+                "installed_only": {
+                    "type": "boolean",
+                    "description": "When true, return only plugins that are already installed.",
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30,
+                    "description": "Maximum number of matches to return (default 10).",
+                },
+            },
+        },
+        "_meta": {"ui": {"visibility": ["model"]}},
+    },
+    {
+        "name": "plugin_get_guide",
         "description": "Read the concise specification for authoring custom MCP tools, sandboxed sidebar views, and settings.",
         "inputSchema": {
             "type": "object",
@@ -141,15 +178,15 @@ TOOLS: list[dict[str, Any]] = [
         "_meta": {"ui": {"visibility": ["model"]}},
     },
     {
-        "name": "ext_scaffold",
-        "description": "Create a new custom extension draft folder with starter manifest, MCP server, and optional sandboxed view.",
+        "name": "plugin_scaffold",
+        "description": "Create a new custom plugin draft folder with starter manifest, MCP server, and optional sandboxed view.",
         "inputSchema": {
             "type": "object",
             "required": ["name"],
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Extension identifier: lowercase letters, digits, and hyphens (max 40 chars).",
+                    "description": "Plugin identifier: lowercase letters, digits, and hyphens (max 40 chars).",
                 },
                 "template": {
                     "type": "string",
@@ -178,23 +215,23 @@ TOOLS: list[dict[str, Any]] = [
         "_meta": {"ui": {"visibility": ["model"]}},
     },
     {
-        "name": "ext_validate",
-        "description": "Validate an extension draft: checks manifest schema, file safety, view CSP rules, and runs a live MCP smoke test.",
+        "name": "plugin_validate",
+        "description": "Validate a plugin draft: checks manifest schema, file safety, view CSP rules, and runs a live MCP smoke test.",
         "inputSchema": {
             "type": "object",
             "required": ["name"],
             "properties": {
                 "name": {
                     "type": "string",
-                    "description": "Draft folder name under the extension drafts directory.",
+                    "description": "Draft folder name under the plugin drafts directory.",
                 }
             },
         },
         "_meta": {"ui": {"visibility": ["model"]}},
     },
     {
-        "name": "ext_submit_draft",
-        "description": "Validate and submit an extension draft snapshot so the user can review its code and permissions and install it.",
+        "name": "plugin_submit_draft",
+        "description": "Validate and submit a plugin draft snapshot so the user can review its code and permissions and install it.",
         "inputSchema": {
             "type": "object",
             "required": ["name"],
@@ -205,15 +242,15 @@ TOOLS: list[dict[str, Any]] = [
                 },
                 "summary": {
                     "type": "string",
-                    "description": "Short summary of what this extension does or what changed, shown during review.",
+                    "description": "Short summary of what this plugin does or what changed, shown during review.",
                 },
             },
         },
         "_meta": {"ui": {"visibility": ["model"]}},
     },
     {
-        "name": "ext_list_drafts",
-        "description": "List existing extension drafts and whether each has been submitted for review.",
+        "name": "plugin_list_drafts",
+        "description": "List existing custom plugin drafts and whether each has been submitted for review.",
         "inputSchema": {
             "type": "object",
             "properties": {},
@@ -626,7 +663,7 @@ def tool_scaffold(args: dict[str, Any]) -> dict[str, Any]:
         "draft_dir": str(draft_dir),
         "template": template,
         "files": created_files,
-        "next_step": "Edit the files in draft_dir, then run ext_validate and ext_submit_draft.",
+        "next_step": "Edit the files in draft_dir, then run plugin_validate and plugin_submit_draft.",
     })
 
 
@@ -1179,6 +1216,104 @@ def tool_list_drafts() -> dict[str, Any]:
     return ok_json({"drafts_dir": str(d_root), "drafts": items})
 
 
+def tool_search_plugins(args: dict[str, Any]) -> dict[str, Any]:
+    query = str(args.get("query") or "").strip().lower()
+    category = str(args.get("category") or "").strip().lower()
+    installed_only = bool(args.get("installed_only"))
+    raw_limit = args.get("limit", 10)
+    try:
+        limit = max(1, min(30, int(raw_limit)))
+    except (TypeError, ValueError):
+        limit = 10
+
+    catalog_file = market_catalog_path()
+    catalog_data: dict[str, Any] = {"updated_at": "", "plugins": []}
+    if catalog_file.is_file():
+        try:
+            loaded = json.loads(catalog_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict) and isinstance(loaded.get("plugins"), list):
+                catalog_data = loaded
+        except Exception:
+            pass
+
+    tokens = [tok for tok in re.split(r"[\s,;/|_-]+", query) if tok]
+    scored: list[tuple[int, dict[str, Any]]] = []
+    for item in catalog_data.get("plugins") or []:
+        if not isinstance(item, dict):
+            continue
+        if installed_only and not item.get("installed"):
+            continue
+        cats = [str(c).lower() for c in (item.get("categories") or [])]
+        if category and category not in cats:
+            continue
+
+        name = str(item.get("name") or "").lower()
+        display = str(item.get("display_name") or "").lower()
+        desc = str(item.get("description") or "").lower()
+        localized = " ".join(
+            f"{v.get('displayName', '')} {v.get('description', '')}"
+            for v in (item.get("i18n") or {}).values()
+            if isinstance(v, dict)
+        ).lower()
+        haystack = f"{name} {display} {desc} {' '.join(cats)} {localized}"
+
+        if tokens:
+            score = 0
+            for tok in tokens:
+                if tok == name:
+                    score += 100
+                elif tok in name:
+                    score += 40
+                elif tok in display or tok in cats:
+                    score += 25
+                elif tok in desc or tok in localized:
+                    score += 12
+            if score == 0:
+                continue
+        else:
+            score = 10 if item.get("installed") else 1
+
+        if item.get("installed"):
+            score += 5
+        scored.append((score, item))
+
+    scored.sort(key=lambda pair: (-pair[0], str(pair[1].get("name") or "")))
+    matches = []
+    for _, item in scored[:limit]:
+        matches.append({
+            "name": item.get("name", ""),
+            "display_name": item.get("display_name", ""),
+            "version": item.get("version", ""),
+            "description": item.get("description", ""),
+            "categories": item.get("categories", []),
+            "permissions": item.get("permissions", []),
+            "target": item.get("target", "workspace"),
+            "installed": bool(item.get("installed")),
+            "installed_version": item.get("installed_version", ""),
+            "supported": bool(item.get("supported", True)),
+            "has_view": bool(item.get("has_view")),
+            "has_mcp": bool(item.get("has_mcp", True)),
+        })
+
+    if any(m["installed"] for m in matches):
+        recommendation = "Matching plugin(s) are already installed. Use their tools directly, or ask the user to enable them in Plugins if turned off."
+    elif matches:
+        recommendation = "Ready-made matching plugin(s) exist in the plugin market. Recommend that the user install one from the Plugins Market instead of building a duplicate."
+    elif not catalog_data.get("plugins"):
+        recommendation = "The local plugin market index is currently empty or still loading. You may ask the user to refresh the Plugins Market, or create a custom plugin using plugin_get_guide and plugin_scaffold."
+    else:
+        recommendation = "No existing plugin matches this request. Call plugin_get_guide and plugin_scaffold to create a custom plugin, validate it with plugin_validate, and submit it with plugin_submit_draft."
+
+    return ok_json({
+        "query": query,
+        "category": category,
+        "catalog_updated_at": catalog_data.get("updated_at", ""),
+        "total_catalog_count": len(catalog_data.get("plugins") or []),
+        "matches": matches,
+        "recommendation": recommendation,
+    })
+
+
 def ok_json(payload: Any) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(payload, indent=2, ensure_ascii=False)}]}
 
@@ -1188,7 +1323,9 @@ def err_result(message: str) -> dict[str, Any]:
 
 
 def handle_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
-    if name == "ext_get_guide":
+    if name == "search_plugins":
+        return tool_search_plugins(args or {})
+    if name == "plugin_get_guide":
         topic = (args or {}).get("topic")
         if topic:
             if topic not in GUIDE_SECTIONS:
@@ -1196,13 +1333,13 @@ def handle_tool_call(name: str, args: dict[str, Any]) -> dict[str, Any]:
             return {"content": [{"type": "text", "text": GUIDE_SECTIONS[topic]}]}
         full = "\n\n".join(GUIDE_SECTIONS[k] for k in ("overview", "mcp", "view", "settings"))
         return {"content": [{"type": "text", "text": full}]}
-    if name == "ext_scaffold":
+    if name == "plugin_scaffold":
         return tool_scaffold(args or {})
-    if name == "ext_validate":
+    if name == "plugin_validate":
         return ok_json(run_validation((args or {}).get("name", "")))
-    if name == "ext_submit_draft":
+    if name == "plugin_submit_draft":
         return tool_submit_draft(args or {})
-    if name == "ext_list_drafts":
+    if name == "plugin_list_drafts":
         return tool_list_drafts()
     return err_result(f"unknown tool: {name}")
 
@@ -1214,7 +1351,7 @@ def answer(message: dict[str, Any]) -> dict[str, Any] | None:
         return {
             "protocolVersion": params.get("protocolVersion", "2024-11-05"),
             "capabilities": {"tools": {}},
-            "serverInfo": {"name": "extension-studio", "version": "0.1.0"},
+            "serverInfo": {"name": "plugin-studio", "version": "0.1.0"},
         }
     if method == "tools/list":
         return {"tools": TOOLS}

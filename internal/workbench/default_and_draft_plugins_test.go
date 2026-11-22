@@ -29,7 +29,7 @@ func TestDefaultPluginsLifecycleUninstallAndRestore(t *testing.T) {
 	view := s.hostToolsView()
 	found := false
 	for _, p := range view.Plugins {
-		if p.Name == "extension-studio" {
+		if p.Name == "cage-plugin" {
 			found = true
 			if !p.Default || p.Kind != hostbridge.KindGuest || p.Problem != "" {
 				t.Fatalf("unexpected default plugin view: %+v", p)
@@ -37,7 +37,7 @@ func TestDefaultPluginsLifecycleUninstallAndRestore(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("expected extension-studio deployed on first run: %+v", view.Plugins)
+		t.Fatalf("expected cage-plugin deployed on first run: %+v", view.Plugins)
 	}
 	if len(view.DismissedDefaults) != 0 {
 		t.Fatalf("expected no dismissed defaults initially: %+v", view.DismissedDefaults)
@@ -45,34 +45,34 @@ func TestDefaultPluginsLifecycleUninstallAndRestore(t *testing.T) {
 
 	// Uninstall via POST /api/host-tools: folder moves to plugins-removed and dismissed=true.
 	rec := httptest.NewRecorder()
-	s.setHostTools(rec, trustedPluginRequest(s, http.MethodPost, "/api/host-tools", `{"remove":"extension-studio"}`))
+	s.setHostTools(rec, trustedPluginRequest(s, http.MethodPost, "/api/host-tools", `{"remove":"cage-plugin"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("uninstall status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, err := os.Lstat(filepath.Join(s.hostPluginDir(), "extension-studio")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(s.hostPluginDir(), "cage-plugin")); !os.IsNotExist(err) {
 		t.Fatalf("expected plugin folder removed, err=%v", err)
 	}
-	if aside, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "extension-studio-*", hostbridge.ManifestFile)); len(aside) != 1 {
+	if aside, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "cage-plugin-*", hostbridge.ManifestFile)); len(aside) != 1 {
 		t.Fatalf("expected backup in plugins-removed, got %v", aside)
 	}
 
 	// Subsequent ensureDefaultPlugins() (simulating app upgrade) MUST NOT force it back.
 	s.ensureDefaultPlugins()
-	if _, err := os.Lstat(filepath.Join(s.hostPluginDir(), "extension-studio")); !os.IsNotExist(err) {
+	if _, err := os.Lstat(filepath.Join(s.hostPluginDir(), "cage-plugin")); !os.IsNotExist(err) {
 		t.Fatalf("dismissed default plugin was reinstalled on restart")
 	}
 	view = s.hostToolsView()
-	if len(view.DismissedDefaults) != 1 || view.DismissedDefaults[0].Name != "extension-studio" {
-		t.Fatalf("expected extension-studio in dismissed_defaults, got %+v", view.DismissedDefaults)
+	if len(view.DismissedDefaults) != 1 || view.DismissedDefaults[0].Name != "cage-plugin" {
+		t.Fatalf("expected cage-plugin in dismissed_defaults, got %+v", view.DismissedDefaults)
 	}
 
 	// User explicitly restores the default plugin.
 	rec = httptest.NewRecorder()
-	s.setHostTools(rec, trustedPluginRequest(s, http.MethodPost, "/api/host-tools", `{"restore_default":"extension-studio"}`))
+	s.setHostTools(rec, trustedPluginRequest(s, http.MethodPost, "/api/host-tools", `{"restore_default":"cage-plugin"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("restore status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if _, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), "extension-studio")); err != nil {
+	if _, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), "cage-plugin")); err != nil {
 		t.Fatalf("restored default plugin failed to load: %v", err)
 	}
 	view = s.hostToolsView()
@@ -88,35 +88,77 @@ func TestDefaultPluginsPreserveLocalEditsAndAutoUpgradeUnmodified(t *testing.T) 
 	// Case 1: unmodified plugin with older tracked version auto-upgrades cleanly.
 	s.defaultPluginsMu.Lock()
 	recs := s.readDefaultPluginsLocked()
-	rec := recs["extension-studio"]
+	rec := recs["cage-plugin"]
 	rec.InstalledVersion = "0.0.1"
-	recs["extension-studio"] = rec
+	recs["cage-plugin"] = rec
 	if err := s.writeDefaultPluginsLocked(recs); err != nil {
 		t.Fatal(err)
 	}
 	s.defaultPluginsMu.Unlock()
 
 	s.ensureDefaultPlugins()
-	if aside, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "extension-studio-*", hostbridge.ManifestFile)); len(aside) != 1 {
+	if aside, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "cage-plugin-*", hostbridge.ManifestFile)); len(aside) != 1 {
 		t.Fatalf("expected auto-upgrade to preserve old copy in plugins-removed: %v", aside)
 	}
 
 	// Case 2: user edited a file locally -> must NOT be overwritten on upgrade.
-	customNote := filepath.Join(s.hostPluginDir(), "extension-studio", "custom.txt")
+	customNote := filepath.Join(s.hostPluginDir(), "cage-plugin", "custom.txt")
 	if err := os.WriteFile(customNote, []byte("my local tweak\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	s.defaultPluginsMu.Lock()
 	recs = s.readDefaultPluginsLocked()
-	rec = recs["extension-studio"]
+	rec = recs["cage-plugin"]
 	rec.InstalledVersion = "0.0.1"
-	recs["extension-studio"] = rec
+	recs["cage-plugin"] = rec
 	_ = s.writeDefaultPluginsLocked(recs)
 	s.defaultPluginsMu.Unlock()
 
 	s.ensureDefaultPlugins()
 	if data, err := os.ReadFile(customNote); err != nil || string(data) != "my local tweak\n" {
 		t.Fatalf("expected local modification preserved, got %q err=%v", string(data), err)
+	}
+}
+
+func TestGuestMarketCatalogIsNeutralAndFolderIsSanitized(t *testing.T) {
+	if got := guestPluginFolder("cage-plugin"); got != "plugin-studio" {
+		t.Fatalf("guestPluginFolder(cage-plugin) = %q, want plugin-studio", got)
+	}
+	if got := guestPluginFolder("system-status"); got != "system-status" {
+		t.Fatalf("guestPluginFolder(system-status) = %q, want system-status", got)
+	}
+
+	s := &Server{profile: t.TempDir(), token: randomToken(), origin: "http://localhost:19004"}
+	s.ensureDefaultPlugins()
+	s.hostMarket.entries = []hostbridge.MarketEntry{
+		{
+			Name:        "blender",
+			DisplayName: "Blender",
+			Version:     "1.0.0",
+			Description: "Operate a running Blender 3D app.",
+			Kind:        hostbridge.KindHost,
+			Permissions: []string{"network"},
+			Categories:  []string{"desktop"},
+		},
+		{
+			Name:        "excel-workbooks",
+			DisplayName: "Excel Workbooks",
+			Version:     "1.0.0",
+			Description: "Read and write spreadsheets in Cage guest VM.",
+			Kind:        hostbridge.KindGuest,
+			Permissions: []string{},
+			Categories:  []string{"files"},
+		},
+	}
+	raw := s.guestMarketCatalogJSON(nil)
+	text := string(raw)
+	if !strings.Contains(text, `"blender"`) || !strings.Contains(text, `"excel-workbooks"`) {
+		t.Fatalf("expected market entries in catalog: %s", text)
+	}
+	for _, forbidden := range []string{"cage", "guest", "vm"} {
+		if strings.Contains(strings.ToLower(text), forbidden) {
+			t.Fatalf("guestMarketCatalogJSON leaked reserved word %q:\n%s", forbidden, text)
+		}
 	}
 }
 

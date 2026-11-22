@@ -1,8 +1,8 @@
 {
-  "name": "workspace-control",
-  "displayName": "Workspace Control",
+  "name": "use-cage",
+  "displayName": "Use Cage",
   "version": "0.1.0",
-  "description": "Reads workspace status and adjusts appearance, display preferences, and extensions within safe boundaries.",
+  "description": "Reads workspace status and adjusts appearance, display preferences, and plugins within safe boundaries.",
   "icon": "icon.svg",
   "engines": {
     "cage": ">=0.2.0"
