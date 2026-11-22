@@ -192,7 +192,7 @@
   "二维码已过期，请重新生成。": "Le code QR a expiré, veuillez le générer à nouveau.",
   "二维码约两分钟有效，过期后可刷新。": "Le code QR est valable environ deux minutes et peut être actualisé après expiration.",
   "云端安装路径": "Chemin d'installation dans le cloud",
-  "云端按需读取项目。凭据、Git 元数据和链接受限。断开连接后共享结束。": "Le cloud lit le projet à la demande. Les identifiants, les métadonnées Git et les liens sont restreints. Le partage prend fin à la déconnexion.",
+  "云端按需读取项目。目录外访问和链接受限，断开连接后共享结束。": "Le cloud lit le projet à la demande. L’accès hors du répertoire et les liens sont restreints, et le partage prend fin à la déconnexion.",
   "云端文件夹": "Dossier cloud",
   "云端账户": "Compte cloud",
   "云端账户菜单": "Menu du compte cloud",

@@ -191,7 +191,7 @@
   "二维码已过期，请重新生成。": "Koodhka QR wuu dhacay, fadlan mar kale samee.",
   "二维码约两分钟有效，过期后可刷新。": "Koodhka QR wuxuu shaqaynayaa ilaa laba daqiiqo waana la cusboonaysiin karaa kadib markuu dhaco.",
   "云端安装路径": "Waddada rakibaadda ee daruuraha",
-  "云端按需读取项目。凭据、Git 元数据和链接受限。断开连接后共享结束。": "Daruuruhu waxay akhriyaan mashruuca marka loo baahdo. Aqoonsiyada, metadata-da Git iyo link-yada waa la xaddiday. Wadaaggu wuxuu dhammaadaa marka xidhiidhka la gooyo.",
+  "云端按需读取项目。目录外访问和链接受限，断开连接后共享结束。": "Daruuruhu waxay akhriyaan mashruuca marka loo baahdo. Gelitaanka ka baxsan galka iyo link-yada waa la xaddiday, wadaagguna wuxuu dhammaadaa marka xidhiidhka la gooyo.",
   "云端文件夹": "Galka daruuraha",
   "云端账户": "Akoonka daruuraha",
   "云端账户菜单": "Menu-ga akoonka daruuraha",
