@@ -1591,10 +1591,30 @@ svg {
   min-height: 0;
 }
 .workbench-main {
+  position: relative;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-width: 0;
+}
+.home-floating-chrome {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  min-height: var(--workbench-header-height);
+  padding: 0 12px;
+  pointer-events: none;
+}
+.home-floating-chrome > button {
+  pointer-events: auto;
+}
+.home-floating-chrome > .progress-line {
+  top: 0;
+  bottom: auto;
 }
 .workspace-sidebar-stack {
   position: relative;

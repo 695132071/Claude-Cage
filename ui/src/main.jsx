@@ -1710,7 +1710,12 @@ function App() {
           />
         )}
         <div className="workbench-main">
-          {!managementPage && showHome && terminalHeader(null)}
+          {!managementPage && showHome && (sidebarCollapsed || busy) && (
+            <div className="home-floating-chrome">
+              {sidebarButton()}
+              {busy && <div className="progress-line" />}
+            </div>
+          )}
           {browserError && running && !connectionError && <div className="connection-banner" role="status">
             <span>{tr("客机浏览器暂时无法连接。")}{browserError}</span>
             <button onClick={() => refreshStatus.current?.()}>{tr("重试")}</button>
@@ -1931,6 +1936,7 @@ function App() {
                       </div>
                       <button
                         className="primary"
+                        ref={showHome ? terminalTrigger : undefined}
                         data-terminal-location="start"
                         disabled={busy || Boolean(connectionError) || (!running && !setupProxy &&
                           ((!account?.guest_system && status.local_vm_storage && !isRemoteClient() && guestSystem === undefined) || !validGuestChoice(guestSystem)))}
