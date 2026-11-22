@@ -57,6 +57,7 @@ import {
   sameState,
   mergeTabs,
   mergeBrowserTabs,
+  shouldShowBrowserError,
 } from "./workspace-state.mjs";
 import { SafetyPanel } from "./safety";
 import { SafetyChecklistContext, SafetyMessage } from "./safety-message";
@@ -215,6 +216,7 @@ function App() {
   const closeBrowser = () => {
     const previous = viewBeforeBrowser.current;
     browserDismissed.current = true;
+    setBrowserError("");
     const available = id => tabs.some(tab => tab.id === id);
     const restored = previous?.layout;
     const id = [restored?.active, restored?.other].find(available);
@@ -402,7 +404,10 @@ function App() {
     setTailnetLogin(null);
     setManagementPage("");
     const tab = tabs.find((t) => t.id === id);
-    if (tab && tab.kind !== "terminal") browserDismissed.current = false;
+    if (tab && tab.kind !== "terminal") {
+      browserDismissed.current = false;
+      if (browserError || !browserStreamReady.current) refreshStatus.current?.();
+    }
     setDesktopOpen(false);
     setHome(false);
     if (tab?.kind === "browser-settings") setLayout({ active: id });
@@ -412,11 +417,13 @@ function App() {
     if (tab && tab.kind !== "terminal") {
       try {
         await api("/browser/activate", { id });
+        setBrowserError("");
         if (activeRef.current === id) {
           setBrowser(previous => ({ ...previous, active: id }));
           if (focusContent) remote.current?.focus();
         }
       } catch (e) {
+        setBrowserError(e.message);
         notify(e.message);
       }
     }
@@ -1695,7 +1702,7 @@ function App() {
         )}
         <div className="workbench-main">
           {!managementPage && showHome && terminalHeader(null)}
-          {browserError && running && !connectionError && <div className="connection-banner" role="status">
+          {shouldShowBrowserError({ browserError, browserVisible, managementPage, running, connectionError }) && <div className="connection-banner" role="status">
             <span>{tr("客机浏览器暂时无法连接。")}{browserError}</span>
             <button onClick={() => refreshStatus.current?.()}>{tr("重试")}</button>
           </div>}
