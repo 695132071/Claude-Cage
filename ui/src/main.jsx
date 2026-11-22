@@ -84,6 +84,7 @@ import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
 import { useTranslation } from "./interface-language.mjs";
+import { localizeBackendMessage } from "./backend-message.mjs";
 
 function App() {
   const tr = useTranslation();
@@ -2003,7 +2004,7 @@ function App() {
                   {(busy || (running && (!status.ready || network.mode !== "open"))) && (
                     <p className="welcome-subtitle">
                       <SafetyMessage message={busy
-                        ? tr(status.job.message)
+                        ? localizeBackendMessage(status.job.message, tr)
                         : !status.ready
                           ? status.environment_update_error || "浏览器连接尚未就绪，可以恢复连接或继续使用终端。"
                           : tr("{0}。终端与本地文件仍可使用。", tr(network.label))} />
@@ -2138,7 +2139,7 @@ function App() {
                   )}
                   {!storageRecovery && !setupProgress && status.job?.error && (
                     <div className="start-error" role="alert">
-                      <strong>{tr(status.job.message || "本次操作未完成")}</strong>
+                      <strong>{status.job.message ? localizeBackendMessage(status.job.message, tr) : tr("本次操作未完成")}</strong>
                       <p><SafetyMessage message={status.job.error} /></p>
                       {status.can_restore && (
                         <button
