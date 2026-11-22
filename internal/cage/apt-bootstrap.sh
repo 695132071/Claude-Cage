@@ -22,9 +22,14 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 chmod 0755 "$stage"
 mkdir -m 0755 "$stage/lists"
-# HTTP also works in minimal images without a CA bundle. APT still requires the
-# Debian archive signature and package hashes; no insecure options are enabled.
-printf '%s\n' 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://deb.debian.org/debian-security trixie-security main' > "$stage/security.list"
+# HTTPS first where the image has a CA bundle, for networks that only allow
+# port 443; HTTP also works in minimal images without one. Either way APT
+# requires the Debian archive signature and package hashes; no insecure
+# options are enabled.
+schemes=http
+if [ -s /etc/ssl/certs/ca-certificates.crt ]; then
+  schemes='https http'
+fi
 apt_bootstrap_get() {
   if env DEBIAN_FRONTEND=noninteractive apt-get \
     -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 \
@@ -39,7 +44,17 @@ apt_bootstrap_get() {
   printf 'APT_FAILED exit=%s command=apt-get %s\n' "$status" "$*" >&2
   return "$status"
 }
-apt_bootstrap_get update
+status=1
+for scheme in $schemes; do
+  printf 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] %s://deb.debian.org/debian-security trixie-security main\n' "$scheme" > "$stage/security.list"
+  if apt_bootstrap_get update; then
+    status=0
+    break
+  else
+    status=$?
+  fi
+done
+[ "$status" = 0 ] || exit "$status"
 packages='apt libapt-pkg7.0'
 if [ "$(dpkg-query -W -f='${Status}' apt-utils 2>/dev/null || true)" = 'install ok installed' ]; then
   packages="$packages apt-utils"
