@@ -361,6 +361,24 @@ func mustJSON(t *testing.T, v any) string {
 	return string(data)
 }
 
+func TestScanReportsUnsupportedNodeDNSInsteadOfMissingNodes(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "system.yaml", testNode+"dns:\n  proxy-server-nameserver: [system]\n")
+	writeConfig(t, root, "doh.yaml", testNode+"dns:\n  proxy-server-nameserver: [https://resolver.example.test/dns-query]\n")
+	entries := Scan([]Location{{"Mihomo", root, Plain, ""}}, []byte("key"))
+	got := map[string]Config{}
+	for _, e := range entries {
+		got[e.Name] = e
+	}
+	rejected := got["system.yaml"]
+	if rejected.Nodes != 0 || strings.Contains(rejected.Error, "没有可导入的节点") || !strings.Contains(rejected.Error, "节点 DNS") || !strings.Contains(rejected.Error, "HTTPS DoH") {
+		t.Fatalf("unsupported node DNS misreported: %s", mustJSON(t, rejected))
+	}
+	if accepted := got["doh.yaml"]; accepted.Nodes != 1 || accepted.Error != "" {
+		t.Fatalf("remote DoH node DNS rejected: %s", mustJSON(t, accepted))
+	}
+}
+
 func TestNodeDataPreservesOnlySourceNodeDNS(t *testing.T) {
 	input := []byte(`proxies: [{name: node, type: http, server: node.example.test, port: 8080}]
 dns:
