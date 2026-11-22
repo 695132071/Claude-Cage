@@ -1898,17 +1898,10 @@ function App() {
                       />
                       <span>
                         <strong>{tr("Cage 隔离环境")}</strong>
-                        <small>
-                          {running
-                            ? runtimeLabel
-                            : setupProxy
-                              ? tr("配置代理")
-                              : tr("启动环境")}
-                        </small>
+                        {running && <small>{runtimeLabel}</small>}
                       </span>
                     </div>
                     {!busy && !running && !account?.guest_system && status.local_vm_storage && !isRemoteClient() && <GuestSystemPicker system={guestSystem} onChange={setGuestSystem} />}
-                    {!running && status.local_vm_storage && !isRemoteClient() && <button className="storage-entry text-button" disabled={busy} onClick={() => openSettings("project")}>{tr("选择环境存储位置")}</button>}
                     <div className="start-project-footer">
                       <span>
                         <i className={`status-dot ${network.mode}`} />

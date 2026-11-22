@@ -2881,16 +2881,16 @@ svg {
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 22px;
+  padding: 20px 22px;
   text-align: left;
 }
 .environment-summary span {
   display: grid;
-  gap: 5px;
+  gap: 3px;
 }
 .environment-summary strong {
   color: var(--strong);
-  font-weight: 500;
+  font-weight: 560;
 }
 .environment-summary small {
   color: var(--muted);
@@ -3284,7 +3284,6 @@ html[dir="rtl"] .browser-header-cell { direction: rtl; }
 .environment-storage .storage-actions button:disabled { opacity: 1; color: var(--muted); background: var(--chrome); }
 .environment-storage .storage-repair-help { margin: 8px 0 0; }
 .environment-storage > [role="status"] { margin: 12px 0 20px; overflow-wrap: anywhere; }
-.start-project-box .storage-entry { justify-self: start; margin: 0 16px 8px; }
 
 .project-folder-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 .project-folder-list li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
