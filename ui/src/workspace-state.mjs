@@ -161,3 +161,15 @@ export function mergeBrowserTabs(previous, browserTabs) {
   }
   return changed ? next : previous;
 }
+
+export function shouldShowBrowserError({
+  browserError,
+  browserVisible,
+  managementPage,
+  running,
+  connectionError,
+}) {
+  return Boolean(
+    browserError && browserVisible && !managementPage && running && !connectionError,
+  );
+}
