@@ -45,7 +45,35 @@ keywords: 云端 远程部署 VPS SSH 无KVM rootless 服务器 主机 指纹 �
 - macOS 和 Linux：填写 Unix 套接字的绝对路径，不展开 `~` 和环境变量，长度不超过系统上限（macOS 103 字节，Linux 107 字节）。连接前核对它确实是套接字、属于当前用户，且组和其他用户没有写权限；可以是指向这样的套接字的符号链接。权限不符时按提示改为仅自己可读写（如 `chmod 600`）。
 - Windows：只接受本机命名管道，格式为 `\\.\pipe\名称`，不接受网络路径和其他文件路径。
 
-Cage 只连接你填写的位置，不读取 `~/.ssh/config`，也不运行 `ssh -G` 等命令推断 agent。连接失败时提示会区分三种情况：无法连接 agent 或指定位置不符合要求、agent 通信失败（未能读取密钥列表）、agent 中没有可用密钥。私钥始终留在 agent 内，Cage 不导出也不上传。
+Cage 在连接时使用已保存的 agent 设置。需要读取本机 SSH 配置时，从下文的导入入口操作。连接失败时会区分 agent 无法连接、无法读取密钥列表和没有可用密钥。私钥始终留在 agent 内。
+
+### 导入本机 SSH 配置
+
+在 macOS、Linux 或 Windows 的“SSH 主机”侧栏点击“导入本机 SSH 配置”。Cage 从当前用户的配置读取主机（macOS 和 Linux 使用 `~/.ssh/config`，Windows 使用 `%USERPROFILE%\.ssh\config`）。核对名称、地址、用户名与端口后点击“导入所选主机”。导入只追加本机连接记录。同名（不区分大小写）或相同地址、端口、用户名的已有连接会跳过，保留其认证设置与已核对的指纹。超出 100 台主机上限或保存失败时整批不导入。
+
+导入的登录方式固定为“本机 SSH agent”。请先用 `ssh-add` 将密钥加入本机 agent，再用 `ssh-add -l` 检查。Cage 忽略 `IdentityFile`，不会打开该文件、保存私钥路径、复制原始配置或私钥，也不会向客机或远端转发 agent。
+
+未指定 `IdentityAgent` 或填写 `IdentityAgent SSH_AUTH_SOCK` 时，使用[上述本机 agent 默认设置](#指定-ssh-agent)。显式指定时，macOS 和 Linux 使用 Unix 套接字绝对路径，Windows 使用本机命名管道。导入不展开 `~`、环境变量或路径中的 OpenSSH 标记。agent 不可用或没有密钥时，连接会报错。
+
+支持 UTF-8（含 BOM）、LF/CRLF、双引号、`key=value`、多个别名、重复 `Host` 段、`*`/`?` 通配和 `!` 排除。除行首注释外，导入也接受不在引号内的行内 `#` 注释。按“第一个匹配值生效”的规则提取 `HostName`、`User`、`Port` 和 `IdentityAgent`。`HostName` 支持 `%h`。只导入明确列出的别名。默认端口为 22，未指定 `User` 时使用当前用户（Windows 取 `USERNAME`）。导入默认为 Linux 远端。Windows 远端可在导入后编辑“远程系统”。
+
+以下限制会明确报告，现有手动添加方式保持可用：
+
+- 含 `Include` 或 `Match` 的文件整体拒绝导入，避免漏掉条件配置后连接到错误目标。不会执行 `Match exec`、`ProxyCommand`、`LocalCommand`，也不调用 `ssh -G` 或外部解析程序。
+- 依赖代理或跳板机、主机名规范化、指定 IPv4/IPv6 地址族、`IdentitiesOnly yes`、`IdentityAgent none`、证书或其他不兼容的认证策略时跳过该主机。`PubkeyAuthentication` 允许 `yes`，`PreferredAuthentications` 必须包含 `publickey`。遇到未知选项时，跳过原因只显示指令名，不显示其值。
+- 忽略转发、保活、`ConnectTimeout`、连接复用（`ControlMaster`/`ControlPath`/`ControlPersist`）和 `UpdateHostKeys` 等选项。`IgnoreUnknown` 不会扩大可导入的选项范围。主机身份由 Cage 的首次指纹核对与保存的指纹管理，不继承 OpenSSH 的 `known_hosts` 或 `CheckHostIP` 设置。
+- 只读取用户配置中的普通文件，Windows 还要求文件位于本机磁盘。配置最多 1 MiB，每行小于 64 KiB，最多 100 个明确别名。预览后如果文件变化，需要重新读取并核对。
+
+例如，下面的 `dev` 可以导入。连接前请用 `ssh-add` 把对应密钥加入本机 agent。
+
+```sshconfig
+Host dev
+    HostName dev.example.com
+    User developer
+    Port 2222
+```
+
+配置语义参考 [OpenSSH ssh_config](https://man.openbsd.org/ssh_config)；Windows agent 的启用与密钥加载见 [Microsoft OpenSSH 密钥管理](https://learn.microsoft.com/windows-server/administration/openssh/openssh_keymanagement)。导入是一次性读取，之后修改原始 SSH 配置不会自动更新已保存连接。
 
 <figure class="guide-shot">
   <a href="../../www/public/docs/screenshots/ssh-host-form.jpg" target="_blank" rel="noopener" aria-label="查看原图：远程主机地址、认证与私钥路径表单"><img src="../../www/public/docs/screenshots/ssh-host-form.jpg" alt="远程主机地址、认证与私钥路径表单" width="2560" height="1764" loading="lazy" decoding="async" /></a>

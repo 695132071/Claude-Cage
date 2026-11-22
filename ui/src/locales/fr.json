@@ -2585,7 +2585,6 @@
   "已恢复使用 Tailscale 官方控制服务器": "Serveur de contrôle officiel Tailscale rétabli",
   "SSH agent 套接字（可选）": "Socket de l'agent SSH (facultatif)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/votre-nom/.ssh/agent.sock",
-  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Laissez vide pour utiliser SSH_AUTH_SOCK. Si un gestionnaire de mots de passe fournit son propre agent, saisissez le chemin absolu de son socket. Cage ne lit pas les fichiers de configuration SSH.",
   "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Laissez vide pour utiliser SSH_AUTH_SOCK ou l'agent Windows OpenSSH. Pour un autre agent, saisissez son canal nommé commençant par \\\\.\\pipe\\.",
   "新增 Cookie": "Ajouter un cookie",
   "编辑 Cookie": "Modifier le cookie",
@@ -2713,5 +2712,13 @@
   "丢弃文件": "Supprimer le fichier",
   "正在丢弃…": "Suppression…",
   "TLS ClientHello 分段传输兼容模式": "Mode de compatibilité par fragmentation TLS ClientHello",
-  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Désactivé par défaut. Activez uniquement si la chaîne proxy sélectionnée renvoie EOF lors du handshake TLS ou affiche par intermittence « Sortie à confirmer » : conserve le chiffrement post-quantique complet et l’isolation proxy, en scindant uniquement les TLS ClientHello dépassant 1000 octets."
+  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Désactivé par défaut. Activez uniquement si la chaîne proxy sélectionnée renvoie EOF lors du handshake TLS ou affiche par intermittence « Sortie à confirmer » : conserve le chiffrement post-quantique complet et l’isolation proxy, en scindant uniquement les TLS ClientHello dépassant 1000 octets.",
+  "私钥、转发和其他 SSH 选项不会导入。已有主机不会覆盖，首次连接仍需核对指纹。": "Les clés privées, les redirections et les autres options SSH ne sont pas importées. Les hôtes existants sont conservés. Vérifiez l’empreinte à la première connexion.",
+  "没有可导入的主机。": "Aucun hôte à importer.",
+  "已跳过的主机": "Hôtes ignorés",
+  "导入所选主机（{0}）": "Importer les hôtes sélectionnés ({0})",
+  "已导入 {0} 台主机，跳过 {1} 台已有主机。": "{0} hôtes importés ; {1} hôtes existants ignorés.",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。": "Laissez vide pour utiliser SSH_AUTH_SOCK. Si un gestionnaire de mots de passe fournit son propre agent, saisissez le chemin absolu de son socket.",
+  "导入本机 SSH 配置": "Importer la configuration SSH locale",
+  "从 {0} 读取主机，使用本机 SSH agent。请先用 ssh-add 添加密钥。": "Lit les hôtes dans {0} et utilise l’agent SSH local ; ajoutez d’abord les clés avec ssh-add."
 }

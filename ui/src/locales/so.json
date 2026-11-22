@@ -2585,7 +2585,6 @@
   "已恢复使用 Tailscale 官方控制服务器": "Waxaa lagu celiyay server-ka maamulka rasmiga ah ee Tailscale",
   "SSH agent 套接字（可选）": "Socket-ka SSH agent (ikhtiyaari)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/Magacaaga/.ssh/agent.sock",
-  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK. Haddii maamulaha erayada sirta ah uu bixiyo agent u gaar ah, geli waddada buuxda ee socket-kiisa. Cage ma akhriyo faylasha dejinta SSH.",
   "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK ama Windows OpenSSH agent. Agent kale, geli tuubbada magacaaban (named pipe) ee ku bilaabanta \\\\.\\pipe\\.",
   "新增 Cookie": "Ku dar Cookie",
   "编辑 Cookie": "Wax ka beddel Cookie",
@@ -2713,5 +2712,13 @@
   "丢弃文件": "Tuur faylka",
   "正在丢弃…": "Waa la tuurayaa…",
   "TLS ClientHello 分段传输兼容模式": "Habka iswaafajinta kala-qaybinta TLS ClientHello",
-  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Wuu dansan yahay si caadi ah. Kaliya shid haddii silsiladda proxy-ga la doortay ay soo celiso EOF inta lagu jiro is-gacanqaadka TLS ama mararka qaar muujiso «Ka-bixitaanku wuxuu sugayaa xaqiijin»: wuxuu ilaaliyaa sir-qorista buuxda ee post-quantum iyo go’doominta proxy-ga, isagoo kala qaybinaya kaliya TLS ClientHello ka weyn 1000 bayt."
+  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Wuu dansan yahay si caadi ah. Kaliya shid haddii silsiladda proxy-ga la doortay ay soo celiso EOF inta lagu jiro is-gacanqaadka TLS ama mararka qaar muujiso «Ka-bixitaanku wuxuu sugayaa xaqiijin»: wuxuu ilaaliyaa sir-qorista buuxda ee post-quantum iyo go’doominta proxy-ga, isagoo kala qaybinaya kaliya TLS ClientHello ka weyn 1000 bayt.",
+  "私钥、转发和其他 SSH 选项不会导入。已有主机不会覆盖，首次连接仍需核对指纹。": "Furayaasha gaarka ah, gudbinta iyo xulashooyinka kale ee SSH lama soo dejiyo. Martigeliyeyaasha jira lama beddelo. Xaqiiji faraha furaha marka ugu horreysa ee la xiriirayo.",
+  "没有可导入的主机。": "Ma jiraan martigeliyeyaal la soo dejin karo.",
+  "已跳过的主机": "Martigeliyeyaasha la dhaafay",
+  "导入所选主机（{0}）": "Soo deji martigeliyeyaasha la doortay ({0})",
+  "已导入 {0} 台主机，跳过 {1} 台已有主机。": "Waxaa la soo dejiyay {0} martigeliye, waxaana la dhaafay {1} martigeliye oo jira.",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。": "Banaan u daa si loo isticmaalo SSH_AUTH_SOCK. Haddii maamulaha erayada sirta ah uu bixiyo agent u gaar ah, geli waddada buuxda ee socket-kiisa.",
+  "导入本机 SSH 配置": "Soo deji habaynta SSH ee maxalliga ah",
+  "从 {0} 读取主机，使用本机 SSH agent。请先用 ssh-add 添加密钥。": "Martigeliyeyaasha waxaa laga akhriyaa {0} waxaana la isticmaalaa SSH agent-ka maxalliga ah; marka hore furayaasha ku dar ssh-add."
 }
