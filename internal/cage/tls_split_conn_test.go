@@ -228,7 +228,7 @@ func TestTLSClientHelloSplitEndToEndThroughPickyServer(t *testing.T) {
 		DisableKeepAlives: true,
 	}
 	defer plainTransport.CloseIdleConnections()
-	ip, err := probeExitIPServices(context.Background(), &http.Client{Transport: plainTransport, Timeout: 3 * time.Second}, services, time.Minute)
+	ip, err := probeExitIPServices(context.Background(), &http.Client{Transport: plainTransport, Timeout: 3 * time.Second}, services, time.Minute, "")
 	if ip != "" || !errors.Is(err, ErrTLSHandshakeFailed) || !strings.Contains(err.Error(), "TLS 握手失败") {
 		t.Fatalf("expected ErrTLSHandshakeFailed without split, got ip=%q err=%v", ip, err)
 	}
@@ -247,7 +247,7 @@ func TestTLSClientHelloSplitEndToEndThroughPickyServer(t *testing.T) {
 		DisableKeepAlives: true,
 	}
 	defer splitTransport.CloseIdleConnections()
-	ip, err = probeExitIPServices(context.Background(), &http.Client{Transport: splitTransport, Timeout: 3 * time.Second}, services, time.Minute)
+	ip, err = probeExitIPServices(context.Background(), &http.Client{Transport: splitTransport, Timeout: 3 * time.Second}, services, time.Minute, "")
 	if err != nil || ip != "8.8.8.8" {
 		t.Fatalf("expected split ClientHello probe to succeed, got ip=%q err=%v", ip, err)
 	}
