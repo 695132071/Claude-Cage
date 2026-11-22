@@ -241,16 +241,24 @@
 }
 .settings-page .settings-row-control {
   flex: none;
-  min-width: 170px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 0;
   max-width: 240px;
+}
+.settings-page .settings-row-control .inline-select {
+  min-width: 152px;
 }
 .settings-page .settings-row-control--wide {
   width: 240px;
   max-width: 52%;
 }
+.settings-page .settings-row-control--wide > * {
+  width: 100%;
+}
 .settings-page .settings-row-control > button {
   width: auto;
-  margin-left: auto;
   display: inline-flex;
 }
 .settings-page .settings-card .settings-row input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
@@ -446,7 +454,7 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]),
+.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.theme-swatch-hex),
 .settings-page .settings-content .inline-select-trigger {
   height: var(--s-control);
   padding: 0 12px;

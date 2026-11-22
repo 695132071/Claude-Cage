@@ -166,6 +166,7 @@ export function WorkspaceSidebar({
           <Home size={17} />
           {tr("工作台")}
         </button>
+        {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label={tr("SSH 主机")}><Server size={17} />SSH</button>}
         <div className={`sidebar-browser-row ${!desktopOpen && !home && tabs.some((tab) => tab.id === active && tab.kind !== "terminal") ? "selected" : ""}`}>
           <button
             className="sidebar-link"
@@ -192,11 +193,14 @@ export function WorkspaceSidebar({
           aria-current={claudeAccountsOpen ? "page" : undefined}>
           <UsersRound size={17} />{tr("Claude 账号管理")}
         </button>
-        <div className="sidebar-nav-divider" aria-hidden="true" />
         <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label={tr("打开 Tailscale")}><Network size={17} />Tailscale</button>
-        {plugins?.pages?.length > 0 && <PluginPagesNav pages={plugins.pages} selected={plugins.pageOpen} onOpen={plugins.onView} />}
-        {plugins && <HostPluginsNav open={plugins.open} onOpen={plugins.onOpen} />}
-        {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label={tr("SSH 主机")}><Server size={17} />SSH</button>}
+        {plugins && (
+          <>
+            <div className="sidebar-nav-divider" aria-hidden="true" />
+            <HostPluginsNav open={plugins.open} onOpen={plugins.onOpen} />
+            {plugins.pages?.length > 0 && <PluginPagesNav pages={plugins.pages} selected={plugins.pageOpen} onOpen={plugins.onView} />}
+          </>
+        )}
       </nav>
       <div className="sidebar-scroll" ref={scroll}>
         <div className="sidebar-section-heading">
