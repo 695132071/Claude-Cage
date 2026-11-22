@@ -2282,25 +2282,26 @@ svg {
   background: var(--paper);
 }
 .welcome-content {
-  width: min(100%, 510px);
+  width: min(100%, 460px);
   text-align: center;
-  padding-bottom: 48px;
+  padding-bottom: 40px;
   animation: surface-enter 220ms var(--ease-out);
 }
 .welcome-logo {
   display: block;
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
-  border-radius: 18px;
-  margin: 0 auto 24px;
+  border-radius: 16px;
+  margin: 0 auto 14px;
   box-shadow: var(--shadow-sm);
 }
 .welcome h1 {
-  font-size: 2.1429rem;
-  font-weight: 620;
-  letter-spacing: -0.03em;
-  margin: 0 0 24px;
+  font-size: 1.7143rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.25;
+  margin: 0 0 28px;
   color: var(--strong);
   overflow-wrap: anywhere;
 }
@@ -2310,13 +2311,13 @@ svg {
 .welcome-subtitle {
   font-size: 0.9286rem;
   line-height: 1.65;
-  margin: 10px 0 24px;
+  margin: 8px 0 26px;
   color: var(--muted);
 }
 .start-project-box {
   text-align: left;
   border: 1px solid var(--line);
-  border-radius: 16px;
+  border-radius: 15px;
   background: var(--paper);
   box-shadow: var(--shadow-sm);
   overflow: hidden;
@@ -2328,9 +2329,10 @@ svg {
 .onboarding-steps {
   display: flex;
   justify-content: center;
-  gap: 24px;
+  align-items: center;
+  gap: 10px;
   padding: 0;
-  margin: -8px 0 24px;
+  margin: 0 0 18px;
   list-style: none;
   color: var(--muted);
   font-size: 0.8571rem;
@@ -2338,16 +2340,23 @@ svg {
 .onboarding-steps li {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+}
+.onboarding-steps li + li::before {
+  content: "";
+  width: 18px;
+  height: 1px;
+  margin-inline-end: 4px;
+  background: var(--line);
 }
 .onboarding-steps li > span {
   display: grid;
   place-items: center;
-  width: 22px;
-  height: 22px;
+  width: 19px;
+  height: 19px;
   border: 1px solid var(--line);
   border-radius: 50%;
-  font-size: 0.7857rem;
+  font-size: 0.72rem;
   font-variant-numeric: tabular-nums;
 }
 .onboarding-steps [aria-current="step"] {
@@ -2365,7 +2374,7 @@ svg {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 18px 20px;
+  padding: 16px 18px;
 }
 .start-project-row .primary {
   flex: none;
