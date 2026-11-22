@@ -2111,7 +2111,6 @@ svg {
 .terminal-create-form > small {color:var(--muted);}
 .sidebar-project > .terminal-create-menu,
 .chrome > .terminal-create-menu { margin-inline-start: auto; }
-.welcome-shortcuts + .terminal-create-menu { margin-inline: auto; }
 .terminal-create-menu button {
   gap: 10px;
   white-space: nowrap;
@@ -2420,42 +2419,6 @@ svg {
   gap: 7px;
   color: var(--muted);
   font-size: 0.8571rem;
-}
-.welcome-hint {
-  font-size: 0.8571rem;
-  color: var(--muted);
-  line-height: 1.75;
-  margin-top: 22px;
-}
-.welcome-hint code {
-  display: inline-block;
-  padding: 1px 6px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: var(--chrome);
-  color: var(--strong);
-  font-family: var(--code-font-family);
-  font-size: 0.82rem;
-}
-.welcome-shortcuts {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 20px;
-}
-.welcome-shortcuts button {
-  background: var(--chrome);
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  padding: 7px 14px;
-  color: var(--ink);
-  font-size: 0.9286rem;
-}
-.welcome-shortcuts button:hover:not(:disabled) {
-  background: var(--hover);
-  color: var(--strong);
-  border-color: color-mix(in srgb, var(--ink) 16%, var(--line));
 }
 .start-error {
   background: color-mix(in srgb, var(--danger) 5%, var(--paper));

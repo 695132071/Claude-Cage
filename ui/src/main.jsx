@@ -3,7 +3,6 @@ import logo from "./logo.png";
 import React, { useEffect, useRef, useState } from "react";
 import {
   Clock3,
-  FileCode2,
   FolderOpen,
   Globe2,
   LoaderCircle,
@@ -1985,27 +1984,6 @@ function App() {
                     {!busy && !running && !account?.guest_system && status.local_vm_storage && !isRemoteClient() && <GuestSystemPicker system={guestSystem} onChange={setGuestSystem} />}
                     {terminalMenuAt("start")}
                   </div>
-                  {running && (
-                    <div className="welcome-shortcuts">
-                      <button onClick={newTerminalHere} data-terminal-location="shortcuts" aria-haspopup="menu" disabled={busy}>
-                        <TerminalSquare size={16} />
-                        {tr("新建终端")}
-                      </button>
-                      <button
-                        onClick={() => openEditor(contentWorkspace)}
-                        disabled={!status.ready || busy}
-                      >
-                        <FileCode2 size={16} />
-                        {tr("浏览文件")}
-                      </button>
-                    </div>
-                  )}
-                  {terminalMenuAt("shortcuts")}
-                  {running && status.ready && (
-                    <p className="welcome-hint">
-                      {tr("打开项目后，在终端输入") + " "}<code>claude</code>{tr("，按提示登录你的账户。")}
-                    </p>
-                  )}
                   </>}
                   {status.project_error && (
                     <div className="start-error" role="alert">
@@ -2061,7 +2039,7 @@ function App() {
                       )}
                     </div>
                   )}
-                  {!setupProgress && status.job?.log && (
+                  {!setupProgress && status.job?.log && (busy || Boolean(status.job?.error) || !running || !status.ready) && (
                     <button
                       className="text-button details-link"
                       onClick={() => setDetails(true)}
