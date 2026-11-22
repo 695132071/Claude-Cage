@@ -192,12 +192,12 @@ export function WorkspaceSidebar({
           aria-current={claudeAccountsOpen ? "page" : undefined}>
           <UsersRound size={17} />{tr("Claude 账号管理")}
         </button>
-        <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label={tr("打开 Tailscale")}><Network size={17} />Tailscale</button>
-        {plugins && (
+        {(plugins || onTailscale) && (
           <>
             <div className="sidebar-nav-divider" aria-hidden="true" />
-            <HostPluginsNav open={plugins.open} onOpen={plugins.onOpen} />
-            {plugins.pages?.length > 0 && <PluginPagesNav pages={plugins.pages} selected={plugins.pageOpen} onOpen={plugins.onView} />}
+            {plugins && <HostPluginsNav open={plugins.open} onOpen={plugins.onOpen} />}
+            {onTailscale && <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label={tr("打开 Tailscale")}><Network size={17} />Tailscale</button>}
+            {plugins?.pages?.length > 0 && <PluginPagesNav pages={plugins.pages} selected={plugins.pageOpen} onOpen={plugins.onView} />}
           </>
         )}
       </nav>
