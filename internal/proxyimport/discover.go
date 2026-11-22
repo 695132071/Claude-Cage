@@ -111,6 +111,8 @@ func Locations(platform, home, dataHome, configHome string) []Location {
 		out = append(out,
 			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash"), Plain, ""},
 			Location{"FlClash", filepath.Join(dataHome, "com.follow", "FlClash", "profiles"), Plain, ""},
+			Location{"FlClash", filepath.Join(dataHome, "com.follow", "clash"), Plain, ""},
+			Location{"FlClash", filepath.Join(dataHome, "com.follow", "clash", "profiles"), Plain, ""},
 			Location{"FlClash for oixCloud", filepath.Join(dataHome, "com.oixcloud", "FlClash"), OixCloud, ""},
 			Location{"Clash / Mihomo", filepath.Join(home, ".config", "clash"), Plain, ""},
 			Location{"Clash Verge", filepath.Join(home, ".config", "clash-verge"), Verge, ""},

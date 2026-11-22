@@ -227,17 +227,44 @@ func TestLocationsUsePlatformDataRoots(t *testing.T) {
 	}
 	locations := Locations("linux", "/home/person", "/custom/data", "/custom/config")
 	for _, loc := range locations {
-		if loc.Client == "Clash Verge Rev" && loc.Directory != "/custom/data/io.github.clash-verge-rev.clash-verge-rev" {
+		if loc.Client == "Clash Verge Rev" && loc.Directory != filepath.Join("/custom/data", "io.github.clash-verge-rev.clash-verge-rev") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "FlClash for oixCloud" && loc.Directory != "/custom/data/com.oixcloud.clash" {
+		if loc.Client == "FlClash for oixCloud" && loc.Directory != filepath.Join("/custom/data", "com.oixcloud.clash") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "Clash Party" && loc.Directory != "/custom/config/mihomo-party" {
+		if loc.Client == "Clash Party" && loc.Directory != filepath.Join("/custom/config", "mihomo-party") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "Clash Verge" && loc.Directory != "/custom/config/clash-verge" {
+		if loc.Client == "Clash Verge" && loc.Directory != filepath.Join("/custom/config", "clash-verge") {
 			t.Fatal(loc)
+		}
+	}
+}
+
+func TestScanWindowsFlClashFollowClashDirectory(t *testing.T) {
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "com.follow", "clash"), "config.yaml", testNode)
+	writeConfig(t, filepath.Join(data, "com.follow", "clash", "profiles"), "123.yaml", testNode)
+	var runtime, profile *Config
+	entries := Scan(Locations("windows", t.TempDir(), data, ""), []byte("key"))
+	for i, e := range entries {
+		if e.Client != "FlClash" {
+			continue
+		}
+		switch e.Name {
+		case "config.yaml":
+			runtime = &entries[i]
+		case "123.yaml":
+			profile = &entries[i]
+		}
+	}
+	for _, e := range []*Config{runtime, profile} {
+		if e == nil {
+			t.Fatalf("missing FlClash config from com.follow/clash: %+v", entries)
+		}
+		if e.Nodes != 1 || e.Error != "" {
+			t.Fatalf("FlClash config not importable: %+v", *e)
 		}
 	}
 }
