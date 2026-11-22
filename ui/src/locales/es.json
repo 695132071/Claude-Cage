@@ -2585,7 +2585,6 @@
   "已恢复使用 Tailscale 官方控制服务器": "Se restauró el servidor de control oficial de Tailscale",
   "SSH agent 套接字（可选）": "Socket del SSH agent (opcional)",
   "/Users/你的名字/.ssh/agent.sock": "/Users/su-nombre/.ssh/agent.sock",
-  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。Cage 不读取 SSH 配置文件。": "Déjelo vacío para usar SSH_AUTH_SOCK. Si un gestor de contraseñas ofrece su propio agent, introduzca la ruta absoluta de su socket. Cage no lee los archivos de configuración de SSH.",
   "留空时使用 SSH_AUTH_SOCK 或 Windows OpenSSH agent。使用其他 agent 时，填写以 \\\\.\\pipe\\ 开头的命名管道。": "Déjelo vacío para usar SSH_AUTH_SOCK o el agent de Windows OpenSSH. Para otro agent, introduzca su canalización con nombre que empieza por \\\\.\\pipe\\.",
   "新增 Cookie": "Añadir cookie",
   "编辑 Cookie": "Editar cookie",
@@ -2713,5 +2712,14 @@
   "丢弃文件": "Descartar archivo",
   "正在丢弃…": "Descartando…",
   "TLS ClientHello 分段传输兼容模式": "Modo de compatibilidad con fragmentación de TLS ClientHello",
-  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Desactivado por defecto. Actívelo solo si la cadena de proxy seleccionada devuelve EOF durante el apretón de manos TLS o muestra de forma intermitente «Salida pendiente de confirmación»: conserva el cifrado poscuántico completo y el aislamiento del proxy, dividiendo únicamente los TLS ClientHello de más de 1000 bytes."
+  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Desactivado por defecto. Actívelo solo si la cadena de proxy seleccionada devuelve EOF durante el apretón de manos TLS o muestra de forma intermitente «Salida pendiente de confirmación»: conserva el cifrado poscuántico completo y el aislamiento del proxy, dividiendo únicamente los TLS ClientHello de más de 1000 bytes.",
+  "默认 Desktop 与 {0} 为同一账号，已合并到该实例。": "El Desktop predeterminado comparte la misma cuenta que {0} y se ha fusionado en esta instancia.",
+  "私钥、转发和其他 SSH 选项不会导入。已有主机不会覆盖，首次连接仍需核对指纹。": "No se importan claves privadas, reenvíos ni otras opciones SSH. Se conservan los hosts existentes. Verifique la huella en la primera conexión.",
+  "没有可导入的主机。": "No hay hosts para importar.",
+  "已跳过的主机": "Hosts omitidos",
+  "导入所选主机（{0}）": "Importar hosts seleccionados ({0})",
+  "已导入 {0} 台主机，跳过 {1} 台已有主机。": "Se importaron {0} hosts y se omitieron {1} hosts existentes.",
+  "留空时使用 SSH_AUTH_SOCK。密码管理器提供独立 agent 时，填写其套接字的绝对路径。": "Déjelo vacío para usar SSH_AUTH_SOCK. Si un gestor de contraseñas ofrece su propio agent, introduzca la ruta absoluta de su socket.",
+  "导入本机 SSH 配置": "Importar configuración SSH local",
+  "从 {0} 读取主机，使用本机 SSH agent。请先用 ssh-add 添加密钥。": "Lee los hosts de {0} y usa el agente SSH local; primero añada las claves con ssh-add."
 }

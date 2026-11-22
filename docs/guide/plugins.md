@@ -102,4 +102,4 @@ Cage 的核心路线是把有风险的运行外壳（Claude Code、Claude Deskto
 任何能读写标准输入输出的程序都可以写成 Cage 的 MCP 插件，任何静态 HTML/JS/CSS 页面都可以封装成工作台扩展视图。
 
 - 完整的清单格式（`plugin.json`）、权限列表、沙箱页面 JSON-RPC 协议、工具命名规则（不向模型暴露产品与运行环境名称）以及本地调试方法，见[插件开发规范](https://github.com/Lee-xeo/Claude-Cage/blob/main/docs/plugins.md)。
-- 打包脚本、审核要求与提交流程见 [cage-plugins](https://github.com/Lee-xeo/cage-plugins)。欢迎把你的 MCP 工具和 Cage 扩展页面直接贡献到插件市场。
+- 打包脚本、审核要求与提交流程见 [cage-plugins](https://github.com/Lee-xeo/cage-plugins)。发起 PR 时请按仓库 PR 模板填写信息并在描述中附带插件在 Cage 中的真实运行效果图（脱敏后直接拖入 PR 描述框，不打进插件包）。欢迎把你的 MCP 工具和 Cage 扩展页面直接贡献到插件市场。

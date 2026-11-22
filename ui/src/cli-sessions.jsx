@@ -141,8 +141,8 @@ export function ArchivedSessions({ request = desktopSessionRequest, ready, onRes
   return <section className="archived-sessions" aria-label={tr("已归档会话")}>
     <h2 className="archive-page-title">{tr("已归档会话")}</h2>
     <div className="archive-toolbar">
-      <div className="archive-search"><Search size={18} aria-hidden="true" />
-        <input type="search" aria-label={tr("搜索已归档的会话")} placeholder={tr("搜索已归档的会话")} value={query} disabled={busy} onChange={event => resetSelection(setQuery, event.target.value)} />
+      <div className="archive-search"><Search size={16} aria-hidden="true" />
+        <input className="archive-search-input" type="search" aria-label={tr("搜索已归档的会话")} placeholder={tr("搜索已归档的会话")} value={query} disabled={busy} onChange={event => resetSelection(setQuery, event.target.value)} />
       </div>
       <InlineSelect aria-label={tr("会话筛选")} value={filter} disabled={busy} onValueChange={value => resetSelection(setFilter, value)}
         displayLabel={<span className="archive-filter-label"><ListFilter size={17}/><span>{archiveFilters[filter]}</span></span>}>

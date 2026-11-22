@@ -20,8 +20,11 @@ type sourceNodeDNSError struct{ error }
 
 func (sourceNodeDNSError) Is(target error) bool { return target == ErrSourceNodeDNS }
 
-// Adopt only the subscription's node resolver list. Its business resolvers,
-// policies, hosts, routes and DNS listener remain outside the import boundary.
+// Adopt only safe remote HTTPS DoH entries from the subscription's node
+// resolver list. Standard non-HTTP Clash/Mihomo resolvers (plain IPv4/IPv6,
+// udp://, tcp://, tls://, quic://, h3://, dhcp://, system) are ignored rather
+// than blocking import, while HTTP(S) entries are strictly validated so unsafe
+// or malformed DoH URLs still fail refresh and keep the previous configuration.
 func subscriptionNodeDNS(data []byte) ([]string, error) {
 	var input struct {
 		DNS yaml.Node `yaml:"dns"`
@@ -35,11 +38,63 @@ func subscriptionNodeDNS(data []byte) ([]string, error) {
 	if input.DNS.Decode(&dns) != nil {
 		return nil, sourceNodeDNSError{errors.New("订阅的节点 DNS 需要填写 HTTPS DoH 地址列表")}
 	}
-	servers, err := validateSourceDNS(dns.Servers)
+	var candidates []string
+	for _, raw := range dns.Servers {
+		trimmed := strings.TrimSpace(raw)
+		if isIgnoredNonHTTPResolver(trimmed) {
+			continue
+		}
+		candidates = append(candidates, trimmed)
+	}
+	servers, err := validateSourceDNS(candidates)
 	if err != nil {
 		return nil, sourceNodeDNSError{err}
 	}
 	return servers, nil
+}
+
+func isIgnoredNonHTTPResolver(raw string) bool {
+	if raw == "" {
+		return false
+	}
+	lower := strings.ToLower(raw)
+	if lower == "system" || strings.HasPrefix(lower, "dhcp://") ||
+		strings.HasPrefix(lower, "udp://") || strings.HasPrefix(lower, "tcp://") ||
+		strings.HasPrefix(lower, "tls://") || strings.HasPrefix(lower, "quic://") ||
+		strings.HasPrefix(lower, "h3://") {
+		return true
+	}
+	// Plain IP or IP:port (e.g. 119.29.29.29, 223.5.5.5:53, [2400:3200::1]).
+	if !strings.Contains(raw, "://") {
+		host := raw
+		if idx := strings.LastIndex(host, ":"); idx != -1 && !strings.Contains(host[idx+1:], "]") {
+			if port, err := strconv.Atoi(host[idx+1:]); err == nil && port >= 1 && port <= 65535 {
+				host = host[:idx]
+			}
+		}
+		if _, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// FilterNodeDNS drops standard non-HTTP Clash/Mihomo resolvers (plain IPs,
+// udp://, tcp://, tls://, quic://, h3://, dhcp://, system) while preserving
+// HTTP(S) and malformed entries so downstream validation still reports
+// unsupported DoH configurations accurately.
+func FilterNodeDNS(servers []string) []string {
+	var out []string
+	for _, raw := range servers {
+		trimmed := strings.TrimSpace(raw)
+		if isIgnoredNonHTTPResolver(trimmed) {
+			continue
+		}
+		if !slices.Contains(out, trimmed) {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func validateSourceDNS(servers []string) ([]string, error) {

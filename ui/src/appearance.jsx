@@ -89,6 +89,7 @@ export function AppearanceProvider({ children }) {
       appearance.pointerCursors ? "pointer" : "default",
     );
     root.dataset.theme = variant;
+    root.dataset.preset = theme.preset || "custom";
     root.dataset.translucent = String(!theme.opaqueWindows);
     root.dataset.fontSmoothing = String(appearance.fontSmoothing);
     root.dataset.reducedMotion = String(
