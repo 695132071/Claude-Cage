@@ -142,6 +142,9 @@ esac
 			if string(updates) != tc.want || (err == nil) != tc.ok || (continued == nil) != tc.ok {
 				t.Fatalf("sources tried %q, err %v: %s", updates, err, out)
 			}
+			if tc.ok && strings.Contains(string(out), "APT_FAILED") {
+				t.Fatalf("recovered fallback emitted stale APT_FAILED marker: %s", out)
+			}
 			if !tc.ok && !strings.Contains(string(out), "APT_FAILED exit=100 command=apt-get update") {
 				t.Fatalf("failed bootstrap did not report its APT command: %s", out)
 			}

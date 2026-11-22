@@ -30,12 +30,15 @@ schemes=http
 if [ -s /etc/ssl/certs/ca-certificates.crt ]; then
   schemes='https http'
 fi
-apt_bootstrap_get() {
-  if env DEBIAN_FRONTEND=noninteractive apt-get \
+apt_bootstrap_run() {
+  env DEBIAN_FRONTEND=noninteractive apt-get \
     -o Acquire::Retries=0 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 \
     -o DPkg::Lock::Timeout=60 -o APT::Update::Error-Mode=any \
     -o Dir::Etc::sourcelist="$stage/security.list" -o Dir::Etc::sourceparts=- \
-    -o Dir::State::lists="$stage/lists" "$@" </dev/null; then
+    -o Dir::State::lists="$stage/lists" "$@" </dev/null
+}
+apt_bootstrap_get() {
+  if apt_bootstrap_run "$@"; then
     return 0
   else
     status=$?
@@ -47,14 +50,17 @@ apt_bootstrap_get() {
 status=1
 for scheme in $schemes; do
   printf 'deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] %s://deb.debian.org/debian-security trixie-security main\n' "$scheme" > "$stage/security.list"
-  if apt_bootstrap_get update; then
+  if apt_bootstrap_run update; then
     status=0
     break
   else
     status=$?
   fi
 done
-[ "$status" = 0 ] || exit "$status"
+if [ "$status" != 0 ]; then
+  printf 'APT_FAILED exit=%s command=apt-get update\n' "$status" >&2
+  exit "$status"
+fi
 packages='apt libapt-pkg7.0'
 if [ "$(dpkg-query -W -f='${Status}' apt-utils 2>/dev/null || true)" = 'install ok installed' ]; then
   packages="$packages apt-utils"
