@@ -456,6 +456,22 @@ try {
     $previousCopies = @(Get-ChildItem (Join-Path $old 'Cage-preserved-files') -File -Recurse)
     Check (@($previousCopies | Where-Object { (Get-Content $_.FullName -Raw) -eq 'before attempted update' }).Count -eq 1) 'Legacy recovery deleted the previous project version.'
     Check (@($previousCopies | Where-Object { (Get-Content $_.FullName -Raw) -eq 'old personal file' }).Count -eq 1) 'Legacy recovery deleted the previous personal-file version.'
+    if ($windows -and (& $HelperShell -NoProfile -Command '$PSVersionTable.PSEdition') -eq 'Desktop') {
+        # Windows PowerShell compiles the verified-deletion type with csc.exe
+        # below TEMP; no ANSI code page encodes this folder name (#690).
+        $scenario = Join-Path $root 'non-ansi-temp'
+        $stage = Join-Path $scenario 'installed'; $receipt = Join-Path $scenario 'receipt.json'
+        $temporary = Join-Path $scenario ('temp-' + [char]::ConvertFromUtf32(0x1F600))
+        App $stage 'new'
+        [IO.Directory]::CreateDirectory($temporary) | Out-Null
+        $savedTemporary = $env:TMP, $env:TEMP
+        try {
+            $env:TMP = $env:TEMP = $temporary
+            Invoke-Helper @('-Operation','prepare','-Target',$stage,'-Receipt',$receipt)
+            Invoke-Helper @('-Operation','complete','-Target',$stage,'-Receipt',$receipt)
+        } finally { $env:TMP, $env:TEMP = $savedTemporary }
+        Check (!(Test-Path -LiteralPath $receipt)) 'A temporary folder outside the ANSI code page kept the receipt.'
+    }
     if ($windows) {
         & $HelperShell -NoProfile -File (Join-Path $PSScriptRoot 'test-windows-verified-file-deletion.ps1')
         if ($LASTEXITCODE -ne 0) { throw 'Verified-handle deletion regression failed.' }
