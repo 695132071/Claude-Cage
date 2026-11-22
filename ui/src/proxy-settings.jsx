@@ -1,6 +1,7 @@
 import { InlineSelect } from "./inline-select";
 import React, { useEffect, useRef, useState } from "react";
 import {
+  ChevronDown,
   Download,
   Plus,
   Search,
@@ -20,6 +21,7 @@ import {
 import { api } from "./api";
 import { SafetyMessage } from "./safety-message";
 import { isLocalListener } from "./proxy-server.mjs";
+import { groupNodesByRegion } from "./proxy-region.mjs";
 import { ProxyYAMLInput } from "./proxy-yaml-input";
 import { LocalConfigImport } from "./local-config-import";
 import { getClientContext } from "./client-context.mjs";
@@ -74,6 +76,10 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     [tab, setTab] = useState("nodes"),
     [search, setSearch] = useState(""),
     [source, setSource] = useState(""),
+    [region, setRegion] = useState(""),
+    [regionsExpanded, setRegionsExpanded] = useState(false),
+    [regionsOverflow, setRegionsOverflow] = useState(false),
+    [collapsedRegions, setCollapsedRegions] = useState({}),
     [form, setForm] = useState(null),
     [mode, setMode] = useState("url"),
     [error, setError] = useState(""),
@@ -92,6 +98,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const [helpOpen, setHelpOpen] = useState(false);
   const [readingFile, setReadingFile] = useState(false);
   const alive = useRef(true),
+    regionBarRef = useRef(null),
     mutating = useRef(false),
     delayReasons = useRef({}),
     loading = useRef(false),
@@ -224,7 +231,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
         );
         setDelays({});
         if (action === "import" && needsMigration) setTab("nodes");
-        if (action === "import-local") { setTab("nodes"); setSearch(""); setSource(""); setNotice("配置已导入。请在下方选择出口，再点击“应用代理”。"); }
+        if (action === "import-local") { setTab("nodes"); setSearch(""); setSource(""); setRegion(""); setNotice("配置已导入。请在下方选择出口，再点击“应用代理”。"); }
       }
       return true;
     } catch (e) {
@@ -358,6 +365,16 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     onDirty?.(routeChanged || initializing && Boolean(form));
     return () => onDirty?.(false);
   }, [onDirty, routeChanged, initializing, Boolean(form)]);
+  useEffect(() => {
+    const el = regionBarRef.current;
+    if (!el) { setRegionsOverflow(false); return; }
+    const measureOverflow = () => setRegionsOverflow(el.scrollHeight > 68);
+    measureOverflow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measureOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tab, proxy, search, source]);
   if (!proxy)
     return <div className="proxy-loading" role={error ? "alert" : "status"}>{error || tr("正在读取代理配置…")}</div>;
   const allNodes = proxy.sources.flatMap((s) =>
@@ -373,14 +390,70 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const routeName = (id) => allNodes.find((n) => n.id === id)?.name || "待选择";
   const updateHop = (index, id) =>
     setRouteDraft(route.map((current, i) => (i === index ? id : current)));
-  const nodes = allNodes.filter(
+  const baseNodes = allNodes.filter(
     (n) =>
       (!source || n.sourceID === source) &&
       `${n.name} ${n.source} ${n.type}`
         .toLowerCase()
         .includes(search.toLowerCase()),
   );
+  const regionGroups = groupNodesByRegion(baseNodes);
+  const activeRegion = region && regionGroups.some((g) => g.code === region) ? region : "";
+  const nodes = activeRegion
+    ? regionGroups.find((g) => g.code === activeRegion)?.nodes || []
+    : baseNodes;
+  const showRegionBar = regionGroups.length > 1;
+  const showGroupedList = !activeRegion && regionGroups.length > 1;
   const measurable = nodes.filter((node) => !node.blocked_reason);
+  const renderNodeRow = (n) => (
+    <div
+      className={`proxy-node ${!n.blocked_reason && n.id === route.at(-1) ? "selected" : ""}`}
+      key={n.id}
+    >
+      <button
+        className="proxy-node-choice"
+        disabled={
+          busy || Boolean(n.blocked_reason) ||
+          !proxy.core_available ||
+          route.slice(0, -1).includes(n.id)
+        }
+        title={
+          n.blocked_reason || (route.slice(0, -1).includes(n.id)
+            ? tr("此节点已用作中转")
+            : tr("选为最终出口，点击应用代理后生效"))
+        }
+        onClick={() => updateHop(route.length - 1, n.id)}
+        aria-pressed={!n.blocked_reason && n.id === route.at(-1)}
+        aria-label={tr("选择节点 {0}", (n.name))}
+      >
+        <span className="proxy-radio">
+          {!n.blocked_reason && n.id === route.at(-1) && <Check size={12} />}
+        </span>
+        <span>
+          <strong>{n.blocked_reason ? tr("{0}（需迁移）", n.name) : n.name}</strong>
+          <small>
+            {n.source} · {n.type.toUpperCase()}
+          </small>
+        </span>
+      </button>
+      {active && savedRoute.includes(n.id) && (
+        <span className="proxy-node-role">
+          {n.id === proxy.selected ? tr("当前出口") : tr("当前中转")}
+        </span>
+      )}
+      <span className="proxy-delay" title={n.blocked_reason ? undefined : delayReasons.current[n.id] || undefined}>
+        {!n.blocked_reason && (delays[n.id] || tr("未测速"))}
+      </span>
+      <button
+        aria-label={tr("测速 {0}", (n.name))}
+        title={tr("检测此节点到 www.gstatic.com 的 HTTP 往返延迟，通常不含建连开销，不代表网页首开耗时")}
+        disabled={busy || !proxy.running || Boolean(n.blocked_reason)}
+        onClick={() => measure([n.id])}
+      >
+        <Activity size={14} />
+      </button>
+    </div>
+  );
   const openImport = (importMode) => {
     setTab("sources");
     setForm({ ...emptyForm });
@@ -709,15 +782,16 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             </div>
           )}
           <div className="proxy-toolbar">
-            <label className="proxy-search">
-              <Search size={15} />
+            <div className="proxy-search">
+              <Search size={15} aria-hidden="true" />
               <input
+                className="proxy-search-input"
                 aria-label={tr("搜索节点")}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder={tr("搜索节点、来源或协议")}
               />
-            </label>
+            </div>
             <InlineSelect
               inline
               aria-label={tr("节点来源")}
@@ -750,6 +824,50 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
               </button>
             )}
           </div>
+          {showRegionBar && (
+            <div className="proxy-region-panel">
+              <div
+                ref={regionBarRef}
+                className={`proxy-region-bar ${regionsExpanded ? "expanded" : "clamped"}`}
+                role="group"
+                aria-label={tr("节点")}
+              >
+                <button
+                  type="button"
+                  className="proxy-region-chip"
+                  aria-pressed={!activeRegion}
+                  onClick={() => setRegion("")}
+                >
+                  <span>{tr("全部")}</span>
+                  <small>{baseNodes.length}</small>
+                </button>
+                {regionGroups.map((group) => (
+                  <button
+                    type="button"
+                    key={group.code}
+                    className="proxy-region-chip"
+                    aria-pressed={activeRegion === group.code}
+                    onClick={() => setRegion((current) => current === group.code ? "" : group.code)}
+                  >
+                    {group.flag && <span className="proxy-region-flag" aria-hidden="true">{group.flag}</span>}
+                    <span>{group.label}</span>
+                    <small>{group.nodes.length}</small>
+                  </button>
+                ))}
+              </div>
+              {regionsOverflow && (
+                <button
+                  type="button"
+                  className="text-button proxy-region-toggle"
+                  aria-expanded={regionsExpanded}
+                  onClick={() => setRegionsExpanded((expanded) => !expanded)}
+                >
+                  <span>{regionsExpanded ? tr("收起显示") : tr("展开显示")}</span>
+                  <ChevronDown size={14} className={regionsExpanded ? "rotated" : ""} />
+                </button>
+              )}
+            </div>
+          )}
           {!allNodes.length ? (
             <div className="proxy-empty">
               <Download size={26} />
@@ -764,55 +882,34 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             </div>
           ) : (
             <div className="proxy-node-list">
-              {nodes.map((n) => (
-                <div
-                  className={`proxy-node ${!n.blocked_reason && n.id === route.at(-1) ? "selected" : ""}`}
-                  key={n.id}
-                >
-                  <button
-                    className="proxy-node-choice"
-                    disabled={
-                      busy || Boolean(n.blocked_reason) ||
-                      !proxy.core_available ||
-                      route.slice(0, -1).includes(n.id)
-                    }
-                    title={
-                      n.blocked_reason || (route.slice(0, -1).includes(n.id)
-                        ? tr("此节点已用作中转")
-                        : tr("选为最终出口，点击应用代理后生效"))
-                    }
-                    onClick={() => updateHop(route.length - 1, n.id)}
-                    aria-pressed={!n.blocked_reason && n.id === route.at(-1)}
-                    aria-label={tr("选择节点 {0}", (n.name))}
-                  >
-                    <span className="proxy-radio">
-                      {!n.blocked_reason && n.id === route.at(-1) && <Check size={12} />}
-                    </span>
-                    <span>
-                      <strong>{n.blocked_reason ? tr("{0}（需迁移）", n.name) : n.name}</strong>
-                      <small>
-                        {n.source} · {n.type.toUpperCase()}
-                      </small>
-                    </span>
-                  </button>
-                  {active && savedRoute.includes(n.id) && (
-                    <span className="proxy-node-role">
-                      {n.id === proxy.selected ? tr("当前出口") : tr("当前中转")}
-                    </span>
-                  )}
-                  <span className="proxy-delay" title={n.blocked_reason ? undefined : delayReasons.current[n.id] || undefined}>
-                    {!n.blocked_reason && (delays[n.id] || tr("未测速"))}
-                  </span>
-                  <button
-                    aria-label={tr("测速 {0}", (n.name))}
-                    title={tr("检测此节点到 www.gstatic.com 的 HTTP 往返延迟，通常不含建连开销，不代表网页首开耗时")}
-                    disabled={busy || !proxy.running || Boolean(n.blocked_reason)}
-                    onClick={() => measure([n.id])}
-                  >
-                    <Activity size={14} />
-                  </button>
-                </div>
-              ))}
+              {showGroupedList ? (
+                regionGroups.map((group) => {
+                  const collapsed = Boolean(collapsedRegions[group.code]);
+                  return (
+                    <div className="proxy-region-group" key={group.code}>
+                      <button
+                        type="button"
+                        className="proxy-region-group-header"
+                        aria-expanded={!collapsed}
+                        onClick={() =>
+                          setCollapsedRegions((prev) => ({
+                            ...prev,
+                            [group.code]: !prev[group.code],
+                          }))
+                        }
+                      >
+                        {group.flag && <span className="proxy-region-flag" aria-hidden="true">{group.flag}</span>}
+                        <strong>{group.label}</strong>
+                        <span className="proxy-region-count">{group.nodes.length}</span>
+                        <ChevronDown size={14} className={`proxy-region-chevron ${collapsed ? "collapsed" : ""}`} />
+                      </button>
+                      {!collapsed && group.nodes.map(renderNodeRow)}
+                    </div>
+                  );
+                })
+              ) : (
+                nodes.map(renderNodeRow)
+              )}
               {!nodes.length && (
                 <p className="field-help">{tr("没有符合搜索条件的节点。")}</p>
               )}
