@@ -112,14 +112,20 @@ function Test-AnsiPath([string]$Path) {
 function Compiler-TemporaryFolder {
     $temporary = [IO.Path]::GetTempPath()
     if ($PSVersionTable.PSEdition -ne 'Desktop' -or (Test-AnsiPath $temporary)) { return $null }
+    if ($env:SystemRoot) {
+        $private = Join-Path $env:SystemRoot ('Temp\cage-' + [guid]::NewGuid().ToString('N'))
+        try {
+            [IO.Directory]::CreateDirectory($private) | Out-Null
+            return @{path = $private; created = $true}
+        } catch { }
+    }
     try {
         $short = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($temporary).ShortPath
-        if ($short -and (Test-AnsiPath $short)) { return @{path = $short; created = $false} }
+        if ($short -and (Test-AnsiPath $short) -and $short -notmatch '[?*]' -and [IO.Directory]::Exists($short)) {
+            return @{path = $short; created = $false}
+        }
     } catch { }
-    if (!$env:SystemRoot) { return $null }
-    $private = Join-Path $env:SystemRoot ('Temp\cage-' + [guid]::NewGuid().ToString('N'))
-    try { [IO.Directory]::CreateDirectory($private) | Out-Null } catch { return $null }
-    return @{path = $private; created = $true}
+    return $null
 }
 
 function Initialize-VerifiedDeletion {
@@ -128,17 +134,24 @@ function Initialize-VerifiedDeletion {
     # path under a non-ANSI $PLUGINSDIR inside TEMP.
     $code = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'verified-file-deletion.cs'), [Text.Encoding]::UTF8)
     $folder = Compiler-TemporaryFolder
-    if (!$folder) { Add-Type -TypeDefinition $code; return }
+    $workDir = if ($env:SystemRoot -and [IO.Directory]::Exists($env:SystemRoot)) { $env:SystemRoot } elseif ($folder) { $folder.path } else { $null }
+    if (!$folder -and !$workDir) { Add-Type -TypeDefinition $code; return }
     $saved = $env:TMP, $env:TEMP
     $savedDirectory = [Environment]::CurrentDirectory
+    $pushed = $false
     try {
-        $env:TMP = $env:TEMP = $folder.path
-        [Environment]::CurrentDirectory = $folder.path
+        if ($folder) { $env:TMP = $env:TEMP = $folder.path }
+        if ($workDir) {
+            Push-Location -LiteralPath $workDir
+            $pushed = $true
+            [Environment]::CurrentDirectory = $workDir
+        }
         Add-Type -TypeDefinition $code
     } finally {
+        if ($pushed) { Pop-Location }
         [Environment]::CurrentDirectory = $savedDirectory
         $env:TMP, $env:TEMP = $saved
-        if ($folder.created) {
+        if ($folder -and $folder.created) {
             # A standard user cannot list the system temporary folder, so the
             # private folder is removed directly rather than with Remove-Item.
             try {
