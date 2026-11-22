@@ -235,8 +235,6 @@
   min-height: 6rem;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-width: thin;
-  scrollbar-color: var(--focus) transparent;
   scrollbar-gutter: stable;
   padding: 2px 4px 4px 1px;
 }

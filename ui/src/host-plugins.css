@@ -70,7 +70,7 @@
 .plugin-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
 .plugin-search input { flex: 1; min-width: 0; border: 0; padding: 0; background: transparent; color: var(--ink); font: inherit; font-size: 0.9286rem; outline: none; }
 .plugin-search input::-webkit-search-cancel-button { cursor: pointer; }
-.plugin-sidebar-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: clip; padding: 4px 0 20px; scrollbar-width: thin; }
+.plugin-sidebar-body { flex: 1; min-height: 0; overflow-y: auto; overflow-x: clip; margin-inline-end: -12px; padding: 4px 12px 20px 0; }
 .plugin-sidebar-notice {
   display: flex;
   width: calc(100% - 24px);

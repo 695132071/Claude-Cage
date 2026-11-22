@@ -85,6 +85,22 @@ function App() {
     window.addEventListener("cage-client-preferences", refresh);
     return () => window.removeEventListener("cage-client-preferences", refresh);
   }, []);
+  useEffect(() => {
+    const timers = new WeakMap();
+    const onScroll = (event) => {
+      const target = event.target === document ? document.documentElement : event.target;
+      if (!(target instanceof Element)) return;
+      target.dataset.scrolling = "true";
+      const prev = timers.get(target);
+      if (prev) clearTimeout(prev);
+      timers.set(target, setTimeout(() => {
+        delete target.dataset.scrolling;
+        timers.delete(target);
+      }, 800));
+    };
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () => document.removeEventListener("scroll", onScroll, { capture: true });
+  }, []);
   const claudeProfiles = useClaudeAccounts();
   const [managementPage, setManagementPage] = useState("");
   const [pluginPage, setPluginPage] = useState(null);
@@ -1860,7 +1876,7 @@ function App() {
                           : tr("Cage 环境已就绪")
                         : setupProxy
                           ? tr("为 Claude 准备独立工作区")
-                          : tr("先启动 Cage 环境")}
+                          : "Claude Cage"}
                   </h1>
                   {(busy || (running && (!status.ready || network.mode !== "open"))) && (
                     <p className="welcome-subtitle">
