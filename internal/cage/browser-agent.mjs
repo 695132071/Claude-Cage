@@ -142,7 +142,7 @@ function canHideBrowser() {
   browserVNCViewers = false;
   return true;
 }
-const visibility = new BrowserVisibility(cdp, () => [...targets.keys()], canHideBrowser);
+const visibility = new BrowserVisibility(cdp, () => [...targets.keys()], canHideBrowser, () => activeId);
 let checkingBrowserViewers = false;
 setInterval(() => {
   if (!ready || visibility.visible || checkingBrowserViewers) return;
@@ -150,7 +150,7 @@ setInterval(() => {
   try { canHideBrowser(); } catch { return; }
   if (previous === browserVNCViewers) return;
   checkingBrowserViewers = true;
-  void visibility.set(false).catch(() => {}).finally(() => { checkingBrowserViewers = false; });
+  void visibility.sync().catch(() => {}).finally(() => { checkingBrowserViewers = false; });
 }, 1000).unref();
 const browserClipboard = new BrowserClipboard(cdp, ({ id, text, context }) => {
   if (id !== activeId || !targets.has(id)) return;
@@ -229,8 +229,8 @@ function updateTargetInfo(t) {
   if (!activeId) activeId = t.targetId;
   if (ready && fresh && t.openerId)
     void activate(t.targetId, true).catch(() => {});
-  else if (ready && fresh && !visibility.visible)
-    void visibility.set(false).catch(() => {});
+  else if (ready && fresh)
+    void visibility.sync().catch(() => {});
 }
 
 function restoreHomepage(id) {
