@@ -295,8 +295,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Switch inside settings-switch-row */
-.settings-page .settings-switch-row input[role="switch"] {
+/* Switch inside settings-switch-row (supports both role="switch" and checkbox inputs) */
+.settings-page .settings-switch-row input[type="checkbox"] {
   appearance: none;
   width: 38px;
   height: 22px;
@@ -309,7 +309,7 @@
   cursor: var(--control-cursor, default);
   transition: background-color 160ms var(--ease-out);
 }
-.settings-page .settings-switch-row input[role="switch"]::after {
+.settings-page .settings-switch-row input[type="checkbox"]::after {
   content: "";
   position: absolute;
   width: 16px;
@@ -321,10 +321,10 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.22);
   transition: transform 160ms var(--ease-out);
 }
-.settings-page .settings-switch-row input[role="switch"]:checked {
+.settings-page .settings-switch-row input[type="checkbox"]:checked {
   background: var(--accent);
 }
-.settings-page .settings-switch-row input[role="switch"]:checked::after {
+.settings-page .settings-switch-row input[type="checkbox"]:checked::after {
   background: var(--accent-ink, var(--paper));
   transform: translateX(16px);
 }
@@ -454,7 +454,7 @@
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
-.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.theme-swatch-hex),
+.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.theme-swatch-hex):not(.archive-search-input):not(.proxy-search-input),
 .settings-page .settings-content .inline-select-trigger {
   height: var(--s-control);
   padding: 0 12px;
@@ -464,7 +464,7 @@
   color: var(--strong);
   transition: border-color 0.12s, box-shadow 0.12s;
 }
-.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):focus-visible {
+.settings-page .settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]):not(.archive-search-input):not(.proxy-search-input):focus-visible {
   outline: none;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
@@ -771,8 +771,8 @@
   max-width: none;
 }
 .settings-page .account-settings h4 {
-  margin: 0;
-  font-size: var(--s-lg);
+  margin: 0 0 12px;
+  font-size: var(--s-md);
   font-weight: 600;
 }
 /* Account forms space their children with flex gap, so field margins reset. */

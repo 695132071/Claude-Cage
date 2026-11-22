@@ -738,13 +738,12 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
             onChange={upload} aria-label={tr("选择头像图片")} />
           <input className="account-profile-name" aria-label={tr("用户名")} value={name} maxLength={40}
             autoComplete="username" onChange={(e) => setName(e.target.value)} required />
-          <div className="account-profile-actions">
-            <button type="button" className="quiet-button" onClick={() => {
-              setFeedbackTarget("password"); setError(""); setMessage(""); setPasswordOpen(true);
-            }}><LockKeyhole size={15} />{account.trusted_local ? tr("设置密码") : tr("修改密码")}</button>
-            {avatar && <button type="button" className="text-button" onClick={() => setAvatar("")}>{tr("恢复默认头像")}</button>}
-            {changed && <button className="primary" disabled={!name.trim() || busy}><Check size={16} />{tr("保存资料")}</button>}
-          </div>
+          {(avatar || changed) && (
+            <div className="account-profile-actions">
+              {avatar && <button type="button" className="text-button" onClick={() => setAvatar("")}>{tr("恢复默认头像")}</button>}
+              {changed && <button className="primary" disabled={!name.trim() || busy}><Check size={16} />{tr("保存资料")}</button>}
+            </div>
+          )}
         </fieldset>
       </form>
       {(feedbackTarget === "profile" || !passwordOpen) && feedback}
@@ -770,11 +769,15 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
       </Modal>}
       {!account.trusted_local && <AccountRecoverySettings disabled={busy || environmentBusy} onDirty={setRecoveryDirty} />}
       {localDesktop() && !account.trusted_local && <TrustedDeviceSettings />}
-      {!account.trusted_local && <AccountDeviceSettings />}
-      <p className="account-settings-note">
-        <LockKeyhole size={15} />
-        {isRemoteClient() ? tr("账户、应用资料与登录凭据保存在当前云端主机。") : tr("一个本地账户，一个持久工作环境。资料与凭据不上传到 Cage 服务器。")}
-      </p>
+      <AccountDeviceSettings
+        onOpenPassword={() => {
+          setFeedbackTarget("password");
+          setError("");
+          setMessage("");
+          setPasswordOpen(true);
+        }}
+        passwordDisabled={busy || environmentBusy}
+      />
     </div>
   );
 }
@@ -807,25 +810,21 @@ function TrustedDeviceSettings() {
   </form>;
 }
 
-function AccountDeviceSettings() {
+function AccountDeviceSettings({ onOpenPassword, passwordDisabled }) {
   const tr = useTranslation();
   const { account, deviceSupport, deviceAction, recheckDevices } = useAccount();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  if (!deviceSupport?.supported) return null;
-  if (!deviceSupport.device_status) return <section className="account-device-settings" aria-label={tr("登录与解锁")}>
-    <h4>{tr("登录与解锁")}</h4>
-    <p className="field-help" role="status">{tr("当前应用启动器需要更新，无法检查快捷登录状态。请重新安装完整的 Cage 应用后再设置；现有授权已保留。")}</p>
-  </section>;
-  const states = deviceSupport.device_status || {};
-  const description = (kind, fallback) => states[kind] === "missing"
-    ? "当前目录的凭据缺失或已失效，请重新开启。"
+  const showDevice = !account.trusted_local && Boolean(deviceSupport?.supported);
+  const legacyLauncher = showDevice && !deviceSupport.device_status;
+  const states = deviceSupport?.device_status || {};
+  const issueText = (kind) => states[kind] === "missing"
+    ? tr("当前目录的凭据缺失或已失效，请重新开启。")
     : states[kind] === "unavailable"
-      ? "暂时无法检查系统钥匙串，授权记录已保留。请稍后重新检查。"
-      : states[kind] === "authentication_required"
-        ? "凭据需要通过 Touch ID 验证，解锁时会请求指纹。"
-        : fallback;
+      ? tr("暂时无法检查系统钥匙串，授权记录已保留。请稍后重新检查。")
+      : "";
+  const biometricNote = issueText("biometric") || (!deviceSupport?.biometric_available && !credentialPresent(states.biometric) ? tr("请先在 macOS 系统设置中设置 Touch ID。") : "");
   const change = async (kind, enabled) => {
     setBusy(true); setError(""); setMessage("");
     try {
@@ -836,18 +835,52 @@ function AccountDeviceSettings() {
   };
   return <section className="account-device-settings" aria-label={tr("登录与解锁")}>
     <h4>{tr("登录与解锁")}</h4>
-    {!localDesktop() && <label className="account-device-option check-line">
-      <input type="checkbox" checked={Boolean(account.devices?.automatic) && states.automatic === "available"} disabled={busy || states.automatic === "unavailable"}
-        onChange={(event) => change("automatic", event.target.checked)} />
-      <span><strong>{tr("记住登录")}</strong><small>{description("automatic", "重新打开直接进入。手动锁定后仍需指纹或密码。")}</small></span>
-    </label>}
-    <label className="account-device-option check-line">
-      <input type="checkbox" checked={Boolean(account.devices?.biometric) && credentialPresent(states.biometric)} disabled={busy || states.biometric === "unavailable" || (!deviceSupport.biometric_available && !credentialPresent(states.biometric))}
-        onChange={(event) => change("biometric", event.target.checked)} />
-      <span><strong>{tr("使用 Touch ID 解锁")}</strong><small>{description("biometric", deviceSupport.biometric_available ? "手动锁定后，通过系统指纹验证进入。" : "请先在 macOS 系统设置中设置 Touch ID。")}</small></span>
-    </label>
-    {Object.values(states).includes("unavailable") && <button type="button" className="quiet-button" disabled={busy} onClick={recheckDevices}>{tr("重新检查快捷登录")}</button>}
-    <p className="field-help">{tr("退出账户会撤销本机快捷登录授权。密码始终可以用于解锁。")}</p>
+    <div className="settings-card">
+      {showDevice && !legacyLauncher && !localDesktop() && (
+        <label className="settings-row settings-switch-row">
+          <span className="settings-row-copy">
+            <strong>{tr("记住登录")}</strong>
+            {issueText("automatic") && <small>{issueText("automatic")}</small>}
+          </span>
+          <input
+            type="checkbox"
+            checked={Boolean(account.devices?.automatic) && states.automatic === "available"}
+            disabled={busy || states.automatic === "unavailable"}
+            onChange={(event) => change("automatic", event.target.checked)}
+          />
+        </label>
+      )}
+      {showDevice && !legacyLauncher && (
+        <label className="settings-row settings-switch-row">
+          <span className="settings-row-copy">
+            <strong>{tr("使用 Touch ID 解锁")}</strong>
+            {biometricNote && <small>{biometricNote}</small>}
+          </span>
+          <input
+            type="checkbox"
+            checked={Boolean(account.devices?.biometric) && credentialPresent(states.biometric)}
+            disabled={busy || states.biometric === "unavailable" || (!deviceSupport.biometric_available && !credentialPresent(states.biometric))}
+            onChange={(event) => change("biometric", event.target.checked)}
+          />
+        </label>
+      )}
+      <div className="settings-row">
+        <div className="settings-row-copy">
+          <strong>{tr("账户密码")}</strong>
+        </div>
+        <div className="settings-row-control">
+          <button type="button" className="quiet-button" disabled={passwordDisabled} onClick={onOpenPassword}>
+            {account.trusted_local ? tr("设置密码") : tr("修改密码")}
+          </button>
+        </div>
+      </div>
+    </div>
+    {legacyLauncher && (
+      <p className="field-help" role="status">{tr("当前应用启动器需要更新，无法检查快捷登录状态。请重新安装完整的 Cage 应用后再设置；现有授权已保留。")}</p>
+    )}
+    {showDevice && !legacyLauncher && Object.values(states).includes("unavailable") && (
+      <button type="button" className="quiet-button" disabled={busy} onClick={recheckDevices}>{tr("重新检查快捷登录")}</button>
+    )}
     {error && <p className="account-error" role="alert">{tr(error)}</p>}
     {message && <p className="account-saved" role="status">{tr(message)}</p>}
   </section>;

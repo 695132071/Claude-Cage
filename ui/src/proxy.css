@@ -147,24 +147,133 @@
 .proxy-toolbar .inline-select {
   max-width: 150px;
 }
-.settings-content
-  .proxy-manager
-  .proxy-toolbar
-  label.proxy-search:not(.check-line) {
+.proxy-toolbar .proxy-search {
   display: flex;
   flex-direction: row;
   flex: 1;
-  min-width: 150px;
+  min-width: 170px;
+  height: 36px;
   align-items: center;
-  gap: 6px;
-  margin: 0;
+  gap: 8px;
+  padding: 0 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input);
+  color: var(--muted);
+  transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out), background-color var(--duration-fast) var(--ease-out);
 }
-.settings-content
-  .proxy-manager
-  .proxy-toolbar
-  label.proxy-search:not(.check-line)
-  input {
+.proxy-toolbar .proxy-search:focus-within {
+  border-color: var(--accent);
+  background: var(--paper);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+.proxy-toolbar .proxy-search > svg {
+  flex: none;
+  color: var(--muted);
+}
+.proxy-toolbar .proxy-search input.proxy-search-input,
+.settings-page .settings-content .proxy-toolbar .proxy-search input.proxy-search-input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
   margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--strong);
+  font-size: 0.9286rem;
+  box-shadow: none;
+}
+.proxy-toolbar .proxy-search input.proxy-search-input:focus-visible {
+  outline: none;
+}
+.proxy-region-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+}
+.settings-page .settings-content .proxy-region-bar button.proxy-region-chip,
+.proxy-region-bar button.proxy-region-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 10px;
+  border: 1px solid var(--line-subtle);
+  border-radius: 999px;
+  background: var(--chrome);
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 500;
+  transition: background-color var(--duration-fast) var(--ease-out), border-color var(--duration-fast) var(--ease-out), color var(--duration-fast) var(--ease-out);
+}
+.proxy-region-bar button.proxy-region-chip:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--strong);
+}
+.settings-page .settings-content .proxy-region-bar button.proxy-region-chip[aria-pressed="true"],
+.proxy-region-bar button.proxy-region-chip[aria-pressed="true"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink, #fff);
+  font-weight: 560;
+}
+.proxy-region-chip small {
+  font-size: 0.72rem;
+  opacity: 0.72;
+  font-variant-numeric: tabular-nums;
+}
+.proxy-region-flag {
+  line-height: 1;
+}
+.proxy-region-group + .proxy-region-group {
+  border-top: 1px solid var(--line);
+}
+.settings-page .settings-content button.proxy-region-group-header,
+button.proxy-region-group-header {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 14px;
+  border: 0;
+  border-radius: 0;
+  justify-content: flex-start;
+  gap: 7px;
+  background: color-mix(in srgb, var(--chrome) 60%, var(--paper));
+  color: var(--strong);
+  font-size: 0.8571rem;
+  font-weight: 600;
+  border-bottom: 1px solid var(--line-subtle);
+}
+.settings-page .settings-content button.proxy-region-group-header:hover:not(:disabled),
+button.proxy-region-group-header:hover:not(:disabled) {
+  background: var(--hover);
+}
+.proxy-region-group-header[aria-expanded="false"] {
+  border-bottom: 0;
+}
+.proxy-region-group-header strong {
+  font-weight: 600;
+  color: var(--strong);
+}
+.proxy-region-count {
+  padding: 0 7px;
+  border-radius: 999px;
+  background: var(--paper);
+  border: 1px solid var(--line-subtle);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.proxy-region-chevron {
+  margin-left: auto;
+  color: var(--muted);
+  transition: transform 150ms var(--ease-out);
+}
+.proxy-region-chevron.collapsed {
+  transform: rotate(-90deg);
 }
 .proxy-node-list {
   border: 1px solid var(--line);

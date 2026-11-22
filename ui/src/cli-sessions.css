@@ -11,13 +11,14 @@
 .archived-sessions :is(h2,h3,h4,p) { margin: 0; }
 .archive-page-title { display: none; }
 .archive-toolbar { display: grid; grid-template-columns: minmax(180px, 2.2fr) minmax(120px, 1fr) minmax(130px, 1.1fr); gap: 10px; align-items: start; }
-.archive-search { display: flex; align-items: center; gap: 10px; min-width: 0; border: 1px solid var(--line); border-radius: 999px; padding: 0 15px; background: var(--input); color: var(--muted); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
+.archive-search { display: flex; align-items: center; gap: 10px; min-width: 0; height: 42px; border: 1px solid var(--line); border-radius: 11px; padding: 0 13px; background: var(--input); color: var(--muted); transition: border-color var(--duration-fast) var(--ease-out), box-shadow var(--duration-fast) var(--ease-out); }
 .archive-search > svg { flex: none; }
-.archive-toolbar .archive-search input, .settings-content .archive-toolbar .archive-search input {
-  width: 100%; min-width: 0; height: 42px; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--ink); font: inherit; font-size: 14px; box-shadow: none;
+.archive-toolbar .archive-search input.archive-search-input,
+.settings-page .settings-content .archive-toolbar .archive-search input.archive-search-input {
+  width: 100%; min-width: 0; height: 100%; padding: 0; margin: 0; border: 0; border-radius: 0; background: transparent; color: var(--strong); font: inherit; font-size: 14px; box-shadow: none;
 }
-.archive-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-ring); }
-.archive-search input:focus-visible { outline: none; }
+.archive-search:focus-within { border-color: var(--accent); background: var(--paper); box-shadow: 0 0 0 3px var(--accent-ring); }
+.settings-page .settings-content .archive-search input.archive-search-input:focus-visible { outline: none; border-color: transparent; box-shadow: none; }
 .archive-search input::placeholder { color: var(--muted); opacity: .7; }
 .archive-toolbar .inline-select { display: flex; width: 100%; font-size: 14px; }
 .archive-toolbar .inline-select-trigger, .settings-content .archive-toolbar .inline-select-trigger {

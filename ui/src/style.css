@@ -1068,7 +1068,7 @@ button.large {
   margin-bottom: 17px;
   color: var(--ink);
 }
-.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not(.archive-search-input):not(.proxy-search-input),
 .settings-content .inline-select-trigger {
   height: 36px;
   border: 1px solid var(--line);
@@ -1468,7 +1468,7 @@ button.large {
 .modal-footer button {
   font-size: 1rem;
 }
-.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not(.archive-search-input):not(.proxy-search-input),
 .settings-content .inline-select-trigger {
   height: 39px;
 }
@@ -2689,7 +2689,7 @@ svg {
   font-weight: 500;
   margin: 28px 0 14px;
 }
-.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]),
+.settings-content input:not([type="checkbox"]):not([type="radio"]):not([type="color"]):not([type="range"]):not(.archive-search-input):not(.proxy-search-input),
 .settings-content .inline-select-trigger {
   border-color: var(--line);
   background: var(--paper);
