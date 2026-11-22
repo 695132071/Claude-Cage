@@ -2713,6 +2713,7 @@
   "正在丢弃…": "Waa la tuurayaa…",
   "TLS ClientHello 分段传输兼容模式": "Habka iswaafajinta kala-qaybinta TLS ClientHello",
   "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Wuu dansan yahay si caadi ah. Kaliya shid haddii silsiladda proxy-ga la doortay ay soo celiso EOF inta lagu jiro is-gacanqaadka TLS ama mararka qaar muujiso «Ka-bixitaanku wuxuu sugayaa xaqiijin»: wuxuu ilaaliyaa sir-qorista buuxda ee post-quantum iyo go’doominta proxy-ga, isagoo kala qaybinaya kaliya TLS ClientHello ka weyn 1000 bayt.",
+  "默认 Desktop 与 {0} 为同一账号，已合并到该实例。": "Desktop-ka caadiga ah wuxuu la wadaagaa koonto isku mid ah {0}, waana lagu daray tusaalahan.",
   "私钥、转发和其他 SSH 选项不会导入。已有主机不会覆盖，首次连接仍需核对指纹。": "Furayaasha gaarka ah, gudbinta iyo xulashooyinka kale ee SSH lama soo dejiyo. Martigeliyeyaasha jira lama beddelo. Xaqiiji faraha furaha marka ugu horreysa ee la xiriirayo.",
   "没有可导入的主机。": "Ma jiraan martigeliyeyaal la soo dejin karo.",
   "已跳过的主机": "Martigeliyeyaasha la dhaafay",

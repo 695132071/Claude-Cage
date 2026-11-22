@@ -2713,6 +2713,7 @@
   "正在丢弃…": "Suppression…",
   "TLS ClientHello 分段传输兼容模式": "Mode de compatibilité par fragmentation TLS ClientHello",
   "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Désactivé par défaut. Activez uniquement si la chaîne proxy sélectionnée renvoie EOF lors du handshake TLS ou affiche par intermittence « Sortie à confirmer » : conserve le chiffrement post-quantique complet et l’isolation proxy, en scindant uniquement les TLS ClientHello dépassant 1000 octets.",
+  "默认 Desktop 与 {0} 为同一账号，已合并到该实例。": "Le Desktop par défaut utilise le même compte que {0} et a été fusionné dans cette instance.",
   "私钥、转发和其他 SSH 选项不会导入。已有主机不会覆盖，首次连接仍需核对指纹。": "Les clés privées, les redirections et les autres options SSH ne sont pas importées. Les hôtes existants sont conservés. Vérifiez l’empreinte à la première connexion.",
   "没有可导入的主机。": "Aucun hôte à importer.",
   "已跳过的主机": "Hôtes ignorés",

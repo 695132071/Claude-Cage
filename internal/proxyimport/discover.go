@@ -473,9 +473,7 @@ func readWithin(root, relative string) ([]byte, error) {
 
 func nodeData(root, providers string, data []byte) ([]byte, string, error) {
 	var input struct {
-		DNS struct {
-			NodeDNS []string `yaml:"proxy-server-nameserver"`
-		} `yaml:"dns"`
+		DNS       yaml.Node        `yaml:"dns"`
 		Proxies   []map[string]any `yaml:"proxies"`
 		Payload   []map[string]any `yaml:"payload"`
 		Providers map[string]struct {
@@ -484,6 +482,15 @@ func nodeData(root, providers string, data []byte) ([]byte, string, error) {
 	}
 	if yaml.Unmarshal(data, &input) != nil {
 		return nil, "", errors.New("配置格式无效")
+	}
+	var nodeDNS []string
+	if input.DNS.Kind == yaml.MappingNode {
+		var dnsCfg struct {
+			Servers []string `yaml:"proxy-server-nameserver"`
+		}
+		if input.DNS.Decode(&dnsCfg) == nil {
+			nodeDNS = managedproxy.FilterNodeDNS(dnsCfg.Servers)
+		}
 	}
 	if len(input.Proxies) == 0 {
 		input.Proxies = input.Payload
@@ -544,8 +551,8 @@ func nodeData(root, providers string, data []byte) ([]byte, string, error) {
 		}
 	}
 	output := map[string]any{"proxies": unique}
-	if len(input.DNS.NodeDNS) > 0 {
-		output["dns"] = map[string]any{"proxy-server-nameserver": input.DNS.NodeDNS}
+	if len(nodeDNS) > 0 {
+		output["dns"] = map[string]any{"proxy-server-nameserver": nodeDNS}
 	}
 	result, err := json.Marshal(output)
 	warning := ""

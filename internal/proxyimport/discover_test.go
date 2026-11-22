@@ -363,6 +363,7 @@ func mustJSON(t *testing.T, v any) string {
 
 func TestScanReportsUnsupportedNodeDNSInsteadOfMissingNodes(t *testing.T) {
 	root := t.TempDir()
+	writeConfig(t, root, "http-dns.yaml", testNode+"dns:\n  proxy-server-nameserver: [http://resolver.example.test/dns-query]\n")
 	writeConfig(t, root, "system.yaml", testNode+"dns:\n  proxy-server-nameserver: [system]\n")
 	writeConfig(t, root, "doh.yaml", testNode+"dns:\n  proxy-server-nameserver: [https://resolver.example.test/dns-query]\n")
 	entries := Scan([]Location{{"Mihomo", root, Plain, ""}}, []byte("key"))
@@ -370,9 +371,12 @@ func TestScanReportsUnsupportedNodeDNSInsteadOfMissingNodes(t *testing.T) {
 	for _, e := range entries {
 		got[e.Name] = e
 	}
-	rejected := got["system.yaml"]
+	rejected := got["http-dns.yaml"]
 	if rejected.Nodes != 0 || strings.Contains(rejected.Error, "没有可导入的节点") || !strings.Contains(rejected.Error, "节点 DNS") || !strings.Contains(rejected.Error, "HTTPS DoH") {
 		t.Fatalf("unsupported node DNS misreported: %s", mustJSON(t, rejected))
+	}
+	if accepted := got["system.yaml"]; accepted.Nodes != 1 || accepted.Error != "" {
+		t.Fatalf("standard system node DNS rejected: %s", mustJSON(t, accepted))
 	}
 	if accepted := got["doh.yaml"]; accepted.Nodes != 1 || accepted.Error != "" {
 		t.Fatalf("remote DoH node DNS rejected: %s", mustJSON(t, accepted))
@@ -400,5 +404,40 @@ dns:
 	}
 	if strings.Contains(string(data), "private-") || strings.Contains(string(data), "listen") {
 		t.Fatal("local import copied unrelated subscription DNS")
+	}
+}
+
+func TestScanVergeImportsConfigsWithLocalOrMixedNodeDNS(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "clash-verge.yaml", testNode+`dns:
+  proxy-server-nameserver:
+    - udp://127.0.0.1:7874
+`)
+	writeConfig(t, root, "profiles.yaml", `current: mixed
+items:
+  - {uid: mixed, name: MixedDNS, type: remote, file: mixed.yaml, url: 'https://sub.example/token'}
+  - {uid: scalar, name: ScalarDNS, type: local, file: scalar.yaml}
+`)
+	writeConfig(t, root, "profiles/mixed.yaml", testNode+`dns:
+  proxy-server-nameserver: [119.29.29.29, 'https://dns.alidns.com/dns-query', 'tls://223.5.5.5', 223.5.5.5]
+`)
+	writeConfig(t, root, "profiles/scalar.yaml", testNode+"dns: false\n")
+
+	configs := Scan([]Location{{"Clash Verge Rev", root, Verge, ""}}, []byte("session"))
+	if len(configs) != 3 {
+		t.Fatalf("expected 3 configs, got %s", mustJSON(t, configs))
+	}
+	byName := map[string]Config{}
+	for _, c := range configs {
+		if c.Error != "" || c.Nodes != 1 {
+			t.Fatalf("config %q failed to import: %s", c.Name, mustJSON(t, c))
+		}
+		byName[c.Name] = c
+	}
+	if strings.Contains(string(byName["当前生效配置"].Data), "127.0.0.1") {
+		t.Fatal("runtime config retained local UDP DNS")
+	}
+	if !strings.Contains(string(byName["MixedDNS"].Data), "https://dns.alidns.com/dns-query") || strings.Contains(string(byName["MixedDNS"].Data), "119.29.29.29") || strings.Contains(string(byName["MixedDNS"].Data), "tls://") {
+		t.Fatalf("mixed DNS not filtered to remote HTTPS DoH: %s", string(byName["MixedDNS"].Data))
 	}
 }
