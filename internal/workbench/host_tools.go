@@ -42,6 +42,7 @@ var hostToolsRelayScript string
 // environment's port to it.
 type hostTools struct {
 	bridge  *hostbridge.Bridge
+	control *workspaceControlBridge
 	plugins []*hostbridge.External
 	jobs    *hostbridge.Jobs
 	// problems are the reasons plugins were left out, for the user to read.
@@ -82,6 +83,9 @@ func (h *hostTools) close() {
 	<-h.done
 	if h.bridge != nil {
 		_ = h.bridge.Close()
+	}
+	if h.control != nil {
+		h.control.Close()
 	}
 	for _, plugin := range h.plugins {
 		plugin.Close()
@@ -142,6 +146,7 @@ func (s *Server) startHostTools(serving bool) error {
 	}
 	approvals := newHostApprovals()
 	approvals.remoteAsk = s.remoteApprovals.ask
+	approvals.neverAlways[workspaceControlPlugin+"/"+workspaceControlManageTool] = true
 	jobs := hostbridge.NewJobs()
 	ctx, cancel := context.WithCancel(s.lifetimeContext())
 	// Plugins the user installed run beside the built-in command tool. One
@@ -149,10 +154,20 @@ func (s *Server) startHostTools(serving bool) error {
 	s.mu.Lock()
 	off := hostPluginsOff(s.preferences)
 	s.mu.Unlock()
+	var control *workspaceControlBridge
+	if serving && !slices.Contains(off, workspaceControlPlugin) {
+		if _, statErr := os.Lstat(filepath.Join(s.profile, "plugins", workspaceControlPlugin)); statErr == nil {
+			if started, ctrlErr := s.startWorkspaceControlBridge(); ctrlErr == nil {
+				control = started
+			} else {
+				diagnostics.Log("warn", "host-tools", fmt.Sprintf("workspace-control bridge error=%v", ctrlErr))
+			}
+		}
+	}
 	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), hostbridge.LoadOptions{
 		Taken: []string{"run_command", "command_job"}, Off: off, Version: version.Version,
 		ProjectDir: s.hostActiveProjectDir(),
-		Approve:    approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving, Env: s.pluginSettingsEnv})
+		Approve:    approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving, Env: s.workspaceControlPluginEnv(control)})
 	var problems []string
 	pluginProblems := map[string]string{}
 	missingPrograms := map[string]string{}
@@ -204,7 +219,7 @@ func (s *Server) startHostTools(serving bool) error {
 			approvals.unasked[plugin.Manifest.Name] = true
 		}
 	}
-	tools := &hostTools{cancel: cancel, ctx: ctx, done: make(chan struct{}), plugins: external, jobs: jobs,
+	tools := &hostTools{cancel: cancel, ctx: ctx, done: make(chan struct{}), control: control, plugins: external, jobs: jobs,
 		problems: problems, pluginProblems: pluginProblems, missingPrograms: missingPrograms, serving: serving, awaitingUnlock: awaitingUnlock}
 	s.stopSecretPluginsOnLock(tools)
 	if !serving {

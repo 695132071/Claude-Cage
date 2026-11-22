@@ -51,6 +51,73 @@ func TestDefaultPluginsBundledAndDigestMatchesDeployed(t *testing.T) {
 	if _, err := InstallDefaultPlugin("extension-studio", dir); err == nil {
 		t.Fatal("expected error when default plugin already exists")
 	}
+
+	ctrl, ok := DefaultPluginByName("workspace-control")
+	if !ok {
+		t.Fatal("expected workspace-control in bundled defaults")
+	}
+	if ctrl.Manifest.Kind != KindHost || len(ctrl.Manifest.Permissions) != 0 {
+		t.Fatalf("unexpected workspace-control manifest: %+v", ctrl.Manifest)
+	}
+	if len(ctrl.I18n) != 15 {
+		t.Fatalf("workspace-control i18n languages = %d, want 15", len(ctrl.I18n))
+	}
+	ctrlDigest, err := InstallDefaultPlugin("workspace-control", dir)
+	if err != nil {
+		t.Fatalf("InstallDefaultPlugin(workspace-control): %v", err)
+	}
+	deployedCtrlDigest, err := PluginDigest(filepath.Join(dir, "workspace-control"), "workspace-control")
+	if err != nil || deployedCtrlDigest != ctrlDigest || ctrlDigest != ctrl.Digest {
+		t.Fatalf("workspace-control digest mismatch: %s vs %s vs %s (%v)", deployedCtrlDigest, ctrlDigest, ctrl.Digest, err)
+	}
+}
+
+func TestWorkspaceControlToolWordingIsNeutral(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 unavailable")
+	}
+	installRoot := t.TempDir()
+	if _, err := InstallDefaultPlugin("workspace-control", installRoot); err != nil {
+		t.Fatal(err)
+	}
+	ctrlDir := filepath.Join(installRoot, "workspace-control")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, python, filepath.Join(ctrlDir, "server.py"))
+	cmd.Dir = ctrlDir
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	session, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd, TerminateDuration: 2 * time.Second}, nil)
+	if err != nil {
+		t.Fatalf("connect workspace-control: %v", err)
+	}
+	defer session.Close()
+
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	if len(listed.Tools) != 5 {
+		t.Fatalf("got %d tools, want 5", len(listed.Tools))
+	}
+	for _, tool := range listed.Tools {
+		if word, found := CheckWording(tool); found {
+			t.Fatalf("workspace-control tool %s violates CheckWording with %q", tool.Name, word)
+		}
+	}
+	res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "workspace_list_capabilities", Arguments: map[string]any{}})
+	if err != nil || res.IsError {
+		t.Fatalf("workspace_list_capabilities failed: %v %+v", err, res)
+	}
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if word, found := CheckWording(&mcp.Tool{Name: "cap", Description: tc.Text}); found {
+				t.Fatalf("workspace_list_capabilities leaks reserved word %q", word)
+			}
+		}
+	}
 }
 
 func TestExtensionStudioEndToEndAndNeutrality(t *testing.T) {
