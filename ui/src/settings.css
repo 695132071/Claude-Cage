@@ -797,8 +797,8 @@
   --s-gutter: max(32px, calc((100% - var(--s-content)) / 2));
   padding-top: 36px;
 }
-.account-profile { margin-bottom: 36px; }
-.account-profile fieldset { align-items: center; gap: 14px; }
+.account-profile { margin-bottom: 20px; }
+.account-profile fieldset { align-items: center; gap: 10px; }
 .account-page-title {
   margin: 0 0 12px;
   color: var(--muted);
@@ -815,7 +815,7 @@
   background: transparent;
   line-height: 0;
 }
-.account-avatar-edit .account-avatar.large { width: 96px; height: 96px; font-size: 38px; }
+.account-avatar-edit .account-avatar.large { width: 88px; height: 88px; font-size: 34px; box-shadow: var(--shadow-sm); }
 .account-avatar-overlay {
   position: absolute;
   inset: 0;
@@ -832,16 +832,16 @@
 .account-avatar-edit:focus-visible .account-avatar-overlay { opacity: 1; }
 .account-avatar-edit:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .settings-page .settings-content input.account-profile-name:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="color"]) {
-  width: min(100%, 520px);
+  width: min(100%, 420px);
   height: auto;
-  padding: 4px 12px;
+  padding: 2px 10px;
   border-color: transparent;
   border-radius: 8px;
   background: transparent;
   text-align: center;
-  font-size: 2rem;
+  font-size: 1.643rem;
   font-weight: 600;
-  line-height: 1.4;
+  line-height: 1.35;
   letter-spacing: -0.02em;
 }
 .account-profile-name:not([readonly]):hover { border-color: var(--line); }
@@ -853,18 +853,19 @@
 .settings-page .account-settings > .token-usage {
   max-width: none;
   container-type: inline-size;
-  padding: 24px;
+  padding: 0;
   margin-bottom: 40px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: var(--paper);
-  box-shadow: var(--shadow-xs);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
-.settings-page .settings-content .token-usage button.token-cell { min-height: 0; padding: 0; border-radius: 3px; }
+.settings-page .settings-content .token-usage button.token-cell { min-height: 0; padding: 0; border-radius: 4px; }
 .settings-page .token-page-heading h2 { font-size: var(--s-lg); }
 .settings-page .settings-content .token-usage label:not(.check-line):not(.choice):not(.toggle-row) { margin-bottom: 0; font-weight: 400; color: var(--muted); }
 @container (max-width: 600px) {
-  .settings-page .account-settings .token-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
+  .settings-page .account-settings .token-totals { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px 8px; }
+  .settings-page .account-settings .token-totals > div:nth-child(odd)::before { display: none; }
   .settings-page .account-settings .token-page-heading,
   .settings-page .account-settings .token-section-heading { flex-wrap: wrap; }
 }

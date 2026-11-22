@@ -728,7 +728,6 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
     <div className="account-settings">
       <form className="account-profile" onSubmit={(event) => save(event)}>
         <fieldset disabled={busy || environmentBusy}>
-          <h3 className="account-page-title">{tr("账户")}</h3>
           <button type="button" className="account-avatar-edit" aria-label={tr("更换头像")}
             onClick={() => file.current.click()}>
             <AccountAvatar account={{ username: name, avatar }} large />
