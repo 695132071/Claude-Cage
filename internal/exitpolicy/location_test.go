@@ -225,7 +225,13 @@ func TestLocationDistinguishesTLSHandshakeEOF(t *testing.T) {
 			if err != nil {
 				return
 			}
-			_ = c.Close()
+			go func(conn net.Conn) {
+				defer conn.Close()
+				// Read the client's ClientHello before closing so the peer
+				// observes a clean FIN (io.EOF) instead of a TCP RST race.
+				buf := make([]byte, 4096)
+				_, _ = conn.Read(buf)
+			}(c)
 		}
 	}()
 	transport := &http.Transport{

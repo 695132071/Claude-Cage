@@ -541,7 +541,11 @@ func TestExitProbeClassifiesTLSHandshakeEOFAndTimeout(t *testing.T) {
 			if err != nil {
 				return
 			}
-			_ = c.Close()
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 4096)
+				_, _ = conn.Read(buf)
+			}(c)
 		}
 	}()
 	eofServices := []exitProbeService{{id: "eof", name: "EOF 服务", endpoint: "https://" + eofLn.Addr().String()}}
