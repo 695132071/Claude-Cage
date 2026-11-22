@@ -188,11 +188,37 @@
 .proxy-toolbar .proxy-search input.proxy-search-input:focus-visible {
   outline: none;
 }
+.proxy-region-panel {
+  margin: 0 0 12px;
+}
 .proxy-region-bar {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  margin: 0 0 12px;
+}
+.proxy-region-bar.clamped {
+  max-height: 64px;
+  overflow: hidden;
+}
+.proxy-region-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 4px;
+  min-height: 24px;
+  font-size: 0.7857rem;
+  color: var(--muted);
+}
+.proxy-region-toggle:hover:not(:disabled) {
+  color: var(--strong);
+  text-decoration: none;
+}
+.proxy-region-toggle svg {
+  transition: transform 150ms var(--ease-out);
+}
+.proxy-region-toggle svg.rotated {
+  transform: rotate(180deg);
 }
 .settings-page .settings-content .proxy-region-bar button.proxy-region-chip,
 .proxy-region-bar button.proxy-region-chip {

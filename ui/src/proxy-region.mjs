@@ -193,7 +193,7 @@ function flagToCode(flag) {
 }
 
 export function regionFlag(code) {
-  if (!code || code === "ZZ" || !/^[A-Z]{2}$/.test(code)) return "";
+  if (!code || code === "ZZ" || code === "TW" || !/^[A-Z]{2}$/.test(code)) return "";
   return String.fromCodePoint(
     0x1f1e6 + code.charCodeAt(0) - 65,
     0x1f1e6 + code.charCodeAt(1) - 65,

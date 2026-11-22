@@ -77,6 +77,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     [search, setSearch] = useState(""),
     [source, setSource] = useState(""),
     [region, setRegion] = useState(""),
+    [regionsExpanded, setRegionsExpanded] = useState(false),
+    [regionsOverflow, setRegionsOverflow] = useState(false),
     [collapsedRegions, setCollapsedRegions] = useState({}),
     [form, setForm] = useState(null),
     [mode, setMode] = useState("url"),
@@ -96,6 +98,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const [helpOpen, setHelpOpen] = useState(false);
   const [readingFile, setReadingFile] = useState(false);
   const alive = useRef(true),
+    regionBarRef = useRef(null),
     mutating = useRef(false),
     delayReasons = useRef({}),
     loading = useRef(false),
@@ -362,6 +365,16 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     onDirty?.(routeChanged || initializing && Boolean(form));
     return () => onDirty?.(false);
   }, [onDirty, routeChanged, initializing, Boolean(form)]);
+  useEffect(() => {
+    const el = regionBarRef.current;
+    if (!el) { setRegionsOverflow(false); return; }
+    const measureOverflow = () => setRegionsOverflow(el.scrollHeight > 68);
+    measureOverflow();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measureOverflow);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [tab, proxy, search, source]);
   if (!proxy)
     return <div className="proxy-loading" role={error ? "alert" : "status"}>{error || tr("正在读取代理配置…")}</div>;
   const allNodes = proxy.sources.flatMap((s) =>
@@ -812,29 +825,47 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             )}
           </div>
           {showRegionBar && (
-            <div className="proxy-region-bar" role="group" aria-label={tr("节点")}>
-              <button
-                type="button"
-                className="proxy-region-chip"
-                aria-pressed={!activeRegion}
-                onClick={() => setRegion("")}
+            <div className="proxy-region-panel">
+              <div
+                ref={regionBarRef}
+                className={`proxy-region-bar ${regionsExpanded ? "expanded" : "clamped"}`}
+                role="group"
+                aria-label={tr("节点")}
               >
-                <span>{tr("全部")}</span>
-                <small>{baseNodes.length}</small>
-              </button>
-              {regionGroups.map((group) => (
                 <button
                   type="button"
-                  key={group.code}
                   className="proxy-region-chip"
-                  aria-pressed={activeRegion === group.code}
-                  onClick={() => setRegion((current) => current === group.code ? "" : group.code)}
+                  aria-pressed={!activeRegion}
+                  onClick={() => setRegion("")}
                 >
-                  {group.flag && <span className="proxy-region-flag" aria-hidden="true">{group.flag}</span>}
-                  <span>{group.label}</span>
-                  <small>{group.nodes.length}</small>
+                  <span>{tr("全部")}</span>
+                  <small>{baseNodes.length}</small>
                 </button>
-              ))}
+                {regionGroups.map((group) => (
+                  <button
+                    type="button"
+                    key={group.code}
+                    className="proxy-region-chip"
+                    aria-pressed={activeRegion === group.code}
+                    onClick={() => setRegion((current) => current === group.code ? "" : group.code)}
+                  >
+                    {group.flag && <span className="proxy-region-flag" aria-hidden="true">{group.flag}</span>}
+                    <span>{group.label}</span>
+                    <small>{group.nodes.length}</small>
+                  </button>
+                ))}
+              </div>
+              {regionsOverflow && (
+                <button
+                  type="button"
+                  className="text-button proxy-region-toggle"
+                  aria-expanded={regionsExpanded}
+                  onClick={() => setRegionsExpanded((expanded) => !expanded)}
+                >
+                  <span>{regionsExpanded ? tr("收起显示") : tr("展开显示")}</span>
+                  <ChevronDown size={14} className={regionsExpanded ? "rotated" : ""} />
+                </button>
+              )}
             </div>
           )}
           {!allNodes.length ? (
