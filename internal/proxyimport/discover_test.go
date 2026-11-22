@@ -227,17 +227,44 @@ func TestLocationsUsePlatformDataRoots(t *testing.T) {
 	}
 	locations := Locations("linux", "/home/person", "/custom/data", "/custom/config")
 	for _, loc := range locations {
-		if loc.Client == "Clash Verge Rev" && loc.Directory != "/custom/data/io.github.clash-verge-rev.clash-verge-rev" {
+		if loc.Client == "Clash Verge Rev" && loc.Directory != filepath.Join("/custom/data", "io.github.clash-verge-rev.clash-verge-rev") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "FlClash for oixCloud" && loc.Directory != "/custom/data/com.oixcloud.clash" {
+		if loc.Client == "FlClash for oixCloud" && loc.Directory != filepath.Join("/custom/data", "com.oixcloud.clash") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "Clash Party" && loc.Directory != "/custom/config/mihomo-party" {
+		if loc.Client == "Clash Party" && loc.Directory != filepath.Join("/custom/config", "mihomo-party") {
 			t.Fatal(loc)
 		}
-		if loc.Client == "Clash Verge" && loc.Directory != "/custom/config/clash-verge" {
+		if loc.Client == "Clash Verge" && loc.Directory != filepath.Join("/custom/config", "clash-verge") {
 			t.Fatal(loc)
+		}
+	}
+}
+
+func TestScanWindowsFlClashFollowClashDirectory(t *testing.T) {
+	data := t.TempDir()
+	writeConfig(t, filepath.Join(data, "com.follow", "clash"), "config.yaml", testNode)
+	writeConfig(t, filepath.Join(data, "com.follow", "clash", "profiles"), "123.yaml", testNode)
+	var runtime, profile *Config
+	entries := Scan(Locations("windows", t.TempDir(), data, ""), []byte("key"))
+	for i, e := range entries {
+		if e.Client != "FlClash" {
+			continue
+		}
+		switch e.Name {
+		case "config.yaml":
+			runtime = &entries[i]
+		case "123.yaml":
+			profile = &entries[i]
+		}
+	}
+	for _, e := range []*Config{runtime, profile} {
+		if e == nil {
+			t.Fatalf("missing FlClash config from com.follow/clash: %+v", entries)
+		}
+		if e.Nodes != 1 || e.Error != "" {
+			t.Fatalf("FlClash config not importable: %+v", *e)
 		}
 	}
 }
@@ -332,6 +359,24 @@ func mustJSON(t *testing.T, v any) string {
 		t.Fatal(err)
 	}
 	return string(data)
+}
+
+func TestScanReportsUnsupportedNodeDNSInsteadOfMissingNodes(t *testing.T) {
+	root := t.TempDir()
+	writeConfig(t, root, "system.yaml", testNode+"dns:\n  proxy-server-nameserver: [system]\n")
+	writeConfig(t, root, "doh.yaml", testNode+"dns:\n  proxy-server-nameserver: [https://resolver.example.test/dns-query]\n")
+	entries := Scan([]Location{{"Mihomo", root, Plain, ""}}, []byte("key"))
+	got := map[string]Config{}
+	for _, e := range entries {
+		got[e.Name] = e
+	}
+	rejected := got["system.yaml"]
+	if rejected.Nodes != 0 || strings.Contains(rejected.Error, "没有可导入的节点") || !strings.Contains(rejected.Error, "节点 DNS") || !strings.Contains(rejected.Error, "HTTPS DoH") {
+		t.Fatalf("unsupported node DNS misreported: %s", mustJSON(t, rejected))
+	}
+	if accepted := got["doh.yaml"]; accepted.Nodes != 1 || accepted.Error != "" {
+		t.Fatalf("remote DoH node DNS rejected: %s", mustJSON(t, accepted))
+	}
 }
 
 func TestNodeDataPreservesOnlySourceNodeDNS(t *testing.T) {

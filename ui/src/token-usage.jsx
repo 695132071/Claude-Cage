@@ -141,6 +141,7 @@ export function TokenUsagePanel({ onConfirm }) {
     if (await onConfirm({title:tr("清除本地用量统计？"),body:tr("清除已保存的 Token 计数，并从现在起重新统计。Claude Code 原始会话、登录和项目保留。"),confirm:tr("清除统计"),danger:true})) await load({action:"clear"});
   };
   return <section className="token-usage" aria-label={tr("Claude 本地用量")}>
+    {!data && error && <p className="token-error" role="alert">{tr(error)}<button disabled={busy} onClick={()=>load(undefined)}>{tr("重试")}</button></p>}
     {!data && <p className="token-loading" role="status">{tr("正在读取本地统计…")}</p>}
     {data && <>
       <dl className="token-totals">
@@ -179,7 +180,7 @@ export function TokenUsagePanel({ onConfirm }) {
           </div>
           <button className="token-refresh" disabled={busy || !data?.enabled || !data?.available} onClick={()=>load({action:"refresh"})}><RefreshCw size={14} className={busy?"token-spinning":""}/> {busy?tr("正在读取…"):tr("刷新统计")}</button>
         </div>
-        {error && <p className="token-error" role="alert">{error}<button disabled={busy} onClick={()=>load(data?.enabled && data?.available?{action:"refresh"}:undefined)}>{tr("重试")}</button></p>}
+        {error && <p className="token-error" role="alert">{tr(error)}<button disabled={busy} onClick={()=>load(data?.enabled && data?.available?{action:"refresh"}:undefined)}>{tr("重试")}</button></p>}
         {!data.available && <p className="token-notice" role="status">{tr("环境尚未就绪，显示上次保存的统计。启动环境并完成组件更新后可刷新。")}</p>}
         {!data.enabled && <p className="token-notice" role="status">{tr("统计已暂停，已保存的计数继续保留。")}</p>}
         {snapshot?.pending && <p className="token-notice" role="status">{tr("部分记录尚未读完，将在后续采集中继续处理。")}</p>}
