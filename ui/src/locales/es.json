@@ -2713,5 +2713,6 @@
   "丢弃文件": "Descartar archivo",
   "正在丢弃…": "Descartando…",
   "TLS ClientHello 分段传输兼容模式": "Modo de compatibilidad con fragmentación de TLS ClientHello",
-  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Desactivado por defecto. Actívelo solo si la cadena de proxy seleccionada devuelve EOF durante el apretón de manos TLS o muestra de forma intermitente «Salida pendiente de confirmación»: conserva el cifrado poscuántico completo y el aislamiento del proxy, dividiendo únicamente los TLS ClientHello de más de 1000 bytes."
+  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Desactivado por defecto. Actívelo solo si la cadena de proxy seleccionada devuelve EOF durante el apretón de manos TLS o muestra de forma intermitente «Salida pendiente de confirmación»: conserva el cifrado poscuántico completo y el aislamiento del proxy, dividiendo únicamente los TLS ClientHello de más de 1000 bytes.",
+  "默认 Desktop 与 {0} 为同一账号，已合并到该实例。": "El Desktop predeterminado comparte la misma cuenta que {0} y se ha fusionado en esta instancia."
 }
