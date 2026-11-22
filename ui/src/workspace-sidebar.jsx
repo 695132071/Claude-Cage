@@ -8,7 +8,6 @@ import {
   Folder,
   FolderOpen,
   Globe2,
-  Home,
   Monitor,
   Network,
   PanelLeftClose,
@@ -145,10 +144,17 @@ export function WorkspaceSidebar({
   const mainSidebar = (
     <aside className="workspace-sidebar" aria-label={tr("项目与终端")} inert={plugins?.open}>
       <div className="sidebar-top">
-        <span className="sidebar-brand">
+        <button
+          type="button"
+          className={`sidebar-brand ${home ? "selected" : ""}`}
+          onClick={onHome}
+          aria-label={tr("工作台")}
+          aria-current={home ? "page" : undefined}
+          title={tr("工作台")}
+        >
           <img className="brand-logo" src={logo} alt="" />
-          Cage
-        </span>
+          <span>Cage</span>
+        </button>
         <button
           className="icon-button"
           onClick={onCollapse}
@@ -159,13 +165,6 @@ export function WorkspaceSidebar({
         </button>
       </div>
       <nav className="sidebar-navigation" aria-label={tr("主导航")}>
-        <button
-          className={`sidebar-link ${home ? "selected" : ""}`}
-          onClick={onHome}
-        >
-          <Home size={17} />
-          {tr("工作台")}
-        </button>
         {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label={tr("SSH 主机")}><Server size={17} />SSH</button>}
         <div className={`sidebar-browser-row ${!desktopOpen && !home && tabs.some((tab) => tab.id === active && tab.kind !== "terminal") ? "selected" : ""}`}>
           <button

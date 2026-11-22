@@ -1614,12 +1614,23 @@ svg {
   flex: none;
 }
 .sidebar-brand {
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 9px;
+  padding: 5px 8px;
+  margin-inline-start: -6px;
+  min-height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
   font-weight: 600;
   font-size: 1.1429rem;
   letter-spacing: -0.4px;
+  color: var(--strong);
+  transition: background-color var(--duration-fast) var(--ease-out);
+}
+.sidebar-brand:hover:not(:disabled) {
+  background: var(--hover);
   color: var(--strong);
 }
 .sidebar-top .icon-button {
