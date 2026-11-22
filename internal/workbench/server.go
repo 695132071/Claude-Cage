@@ -122,6 +122,10 @@ type Server struct {
 	clientBridge                                     serverClientPluginBridge
 	// pluginSettingsMu serializes reading and writing plugin-settings.json.
 	pluginSettingsMu sync.Mutex
+	// defaultPluginsMu serializes reading and writing default-plugins.json.
+	defaultPluginsMu sync.Mutex
+	// draftStoreOverride stands in for the guest extension-submissions folder in tests.
+	draftStoreOverride string
 	// tailnetTool stands in for the running Tailscale plugin in tests.
 	tailnetTool             func(context.Context, string, json.RawMessage) (*mcp.CallToolResult, error)
 	hostViewMu              sync.Mutex
@@ -273,6 +277,7 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 				return err
 			}
 		}
+		s.ensureDefaultPlugins()
 		if e := s.retireLocalProxyCore(); e != nil {
 			// Revoke the gate even if the old process cannot be stopped.
 			// Keep the workbench available for importing its replacement.
@@ -420,6 +425,10 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/host-tools", s.setHostTools)
 	mux.HandleFunc("POST /api/host-tools/call", s.callHostTool)
 	mux.HandleFunc("GET /api/host-tools/market", s.getHostMarket)
+	mux.HandleFunc("GET /api/host-tools/drafts", s.getHostPluginDrafts)
+	mux.HandleFunc("GET /api/host-tools/drafts/file", s.getHostPluginDraftFile)
+	mux.HandleFunc("POST /api/host-tools/drafts/install", s.installHostPluginDraft)
+	mux.HandleFunc("POST /api/host-tools/drafts/discard", s.discardHostPluginDraft)
 	mux.HandleFunc("GET /api/host-tools/sync", s.getHostPluginSync)
 	mux.HandleFunc("POST /api/host-tools/sync", s.syncHostPlugin)
 	mux.HandleFunc("POST /api/host-tools/approvals/channel", s.remoteApprovalChannel)
