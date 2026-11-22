@@ -177,6 +177,8 @@ func Scan(locations []Location, key []byte) []Config {
 					// (such as a chain through a group) describe that profile.
 					if errors.Is(err, managedproxy.ErrLocalProxyNode) || loc.Layout == Surge {
 						c.Error = err.Error()
+					} else if errors.Is(err, managedproxy.ErrSourceNodeDNS) {
+						c.Error = err.Error() + "。请在原软件中把节点 DNS（dns.proxy-server-nameserver）改为远程 HTTPS DoH 地址后重新导出，或在 Cage 中手动添加节点"
 					}
 				} else {
 					c.Nodes = len(preview.Sources[0].Nodes)
