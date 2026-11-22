@@ -35,6 +35,7 @@ import { TERMINAL_LIMIT, liveTerminalCount } from "./session-order.mjs";
 import { InitializationGate } from "./initialization";
 import { ProjectRecovery } from "./project-recovery";
 import { DesktopPanes, useAccountDesktops } from "./account-desktops";
+import { mergedDefaultInstance } from "./account-desktop-state.mjs";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { AccountProvider, AccountGate, useAccount } from "./account";
@@ -1054,10 +1055,17 @@ function App() {
       const b = JSON.parse(event.data);
       setBrowserError("");
       if (b.desktopFocus === true) {
-        accountDesktops.clear();
-        setDesktopOpen(true);
-        setHome(false);
-        setSettingsOpen(false);
+        const currentDesktops = notificationViewRef.current.accountDesktops;
+        const merged = mergedDefaultInstance(currentDesktops?.catalog);
+        if (merged) {
+          setSettingsOpen(false);
+          void currentDesktops.act(merged, "start");
+        } else {
+          currentDesktops?.clear();
+          setDesktopOpen(true);
+          setHome(false);
+          setSettingsOpen(false);
+        }
       }
       const previousPair = browserSnapshot.current.split;
       const local = layoutRef.current;
@@ -1704,7 +1712,17 @@ function App() {
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
             accountDesktops={status.account_desktops_supported ? accountDesktops : null}
             onDesktopRename={(desktop) => setRename({ id: desktop.id, title: desktop.label || "", desktop: true })}
-            onClaudeDesktop={() => { accountDesktops.clear(); setManagementPage(""); setHome(false); setDesktopOpen(true); }}
+            onClaudeDesktop={() => {
+              const merged = mergedDefaultInstance(accountDesktops.catalog);
+              if (merged) {
+                void accountDesktops.act(merged, "start");
+                return;
+              }
+              accountDesktops.clear();
+              setManagementPage("");
+              setHome(false);
+              setDesktopOpen(true);
+            }}
             onEditor={openEditor}
             onSettings={openSettings}
             onAccountConfirm={confirm}
@@ -1768,7 +1786,9 @@ function App() {
             {!storageRecovery && desktopOpen && accountDesktops.panes.length>0 && <DesktopPanes
               ref={accountDesktopControl}
               model={accountDesktops}
-              visible={!settingsOpen && !managementPage && windowVisible}
+              ready={Boolean(status.ready)}
+              visible={!settingsOpen && !managementPage}
+              windowVisible={windowVisible}
               keyboard={status.keyboard}
               systemClipboard={browser.capabilities?.systemClipboard !== false}
               uploads={desktopFiles.uploads}
@@ -2261,7 +2281,7 @@ function App() {
               <button
                 className="primary"
                 onClick={() => {
-                  remote.current?.pasteText(transfer.text);
+                  (viewingAccountDesktop ? accountDesktopControl.current : remote.current)?.pasteText(transfer.text);
                   setTransfer(null);
                 }}
               >

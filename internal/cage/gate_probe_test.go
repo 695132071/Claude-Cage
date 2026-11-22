@@ -528,6 +528,59 @@ func TestExitProbeDistinguishesProxyConnectFailureFromTimeout(t *testing.T) {
 	}
 }
 
+func TestExitProbeClassifiesTLSHandshakeEOFAndTimeout(t *testing.T) {
+	// Server that accepts TCP and immediately closes (EOF during TLS handshake).
+	eofLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eofLn.Close()
+	go func() {
+		for {
+			c, err := eofLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 4096)
+				_, _ = conn.Read(buf)
+			}(c)
+		}
+	}()
+	eofServices := []exitProbeService{{id: "eof", name: "EOF 服务", endpoint: "https://" + eofLn.Addr().String()}}
+	ip, err := probeExitIPServices(context.Background(), &http.Client{Timeout: 2 * time.Second}, eofServices, time.Minute, "")
+	if ip != "" || !errors.Is(err, ErrTLSHandshakeFailed) || errors.Is(err, ErrProxyConnectFailed) || errors.Is(err, ErrExitProbeTimeout) || !strings.Contains(err.Error(), "TLS 握手失败") {
+		t.Fatalf("TLS EOF expected ErrTLSHandshakeFailed, got ip=%q err=%v", ip, err)
+	}
+
+	// Server that accepts TCP and stalls during TLS handshake -> TLS handshake timeout.
+	stallLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stallLn.Close()
+	stallDone := make(chan struct{})
+	defer close(stallDone)
+	go func() {
+		for {
+			c, err := stallLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				<-stallDone
+			}(c)
+		}
+	}()
+	stallServices := []exitProbeService{{id: "tls-stall", name: "握手超时服务", endpoint: "https://" + stallLn.Addr().String()}}
+	ip, err = probeExitIPServices(context.Background(), &http.Client{Timeout: 120 * time.Millisecond}, stallServices, time.Minute, "")
+	if ip != "" || !errors.Is(err, ErrTLSHandshakeFailed) || !errors.Is(err, ErrExitProbeTimeout) || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "TLS 握手超时") {
+		t.Fatalf("TLS stall expected ErrTLSHandshakeFailed + ErrExitProbeTimeout, got ip=%q err=%v", ip, err)
+	}
+}
+
 func TestExitProbeTimeoutChecksWhetherTheProxyReachesTheInternet(t *testing.T) {
 	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		<-r.Context().Done()

@@ -399,6 +399,17 @@ export function SettingsPanel({
                           onChange={(e) => update("install_tls12_compat", e.target.checked)}
                         />
                       </label>
+                      <label className="settings-row settings-switch-row" title={tr("默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。")}>
+                        <span className="settings-row-copy">
+                          <strong>{tr("TLS ClientHello 分段传输兼容模式")}</strong>
+                        </span>
+                        <input
+                          role="switch"
+                          type="checkbox"
+                          checked={Boolean(draft.tls_client_hello_split)}
+                          onChange={(e) => update("tls_client_hello_split", e.target.checked)}
+                        />
+                      </label>
                       <label className="settings-row settings-switch-row" title={tr("默认关闭。开启后，仅当默认的五家位置服务都失败时，经所选节点把已测得的出口 IP 发给 ipinfo.io 查询国家或地区；其结果只用于国家级判断，不用于绑定或核对州、省和城市。")}>
                         <span className="settings-row-copy">
                           <strong>{tr("出口位置查询备用服务 ipinfo.io")}</strong>
