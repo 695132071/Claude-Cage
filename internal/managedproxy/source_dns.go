@@ -12,6 +12,14 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
+// ErrSourceNodeDNS marks a source rejected for its node resolver list alone:
+// its nodes parsed, so "no importable nodes" would misstate the cause.
+var ErrSourceNodeDNS = errors.New("unsupported source node DNS")
+
+type sourceNodeDNSError struct{ error }
+
+func (sourceNodeDNSError) Is(target error) bool { return target == ErrSourceNodeDNS }
+
 // Adopt only safe remote HTTPS DoH entries from the subscription's node
 // resolver list. Standard non-HTTP Clash/Mihomo resolvers (plain IPv4/IPv6,
 // udp://, tcp://, tls://, quic://, h3://, dhcp://, system) are ignored rather
@@ -28,7 +36,7 @@ func subscriptionNodeDNS(data []byte) ([]string, error) {
 		Servers []string `yaml:"proxy-server-nameserver"`
 	}
 	if input.DNS.Decode(&dns) != nil {
-		return nil, errors.New("订阅的节点 DNS 需要填写 HTTPS DoH 地址列表")
+		return nil, sourceNodeDNSError{errors.New("订阅的节点 DNS 需要填写 HTTPS DoH 地址列表")}
 	}
 	var candidates []string
 	for _, raw := range dns.Servers {
@@ -38,7 +46,11 @@ func subscriptionNodeDNS(data []byte) ([]string, error) {
 		}
 		candidates = append(candidates, trimmed)
 	}
-	return validateSourceDNS(candidates)
+	servers, err := validateSourceDNS(candidates)
+	if err != nil {
+		return nil, sourceNodeDNSError{err}
+	}
+	return servers, nil
 }
 
 func isIgnoredNonHTTPResolver(raw string) bool {
@@ -67,41 +79,22 @@ func isIgnoredNonHTTPResolver(raw string) bool {
 	return false
 }
 
-// FilterNodeDNS returns up to 4 unique, safe remote HTTPS DoH resolver URLs
-// from servers, dropping local, non-HTTPS, credentialed, or fragmented entries.
+// FilterNodeDNS drops standard non-HTTP Clash/Mihomo resolvers (plain IPs,
+// udp://, tcp://, tls://, quic://, h3://, dhcp://, system) while preserving
+// HTTP(S) and malformed entries so downstream validation still reports
+// unsupported DoH configurations accurately.
 func FilterNodeDNS(servers []string) []string {
 	var out []string
-	local := newLocalServers()
 	for _, raw := range servers {
-		raw = strings.TrimSpace(raw)
-		if !isSafeSourceDNS(raw, local) {
+		trimmed := strings.TrimSpace(raw)
+		if isIgnoredNonHTTPResolver(trimmed) {
 			continue
 		}
-		if !slices.Contains(out, raw) {
-			out = append(out, raw)
-			if len(out) == 4 {
-				break
-			}
+		if !slices.Contains(out, trimmed) {
+			out = append(out, trimmed)
 		}
 	}
 	return out
-}
-
-func isSafeSourceDNS(raw string, local localServers) bool {
-	if raw == "" || len(raw) > 2048 {
-		return false
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" || local.contains(u.Hostname()) {
-		return false
-	}
-	if port := u.Port(); port != "" {
-		n, err := strconv.Atoi(port)
-		if err != nil || n < 1 || n > 65535 {
-			return false
-		}
-	}
-	return true
 }
 
 func validateSourceDNS(servers []string) ([]string, error) {

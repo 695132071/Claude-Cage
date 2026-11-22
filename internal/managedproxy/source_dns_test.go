@@ -171,14 +171,12 @@ func TestSubscriptionNodeDNSValidatesUntrustedEndpoints(t *testing.T) {
 	if filtered := FilterNodeDNS([]string{
 		"udp://127.0.0.1:7874",
 		"119.29.29.29",
+		"tls://223.5.5.5",
+		"system",
 		"https://d1.example.test/dns-query",
 		"https://d1.example.test/dns-query",
-		"https://resolver.example.test/dns-query#DIRECT",
 		"https://d2.example.test/dns-query",
-		"https://d3.example.test/dns-query",
-		"https://d4.example.test/dns-query",
-		"https://d5.example.test/dns-query",
-	}); len(filtered) != 4 || filtered[0] != "https://d1.example.test/dns-query" || filtered[3] != "https://d4.example.test/dns-query" {
+	}); len(filtered) != 2 || filtered[0] != "https://d1.example.test/dns-query" || filtered[1] != "https://d2.example.test/dns-query" {
 		t.Fatalf("unexpected FilterNodeDNS result: %v", filtered)
 	}
 	for _, host := range []string{"+.example.test", "*.example.test", "geosite:cn", "example.test,other.test"} {
