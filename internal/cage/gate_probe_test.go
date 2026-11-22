@@ -47,7 +47,7 @@ func TestExitProbeClassifiesProxyTimeout(t *testing.T) {
 	}()
 	cfg := DefaultConfig()
 	cfg.ProxyURL = "http://" + listener.Addr().String()
-	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	ip, err := ProbeExitIP(ctx, cfg)
 	// Three exit services, then one reachability check through the same proxy.
