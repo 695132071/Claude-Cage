@@ -782,6 +782,7 @@ func (s *Server) proposedWithOptions(w http.ResponseWriter, r *http.Request) (sa
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	input.InstallTLS12Compat = s.preferences.InstallTLS12Compat
+	input.TLSClientHelloSplit = s.preferences.TLSClientHelloSplit
 	input.LocationIPInfoFallback = s.preferences.LocationIPInfoFallback
 	s.mu.Unlock()
 	// Clients predating the DNS options keep the saved ones.

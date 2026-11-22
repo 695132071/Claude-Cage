@@ -212,3 +212,31 @@ func TestLocationIPInfoFallbackCannotBindOrFailRegion(t *testing.T) {
 		t.Fatal("country-level rule must pass with the fallback result")
 	}
 }
+
+func TestLocationDistinguishesTLSHandshakeEOF(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			_ = c.Close()
+		}
+	}()
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, ln.Addr().String())
+		},
+		DisableKeepAlives: true,
+	}
+	defer transport.CloseIdleConnections()
+	_, err = Lookup(context.Background(), &http.Client{Transport: transport, Timeout: 2 * time.Second}, net.ParseIP("8.8.8.8"))
+	if err == nil || !strings.Contains(err.Error(), "TLS 握手失败（EOF）") {
+		t.Fatalf("expected TLS handshake EOF classification, got %v", err)
+	}
+}

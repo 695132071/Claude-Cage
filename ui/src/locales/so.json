@@ -2711,5 +2711,7 @@
   "删除后会从账号管理、调度和 Desktop 列表中移除此账号。请先关闭该账号的终端与 Desktop；虚拟机内的会话历史和资料会保留。": "Ka dib markii la tirtiro koontadan waxaa laga saari doonaa maamulka koontada, jadwalka iyo liiska Desktop. Fadlan marka hore xidh terminaalada iyo Desktop-ka koontadan; taariikhda kulamada iyo xogta ku jirta mashiinka farsamada waa la hayn doonaa.",
   "删除后会从账号管理与调度中移除此账号。虚拟机内的会话历史和资料会保留。": "Ka dib markii la tirtiro koontadan waxaa laga saari doonaa maamulka koontada iyo jadwalka. Taariikhda kulamada iyo xogta ku jirta mashiinka farsamada waa la hayn doonaa.",
   "丢弃文件": "Tuur faylka",
-  "正在丢弃…": "Waa la tuurayaa…"
+  "正在丢弃…": "Waa la tuurayaa…",
+  "TLS ClientHello 分段传输兼容模式": "Habka iswaafajinta kala-qaybinta TLS ClientHello",
+  "默认关闭。仅当所选代理链路在 TLS 握手阶段返回 EOF 或间歇性提示“出口待确认”时开启：保留完整后量子加密握手与代理隔离，仅对超过 1000 字节的 TLS ClientHello 分段发送。": "Wuu dansan yahay si caadi ah. Kaliya shid haddii silsiladda proxy-ga la doortay ay soo celiso EOF inta lagu jiro is-gacanqaadka TLS ama mararka qaar muujiso «Ka-bixitaanku wuxuu sugayaa xaqiijin»: wuxuu ilaaliyaa sir-qorista buuxda ee post-quantum iyo go’doominta proxy-ga, isagoo kala qaybinaya kaliya TLS ClientHello ka weyn 1000 bayt."
 }

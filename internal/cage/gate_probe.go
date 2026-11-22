@@ -70,6 +70,10 @@ var (
 	// ErrProxyConnectFailed reports that every exit probe failed while connecting
 	// through the configured proxy (before TLS or HTTP response).
 	ErrProxyConnectFailed = errors.New("proxy connect failed")
+	// ErrTLSHandshakeFailed reports that every exit probe failed during TLS
+	// handshake after connecting through the configured proxy (for example EOF
+	// or timeout caused by large ClientHello packets on some proxy chains).
+	ErrTLSHandshakeFailed = errors.New("tls handshake failed")
 	// ErrExitProbeTimeout reports that every exit probe timed out waiting for a
 	// live exit IP measurement.
 	ErrExitProbeTimeout = errors.New("exit probe timed out")
@@ -81,6 +85,7 @@ type exitProbeStageTiming struct {
 	tlsMS      int64
 	ttfbMS     int64
 	proxyError bool
+	tlsError   bool
 }
 
 type exitProbeResult struct {
@@ -108,6 +113,7 @@ func probeExitIPServices(ctx context.Context, client *http.Client, services []ex
 	failures := make([]string, len(services))
 	allTimedOut := true
 	allProxyConnectFailed := true
+	allTLSHandshakeFailed := true
 	started, pending := 1, 1
 	start(0)
 	timer := time.NewTimer(stagger)
@@ -144,6 +150,9 @@ func probeExitIPServices(ctx context.Context, client *http.Client, services []ex
 		if !result.timing.proxyError {
 			allProxyConnectFailed = false
 		}
+		if !result.timing.tlsError {
+			allTLSHandshakeFailed = false
+		}
 		if pending == 0 && started < len(services) && ctx.Err() == nil {
 			start(started)
 			started, pending = started+1, pending+1
@@ -158,6 +167,12 @@ func probeExitIPServices(ctx context.Context, client *http.Client, services []ex
 	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return "", usererror.Wrap("通过所选代理查询出口 IP", ctx.Err(), "外网保持关闭。")
+	}
+	if allTLSHandshakeFailed && allTimedOut {
+		return "", usererror.New("TLS 握手超时", strings.Join(reported, "；"), "所选代理链路在 TLS 握手阶段超时，可尝试在“设置 → 网络与代理”开启“TLS ClientHello 分段传输兼容模式”或切换代理节点；外网保持关闭。", errors.Join(ErrTLSHandshakeFailed, ErrExitProbeTimeout, context.DeadlineExceeded))
+	}
+	if allTLSHandshakeFailed {
+		return "", usererror.New("TLS 握手失败", strings.Join(reported, "；"), "所选代理链路在 TLS 握手阶段中断（如返回 EOF），可尝试在“设置 → 网络与代理”开启“TLS ClientHello 分段传输兼容模式”或切换代理节点；外网保持关闭。", ErrTLSHandshakeFailed)
 	}
 	if allTimedOut {
 		return "", usererror.New("实时出口采样超时", strings.Join(reported, "；"), "实时出口采样超时，请稍后重试或切换更稳定的代理节点；外网保持关闭。", errors.Join(ErrExitProbeTimeout, context.DeadlineExceeded))
@@ -184,10 +199,10 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 	// callbacks then run on that goroutine. Every field the callbacks touch is
 	// guarded, and the result is read as a snapshot under the same lock.
 	var (
-		mu                                                   sync.Mutex
-		timing                                               exitProbeStageTiming
-		connectStart, tlsStart, wroteRequest                 time.Time
-		connected, tlsDone, gotFirstByte, connectFailedEarly bool
+		mu                                                               sync.Mutex
+		timing                                                           exitProbeStageTiming
+		connectStart, tlsStart, wroteRequest                             time.Time
+		connected, tlsStarted, tlsDone, gotFirstByte, connectFailedEarly bool
 	)
 	timing.stage = "proxy_connect"
 	snapshot := func() exitProbeStageTiming {
@@ -212,12 +227,13 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 				return
 			}
 			connected = true
-			timing.stage = "tls"
+			timing.stage = "response"
 		},
 		TLSHandshakeStart: func() {
 			mu.Lock()
 			defer mu.Unlock()
 			tlsStart = time.Now()
+			tlsStarted = true
 			timing.stage = "tls"
 		},
 		TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
@@ -235,7 +251,7 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 			mu.Lock()
 			defer mu.Unlock()
 			wroteRequest = time.Now()
-			if info.Err == nil && tlsDone {
+			if info.Err == nil && (!tlsStarted || tlsDone) {
 				timing.stage = "response"
 			}
 		},
@@ -267,8 +283,9 @@ func queryExitIPServiceTimed(ctx context.Context, client *http.Client, service e
 			if !timedOut {
 				result.proxyError = true
 			}
-		} else if !tlsDone && !gotFirstByte {
+		} else if tlsStarted && !tlsDone && !gotFirstByte {
 			result.stage = "tls"
+			result.tlsError = true
 		} else {
 			result.stage = "response"
 		}
