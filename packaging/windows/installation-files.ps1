@@ -116,6 +116,7 @@ function Compiler-TemporaryFolder {
         $short = (New-Object -ComObject Scripting.FileSystemObject).GetFolder($temporary).ShortPath
         if ($short -and (Test-AnsiPath $short)) { return @{path = $short; created = $false} }
     } catch { }
+    if (!$env:SystemRoot) { return $null }
     $private = Join-Path $env:SystemRoot ('Temp\cage-' + [guid]::NewGuid().ToString('N'))
     try { [IO.Directory]::CreateDirectory($private) | Out-Null } catch { return $null }
     return @{path = $private; created = $true}
@@ -123,14 +124,19 @@ function Compiler-TemporaryFolder {
 
 function Initialize-VerifiedDeletion {
     if ('CageVerifiedFile' -as [type]) { return }
-    $source = Join-Path $PSScriptRoot 'verified-file-deletion.cs'
+    # Read the C# source through .NET so csc.exe never receives a source file
+    # path under a non-ANSI $PLUGINSDIR inside TEMP.
+    $code = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'verified-file-deletion.cs'), [Text.Encoding]::UTF8)
     $folder = Compiler-TemporaryFolder
-    if (!$folder) { Add-Type -Path $source; return }
+    if (!$folder) { Add-Type -TypeDefinition $code; return }
     $saved = $env:TMP, $env:TEMP
+    $savedDirectory = [Environment]::CurrentDirectory
     try {
         $env:TMP = $env:TEMP = $folder.path
-        Add-Type -Path $source
+        [Environment]::CurrentDirectory = $folder.path
+        Add-Type -TypeDefinition $code
     } finally {
+        [Environment]::CurrentDirectory = $savedDirectory
         $env:TMP, $env:TEMP = $saved
         if ($folder.created) {
             # A standard user cannot list the system temporary folder, so the
