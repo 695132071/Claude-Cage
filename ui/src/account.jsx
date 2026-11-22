@@ -485,30 +485,62 @@ function AccountRecovery({ onBack, onReset }) {
   </main>;
 }
 
-function AccountRecoverySettings({ disabled, onDirty }) {
+function AccountRecoveryRow({ disabled, onDirty }) {
   const tr = useTranslation();
   const { account, act } = useAccount();
   const [password, setPassword] = useState("");
+  const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  useEffect(() => { onDirty(Boolean(password)); }, [password]);
+  useEffect(() => { onDirty(Boolean(password)); }, [password, onDirty]);
   useEffect(() => () => onDirty(false), []);
-  return <section className="account-device-settings" aria-label={tr("账户恢复")}>
-    <form onSubmit={async (event) => {
-      event.preventDefault();
-      if (busy) return;
-      setBusy(true); setError("");
-      try { await act("recovery-generate", { password }); setPassword(""); }
-      catch (e) { setError(e.message); }
-      finally { setBusy(false); }
-    }}><fieldset disabled={disabled || busy}>
-      <h4>{tr("恢复密钥")}</h4>
-      <p className="field-help">{account.recovery_ready ? tr("已设置。忘记密码时，可在登录页使用保存的恢复密钥。重新生成后旧密钥立即失效。") : tr("尚未设置。请补设并安全保存，忘记密码时可用它恢复原来的资料和登录状态。")}</p>
-      <PasswordField label={tr("生成密钥前验证账户密码")} value={password} onChange={setPassword} autoComplete="current-password" />
-      {error && <p className="account-error" role="alert">{tr(error)}</p>}
-      <button className="quiet-button" disabled={!password}>{busy ? tr("正在生成…") : account.recovery_ready ? tr("重新生成恢复密钥") : tr("生成恢复密钥")}</button>
-    </fieldset></form>
-  </section>;
+  const showForm = !account.recovery_ready || open;
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy || !password) return;
+    setBusy(true); setError("");
+    try {
+      await act("recovery-generate", { password });
+      setPassword("");
+      setOpen(false);
+    } catch (e) { setError(e.message); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section className="settings-row account-security-row" aria-label={tr("账户恢复")}>
+      <div className="settings-row-copy">
+        <strong>{tr("恢复密钥")}</strong>
+        {error && <small className="account-inline-error" role="alert">{tr(error)}</small>}
+      </div>
+      {showForm ? (
+        <form className="account-inline-form" onSubmit={submit}>
+          <input
+            type="password"
+            aria-label={tr("生成密钥前验证账户密码")}
+            placeholder={tr("账户密码")}
+            value={password}
+            disabled={disabled || busy}
+            autoComplete="current-password"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button className="quiet-button" disabled={disabled || busy || !password}>
+            {busy ? tr("正在生成…") : account.recovery_ready ? tr("重新生成恢复密钥") : tr("生成恢复密钥")}
+          </button>
+          {account.recovery_ready && (
+            <button type="button" className="text-button" disabled={busy} onClick={() => { setOpen(false); setPassword(""); setError(""); }}>
+              {tr("取消")}
+            </button>
+          )}
+        </form>
+      ) : (
+        <div className="settings-row-control">
+          <button type="button" className="quiet-button" disabled={disabled} onClick={() => setOpen(true)}>
+            {tr("重新生成恢复密钥")}
+          </button>
+        </div>
+      )}
+    </section>
+  );
 }
 
 export function AccountMenu({ onSettings, onConfirm, onStatus, busy }) {
@@ -766,8 +798,6 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
           </fieldset>
         </form>
       </Modal>}
-      {!account.trusted_local && <AccountRecoverySettings disabled={busy || environmentBusy} onDirty={setRecoveryDirty} />}
-      {localDesktop() && !account.trusted_local && <TrustedDeviceSettings />}
       <AccountDeviceSettings
         onOpenPassword={() => {
           setFeedbackTarget("password");
@@ -776,12 +806,14 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
           setPasswordOpen(true);
         }}
         passwordDisabled={busy || environmentBusy}
+        recoveryDisabled={busy || environmentBusy}
+        onRecoveryDirty={setRecoveryDirty}
       />
     </div>
   );
 }
 
-function TrustedDeviceSettings() {
+function TrustedDeviceRow() {
   const tr = useTranslation();
   const { account, refresh } = useAccount();
   const enabled = Boolean(account.trusted_login || account.devices?.automatic);
@@ -798,18 +830,33 @@ function TrustedDeviceSettings() {
     } catch (error) { setMessage(error.message); }
     finally { setBusy(false); }
   };
-  return <form onSubmit={update}>
-    <fieldset disabled={busy}>
-      <h4>{tr("记住我")}</h4>
-      <p className="field-help">{enabled ? tr("已信任此电脑，下次用当前系统用户打开时自动进入。手动锁定仍需验证，退出账户会撤销信任。") : tr("验证一次账户密码，信任此电脑，下次用当前系统用户打开时自动进入。")}</p>
-      {!enabled && <PasswordField label={tr("验证账户密码")} value={password} onChange={setPassword} autoComplete="current-password" />}
-      <button className="quiet-button" disabled={!enabled && !password}>{enabled ? tr("关闭记住我") : tr("信任此电脑")}</button>
-      {message && <p className="account-error" role="alert">{tr(message)}</p>}
-    </fieldset>
-  </form>;
+  return (
+    <div className="settings-row account-security-row">
+      <div className="settings-row-copy">
+        <strong>{tr("记住我")}</strong>
+        {message && <small className="account-inline-error" role="alert">{tr(message)}</small>}
+      </div>
+      <form className="account-inline-form" onSubmit={update}>
+        {!enabled && (
+          <input
+            type="password"
+            aria-label={tr("验证账户密码")}
+            placeholder={tr("账户密码")}
+            value={password}
+            disabled={busy}
+            autoComplete="current-password"
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        )}
+        <button className="quiet-button" disabled={busy || (!enabled && !password)}>
+          {enabled ? tr("关闭记住我") : tr("信任此电脑")}
+        </button>
+      </form>
+    </div>
+  );
 }
 
-function AccountDeviceSettings({ onOpenPassword, passwordDisabled }) {
+function AccountDeviceSettings({ onOpenPassword, passwordDisabled, recoveryDisabled, onRecoveryDirty }) {
   const tr = useTranslation();
   const { account, deviceSupport, deviceAction, recheckDevices } = useAccount();
   const [busy, setBusy] = useState(false);
@@ -863,6 +910,7 @@ function AccountDeviceSettings({ onOpenPassword, passwordDisabled }) {
           />
         </label>
       )}
+      {localDesktop() && !account.trusted_local && <TrustedDeviceRow />}
       <div className="settings-row">
         <div className="settings-row-copy">
           <strong>{tr("账户密码")}</strong>
@@ -873,6 +921,7 @@ function AccountDeviceSettings({ onOpenPassword, passwordDisabled }) {
           </button>
         </div>
       </div>
+      {!account.trusted_local && <AccountRecoveryRow disabled={recoveryDisabled} onDirty={onRecoveryDirty} />}
     </div>
     {legacyLauncher && (
       <p className="field-help" role="status">{tr("当前应用启动器需要更新，无法检查快捷登录状态。请重新安装完整的 Cage 应用后再设置；现有授权已保留。")}</p>

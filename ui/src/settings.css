@@ -775,6 +775,24 @@
   font-size: var(--s-md);
   font-weight: 600;
 }
+.settings-page .account-inline-form {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: none;
+  margin: 0;
+}
+.settings-page .settings-content .account-inline-form input[type="password"] {
+  width: 190px;
+  height: 34px;
+  padding: 0 10px;
+  font-size: var(--s-sm);
+}
+.settings-page .account-inline-error {
+  color: var(--danger);
+}
 /* Account forms space their children with flex gap, so field margins reset. */
 .settings-page .settings-content .account-field > label:not(.check-line):not(.choice):not(.toggle-row) {
   margin: 0;
