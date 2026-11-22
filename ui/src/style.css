@@ -2341,26 +2341,37 @@ svg {
   border-color: var(--strong);
   box-shadow: 0 1px 4px rgb(0 0 0 / 0.14);
 }
-.start-project-footer {
+.start-project-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 13px 16px 13px 22px;
-  gap: 12px;
-  border-top: 1px solid var(--line-subtle);
-  background: color-mix(in srgb, var(--chrome) 65%, var(--paper));
+  gap: 16px;
+  padding: 18px 20px;
 }
-.start-project-footer > span {
-  display: flex;
-  gap: 8px;
+.start-project-row .primary {
+  flex: none;
+  border-radius: 9px;
+  padding: 8px 16px;
+  min-height: 38px;
+  font-size: 0.9286rem;
+}
+.environment-shield-badge {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: var(--chrome);
+  border: 1px solid var(--line-subtle);
+  color: var(--strong);
+}
+.environment-status-line {
+  display: inline-flex;
   align-items: center;
+  gap: 7px;
   color: var(--muted);
   font-size: 0.8571rem;
-}
-.start-project-footer .primary {
-  border-radius: 8px;
-  padding: 8px 14px;
-  font-size: 0.9286rem;
 }
 .welcome-hint {
   font-size: 0.8571rem;
@@ -2880,17 +2891,19 @@ svg {
 .environment-summary {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 20px 22px;
+  gap: 13px;
+  min-width: 0;
   text-align: left;
 }
-.environment-summary span {
+.environment-summary-copy {
   display: grid;
   gap: 3px;
+  min-width: 0;
 }
 .environment-summary strong {
   color: var(--strong);
   font-weight: 560;
+  font-size: 1rem;
 }
 .environment-summary small {
   color: var(--muted);

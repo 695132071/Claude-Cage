@@ -1891,28 +1891,28 @@ function App() {
                     </ol>
                   )}
                   <div className="start-project-box">
-                    <div className="environment-summary">
-                      <EnvironmentShield
-                        healthy={status.ready && network.mode === "open"}
-                        size={24}
-                      />
-                      <span>
-                        <strong>{tr("Cage 隔离环境")}</strong>
-                        {running && <small>{runtimeLabel}</small>}
-                      </span>
-                    </div>
-                    {!busy && !running && !account?.guest_system && status.local_vm_storage && !isRemoteClient() && <GuestSystemPicker system={guestSystem} onChange={setGuestSystem} />}
-                    <div className="start-project-footer">
-                      <span>
-                        <i className={`status-dot ${network.mode}`} />
-                        {busy
-                          ? runtimeLabel
-                          : running
-                            ? tr(network.label)
-                            : setupProxy
-                              ? tr("等待配置代理")
-                              : tr("环境已停止")}
-                      </span>
+                    <div className="start-project-row">
+                      <div className="environment-summary">
+                        <span className="environment-shield-badge" aria-hidden="true">
+                          <EnvironmentShield
+                            healthy={status.ready && network.mode === "open"}
+                            size={20}
+                          />
+                        </span>
+                        <span className="environment-summary-copy">
+                          <strong>{tr("Cage 隔离环境")}</strong>
+                          <small className="environment-status-line">
+                            <i className={`status-dot ${network.mode}`} />
+                            {busy
+                              ? runtimeLabel
+                              : running
+                                ? tr(network.label)
+                                : setupProxy
+                                  ? tr("等待配置代理")
+                                  : tr("环境已停止")}
+                          </small>
+                        </span>
+                      </div>
                       <button
                         className="primary"
                         data-terminal-location="start"
@@ -1953,6 +1953,7 @@ function App() {
                                 : tr("新建终端")}
                       </button>
                     </div>
+                    {!busy && !running && !account?.guest_system && status.local_vm_storage && !isRemoteClient() && <GuestSystemPicker system={guestSystem} onChange={setGuestSystem} />}
                     {terminalMenuAt("start")}
                   </div>
                   {running && (
